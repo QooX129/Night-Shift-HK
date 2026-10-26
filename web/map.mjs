@@ -90,7 +90,7 @@ export class MapView {
           const halfWidth = limit === "road"
             ? width / 2
             : width / 2 - 2;//(this.data.driving.taxi_radius ?? 0);
-          c.lineWidth = Math.max(0, halfWidth * 1.5 + (erase ? -1.0 : 1.0));
+          c.lineWidth = Math.max(0, halfWidth * 1.5 + (erase ? -1.0: 1.0));
           if (c.lineWidth === 0) continue;
           c.beginPath(); this.roadPath(c, edge); c.stroke();
         }

@@ -62,6 +62,25 @@ test("junctions with three exits offer the GPS-recommended road for selection", 
   await page.keyboard.down("w");
   await expect(page.locator("#junction")).toBeVisible({ timeout: 10_000 });
   await page.keyboard.up("w");
+  const layout = await page.locator("#junction").evaluate(dialog => {
+    const bounds = dialog.getBoundingClientRect();
+    const backdrop = getComputedStyle(dialog, "::backdrop");
+    return {
+      right: innerWidth - bounds.right, bottom: innerHeight - bounds.bottom,
+      width: bounds.width, height: bounds.height, viewportHeight: innerHeight,
+      backdropColor: backdrop.backgroundColor, backdropFilter: backdrop.backdropFilter,
+      scrollable: getComputedStyle(dialog).overflowY,
+    };
+  });
+  expect(layout.right).toBeGreaterThanOrEqual(16);
+  expect(layout.right).toBeLessThanOrEqual(32);
+  expect(layout.bottom).toBeGreaterThanOrEqual(30);
+  expect(layout.bottom).toBeLessThanOrEqual(45);
+  expect(layout.width).toBeLessThanOrEqual(340);
+  expect(layout.height).toBeLessThanOrEqual(layout.viewportHeight * 0.55 + 1);
+  expect(layout.backdropColor).toBe("rgba(0, 0, 0, 0)");
+  expect(layout.backdropFilter).toBe("none");
+  expect(layout.scrollable).toBe("auto");
   await expect(page.locator("#exits .recommended")).toContainText("GPS Road");
   await page.locator("#exits .recommended").click();
   await expect(page.locator("#junction")).not.toBeVisible();

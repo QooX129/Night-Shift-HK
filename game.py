@@ -6,7 +6,7 @@ import random
 import time
 from uuid import uuid4
 
-from roads import DRIVING, Edge, Point, RoadMap, project
+from roads import DRIVING, Edge, Point, RoadMap
 
 
 class RuleError(ValueError):
@@ -214,25 +214,14 @@ class Game:
                 if not (left + radius <= sample_point[0] <= right - radius
                         and top + radius <= sample_point[1] <= bottom - radius):
                     raise RuleError("The taxi footprint must remain inside the playable district.")
-                match = self.roads.corridor_match(sample_point, sample_heading, previous)
+                match = self.roads.corridor_match(
+                    sample_point, sample_heading, previous,
+                    session.selected_exit, session.selected_junction,
+                )
                 if match is None:
                     raise RuleError("The taxi footprint must remain on a connected road.")
                 if match.edge.way in session.closed and segment > 0.01:
                     raise RuleError("Road closed. Stop and choose another road, or call recovery.")
-                if session.selected_exit and session.selected_junction:
-                    junction = self.roads.nodes[session.selected_junction]
-                    junction_distance = math.dist(sample_point, junction)
-                    selected = self.roads.edges[session.selected_exit]
-                    _, selected_distance, _ = project(
-                        sample_point, self.roads.nodes[selected.a], self.roads.nodes[selected.b],
-                    )
-                    if (
-                        match.edge.a == session.selected_junction
-                        and match.edge.id != session.selected_exit
-                        and junction_distance > radius + 1.5
-                        and selected_distance > self.roads.radius(selected) + max(1.0, junction_distance * 0.5)
-                    ):
-                        raise RuleError("Enter the selected exit at this junction.")
                 if match.edge.id != previous.id:
                     if previous.b == match.edge.a and previous.a != match.edge.b:
                         warning = "" if self.roads.legal(previous, match.edge, history) else "restricted"

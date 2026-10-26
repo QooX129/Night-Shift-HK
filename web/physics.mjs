@@ -4,7 +4,7 @@ export function angleDifference(a, b) {
 export const STEERING_SENSITIVITY = 2.2;
 export const FORCED_JUNCTION_SENSITIVITY = 5.5;
 const FORCED_JUNCTION_ASSIST_MAX = 3.5;
-const SELECTED_ROAD_CONFIRM_DISTANCE = 2.5;
+const SELECTED_ROAD_CONFIRM_DISTANCE = 2.0;
 
 function enteredSelectedRoad(car, roads, exitId, junction) {
   if (car.edge !== exitId || exitId == null || junction == null) return false;
@@ -187,14 +187,22 @@ export function stepCar(car, input, dt, {
     car.heading += (manualSteering + assist) * step;
   }
   const old = { x: car.x, y: car.y };
+  const previous = roads?.edges.get(car.edge);
   const desired = { x: car.x + Math.cos(car.heading) * car.speed * step, y: car.y + Math.sin(car.heading) * car.speed * step };
-  const constrained = roads
-    ? roads.constrain(old, desired, car.heading, roads.edges.get(car.edge), closed, selectedExit, selectedJunction)
+  let constrained = roads
+    ? roads.constrain(old, desired, car.heading, previous, closed, selectedExit, selectedJunction)
     : { ...desired, edge: car.edge, blocked: false, closed: false };
   car.x = constrained.x; car.y = constrained.y; car.edge = constrained.edge;
   if (aligningSelectedExit && car.speed > 0.05 && car.edge === selectedExit) {
     const exit = roads.edges.get(selectedExit);
-    if (exit.a === selectedJunction) car.heading = roads.angle(exit);
+    if (exit.a === selectedJunction) {
+      car.heading = roads.angle(exit);
+      // Validate the same heading that is sent in the movement trail.
+      constrained = roads.constrain(
+        old, constrained, car.heading, previous, closed, selectedExit, selectedJunction,
+      );
+      car.x = constrained.x; car.y = constrained.y; car.edge = constrained.edge;
+    }
   }
   if (constrained.blocked) {
     const travel = Math.hypot(car.x - old.x, car.y - old.y);

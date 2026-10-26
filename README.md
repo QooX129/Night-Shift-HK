@@ -48,7 +48,8 @@ To stop the server, press **Ctrl+C** in the terminal.
 - Steering remains under your control. Ordinary junctions highlight the connected exits
   without opening a popup; the GPS-recommended exit is brighter. Junctions with
   more than two available exits and connected stacked-road forks pause to offer
-  a route choice before the junction. The GPS-recommended exit is identified in
+  a route choice before the junction in a compact, scrollable bottom-right GPS
+  panel, without dimming or blurring the map. The GPS-recommended exit is identified in
   the list. The taxi resumes at its approach speed after selection. Until it
   travels into the selected road (up to 2.5 m along its first segment), steering
   sensitivity and steering assist are temporarily increased, and the taxi is
@@ -181,6 +182,9 @@ unconnected level changes rather than silently snapping the taxi.
 Browser collision handling also validates intermediate positions at the same
 0.4 m sampling interval, preventing boundary slides from cutting across concave
 road corners and triggering a rejected movement/forced pause.
+During forced turns, browser and server matching both exclude unselected exits.
+Heading alignment is revalidated before sending movement, so wall contact still
+stops or slides the taxi rather than producing an inconsistent movement trail.
 Stacked-fork detection follows each outgoing branch for up to 100 m or the next
 fork, using available layer/bridge/tunnel tags. Incomplete tags can miss a choice.
 

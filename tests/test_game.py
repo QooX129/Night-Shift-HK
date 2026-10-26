@@ -241,7 +241,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(self.session.fuel, 100)
         self.assertEqual(self.session.money, 56)
 
-    def test_stacked_choice_is_advisory_and_does_not_move_or_steer(self):
+    def test_stacked_choice_preserves_position_and_accepts_selected_exit(self):
         for edge in self.roads.edges.values():
             options = self.roads.branches(edge, set())
             if self.roads.stacked_choice(edge, set()) and edge.length > 30:
@@ -256,14 +256,14 @@ class GameTests(unittest.TestCase):
                 self.assertEqual((self.session.point, self.session.heading, self.session.edge), old)
                 self.assertEqual(self.session.selected_exit, options[0].id)
                 self.assertFalse(self.session.paused)
-                alternate = options[1]
+                chosen = options[0]
                 node = self.roads.nodes[edge.b]
-                self.cmd("move", x=node[0], y=node[1], heading=self.roads.angle(alternate), speed=3, dt=1)
-                a, b = node, self.roads.nodes[alternate.b]
-                length = min(alternate.length * 0.5, 10)
-                point = (a[0] + (b[0] - a[0]) * length / alternate.length,
-                         a[1] + (b[1] - a[1]) * length / alternate.length)
-                self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(alternate), speed=3, dt=1)
+                a, b = node, self.roads.nodes[chosen.b]
+                length = min(chosen.length * 0.5, 10)
+                point = (a[0] + (b[0] - a[0]) * length / chosen.length,
+                         a[1] + (b[1] - a[1]) * length / chosen.length)
+                self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(chosen), speed=3, dt=1,
+                         trail=[{"x": node[0], "y": node[1], "heading": self.roads.angle(edge)}])
                 self.assertIsNone(self.session.selected_exit)
                 return
         self.fail("No suitable real-data junction found")
@@ -320,7 +320,7 @@ class GameTests(unittest.TestCase):
                 node[0] + (self.roads.nodes[alternate.b][0] - node[0]) * length / alternate.length,
                 node[1] + (self.roads.nodes[alternate.b][1] - node[1]) * length / alternate.length,
             )
-            with self.assertRaisesRegex(RuleError, "selected exit"):
+            with self.assertRaisesRegex(RuleError, "connected road"):
                 self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(alternate),
                          speed=3, dt=1)
             return

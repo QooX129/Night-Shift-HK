@@ -122,9 +122,14 @@ class RoadMap:
                 found[edge.id] = edge
         return list(found.values())
 
-    def corridor_match(self, point: Point, heading: float, previous: Edge) -> Match | None:
+    def corridor_match(
+        self, point: Point, heading: float, previous: Edge,
+        selected_exit: str | None = None, selected_junction: str | None = None,
+    ) -> Match | None:
         matches = []
         for edge in self.corridor_edges(point, previous):
+            if selected_junction is not None and edge.a == selected_junction and edge.id != selected_exit:
+                continue
             nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])
             if distance <= self.radius(edge) + 1e-6:
                 score = distance + (1 - math.cos(heading - self.angle(edge))) * 0.15
