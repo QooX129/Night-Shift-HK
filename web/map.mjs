@@ -47,11 +47,12 @@ export class MapView {
       for (const e of this.unique) {
         const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
         const major = ["primary", "secondary"].includes(e.kind);
-        c.lineWidth = (major ? 13 : e.kind === "service" ? 5 : 8) + (border ? 3 : 0);
+        c.lineWidth = (this.data.driving.widths[e.kind] ?? 10) + (border ? 2 : 0);
         c.strokeStyle = border ? "#17292d" : e.layer !== "0" ? "#52605b" : major ? "#4b5955" : "#3b504f";
         c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
       }
     }
+    this.drawRoadBoundaries(c, s);
     const labelled = new Set();
     const occupied = new Set();
     for (const e of [...this.unique].sort((a, b) => b.length - a.length)) {
@@ -73,7 +74,26 @@ export class MapView {
   roadPath(c, e) {
     c.moveTo(...this.data.nodes[e.a]); c.lineTo(...this.data.nodes[e.b]);
   }
-  render(car, state, lang, assist) {
+  drawRoadBoundaries(context, scale) {
+    const mask = document.createElement("canvas");
+    mask.width = this.backdrop.width; mask.height = this.backdrop.height;
+    const c = mask.getContext("2d");
+    const [left, top] = this.data.bounds;
+    c.scale(scale, scale); c.translate(-left, -top);
+    c.lineCap = "round"; c.strokeStyle = "#ffa0a0";
+    for (const erase of [false, true]) {
+      c.globalCompositeOperation = erase ? "destination-out" : "source-over";
+      for (const edge of this.unique) {
+        c.lineWidth = (this.data.driving.widths[edge.kind] ?? 10) + (erase ? -1 : 1);
+        c.beginPath(); this.roadPath(c, edge); c.stroke();
+      }
+    }
+    context.save(); context.resetTransform();
+    context.globalAlpha = 0.8;
+    context.drawImage(mask, 0, 0);
+    context.restore();
+  }
+  render(car, state, lang, approach) {
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
     const zoom = this.overview ? Math.min((w - (w > 800 ? 370 : 25)) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
@@ -112,6 +132,22 @@ export class MapView {
         for (const id of state.route) this.roadPath(c, this.edges.get(id));
         c.stroke(); c.lineWidth = 2.5 / zoom; c.strokeStyle = state.phase === "pickup" ? "#92d7b6" : "#f5c65a"; c.stroke();
       }
+      if (approach) {
+        this.highlightExit(c, approach.edges[0], "#92d7b6", zoom, approach);
+        const index = state.route?.indexOf(approach.incoming) ?? -1;
+        const suggested = index >= 0 ? state.route[index + 1] : null;
+        for (const { edge, path } of approach.exits) {
+          this.highlightExit(c, edge, edge.id === suggested ? "#f5c65a" : "#b5e3d780", zoom, path);
+        }
+      }
+      if (state.selected_exit && state.selected_junction && car.edge === state.edge) {
+        const node = this.data.nodes[state.selected_junction];
+        const current = this.edges.get(car.edge);
+        if (current.a !== state.selected_junction && Math.hypot(car.x - node[0], car.y - node[1]) < 45) {
+          const path = approach?.exits.find(exit => exit.edge.id === state.selected_exit)?.path;
+          this.highlightExit(c, this.edges.get(state.selected_exit), "#55e9ff", zoom, path);
+        }
+      }
       for (const stop of this.stops) {
         const active = state.phase === "pickup" ? stop.id === state.pickup : state.phase === "onboard" ? stop.id === state.destination : false;
         if (!active && stop.id !== "depot") continue;
@@ -127,7 +163,7 @@ export class MapView {
     }
     c.save(); c.translate(car.x, car.y); c.rotate(car.heading);
     const s = 1 / zoom;
-    c.fillStyle = assist ? "#92d7b61f" : "#f5c65a1f";
+    c.fillStyle = "#f5c65a1f";
     c.beginPath(); c.arc(0, 0, 22 * s, 0, Math.PI * 2); c.fill();
     c.fillStyle = "#060d1490"; c.fillRect(-11 * s, -4 * s, 26 * s, 12 * s);
     c.fillStyle = "#f7cc65"; c.strokeStyle = "#fff0ba"; c.lineWidth = s;
@@ -140,5 +176,14 @@ export class MapView {
     const nx = w - 35, ny = h - (matchMedia("(pointer:coarse)").matches ? 240 : 210);
     c.fillStyle = "#c2d0bf"; c.font = "10px system-ui"; c.textAlign = "center"; c.fillText("N", nx, ny - 15);
     c.beginPath(); c.moveTo(nx, ny - 7); c.lineTo(nx - 4, ny + 7); c.lineTo(nx + 4, ny + 7); c.closePath(); c.fill();
+  }
+  highlightExit(c, edge, color, zoom, path) {
+    const start = path?.start;
+    c.strokeStyle = color; c.lineWidth = 4 / zoom;
+    c.beginPath();
+    if (start) c.moveTo(start.x, start.y);
+    else c.moveTo(...this.data.nodes[edge.a]);
+    for (const segment of path?.edges ?? [edge]) c.lineTo(...this.data.nodes[segment.b]);
+    c.stroke();
   }
 }

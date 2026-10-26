@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import app
 from game import Game, RuleError
-from roads import RoadMap
+from roads import DRIVING, RoadMap
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,8 +53,33 @@ class RoadTests(unittest.TestCase):
         elevated = dict(self.data["edges"][0], id="xy", a="x", b="y", way=9, layer="1", bridge="yes")
         self.data["edges"].append(elevated)
         r = self.road_map()
-        match = r.match((20, 3), 0, r.edges["ab"])
+        match = r.corridor_match((20, 2), 0, r.edges["ab"])
         self.assertEqual(match.edge.id, "ab")
+        self.assertIsNone(r.corridor_match((20, 7), 0, r.edges["ab"]))
+
+    def test_stacked_choices_require_a_connected_fork(self):
+        self.data["edges"][2]["layer"] = "1"
+        r = self.road_map()
+        self.assertNotIn("b", r.document["stacked_junctions"])
+        self.assertIn("c", r.document["stacked_junctions"])
+        self.assertNotIn("a", r.document["stacked_junctions"])
+        self.assertTrue(r.stacked_choice(r.edges["bc"], set()))
+        self.assertFalse(r.stacked_choice(r.edges["bc"], {3}))
+        self.assertFalse(r.stacked_choice(r.edges["~cd"], set()))
+
+    def test_unconnected_crossing_is_not_a_branch(self):
+        self.data["nodes"].update({"x": [20, -40], "y": [20, 40]})
+        self.data["edges"].append(dict(self.data["edges"][0], id="xy", a="x", b="y", way=9, layer="1"))
+        r = self.road_map()
+        self.assertNotIn("xy", [e.id for e in r.corridor_edges((20, 0), r.edges["ab"])])
+        self.assertEqual(r.document["stacked_junctions"], [])
+
+    def test_wrongway_geometry_does_not_become_a_legal_gps_exit(self):
+        r = self.road_map()
+        reverse = r.edges["~ab"]
+        self.assertTrue(reverse.wrongway)
+        self.assertEqual(r.corridor_match((20, 0), math.pi, r.edges["ab"]).edge.id, "~ab")
+        self.assertFalse(r.legal(r.edges["ab"], reverse, (1,)))
 
     def test_congestion_changes_the_suggested_route(self):
         self.data["edges"].append(dict(self.data["edges"][0], id="fc", a="f", b="c", way=6, length=56))
@@ -97,6 +122,25 @@ class GameTests(unittest.TestCase):
             edge = self.roads.edges[stop.edge]
             self.assertEqual(edge.layer, "0")
             self.assertGreaterEqual(edge.length, 30)
+
+    def test_vehicle_cap_and_high_speed_path_validation(self):
+        edge = next(e for e in self.roads.edges.values() if not e.wrongway and e.length > 100)
+        a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+        self.session.point = (a[0] * 0.8 + b[0] * 0.2, a[1] * 0.8 + b[1] * 0.2)
+        self.session.edge, self.session.heading = edge.id, self.roads.angle(edge)
+        self.session.history = (edge.way,)
+        self.cmd("pause", paused=False)
+        maximum = DRIVING["max_speed"]
+        self.assertEqual(maximum * 3.6, 150)
+        x, y = self.session.point
+        distance = maximum * 0.75
+        self.cmd("move", x=x + math.cos(self.session.heading) * distance,
+                 y=y + math.sin(self.session.heading) * distance,
+                 heading=self.session.heading, speed=maximum, dt=0.75)
+        self.assertEqual(self.session.speed, maximum)
+        with self.assertRaisesRegex(RuleError, "speed"):
+            self.cmd("move", x=self.session.point[0], y=self.session.point[1],
+                     heading=self.session.heading, speed=maximum + 0.01, dt=0)
 
     def test_complete_trip_and_replay_cannot_pay_twice(self):
         self.cmd("accept")
@@ -188,21 +232,87 @@ class GameTests(unittest.TestCase):
         self.assertEqual(self.session.fuel, 100)
         self.assertEqual(self.session.money, 56)
 
-    def test_validated_assisted_turn(self):
+    def test_stacked_choice_is_advisory_and_does_not_move_or_steer(self):
         for edge in self.roads.edges.values():
-            options = self.roads.exits(edge, (edge.way,), set())
-            if len(self.roads.neighbors[edge.b]) >= 3 and options and edge.length > 20:
+            options = self.roads.branches(edge, set())
+            if self.roads.stacked_choice(edge, set()) and edge.length > 30:
                 self.session.point = (
                     self.roads.nodes[edge.b][0] - math.cos(self.roads.angle(edge)) * 12,
                     self.roads.nodes[edge.b][1] - math.sin(self.roads.angle(edge)) * 12,
                 )
                 self.session.edge, self.session.heading = edge.id, self.roads.angle(edge)
                 self.session.history = (edge.way,)
-                self.cmd("turn", incoming=edge.id, exit=options[0].id)
-                self.assertEqual(self.session.assisted_edges[:2], [edge.id, options[0].id])
+                old = (self.session.point, self.session.heading, self.session.edge)
+                self.cmd("select_road", incoming=edge.id, exit=options[0].id)
+                self.assertEqual((self.session.point, self.session.heading, self.session.edge), old)
+                self.assertEqual(self.session.selected_exit, options[0].id)
                 self.assertFalse(self.session.paused)
+                alternate = options[1]
+                node = self.roads.nodes[edge.b]
+                self.cmd("move", x=node[0], y=node[1], heading=self.roads.angle(alternate), speed=3, dt=1)
+                a, b = node, self.roads.nodes[alternate.b]
+                length = min(alternate.length * 0.5, 10)
+                point = (a[0] + (b[0] - a[0]) * length / alternate.length,
+                         a[1] + (b[1] - a[1]) * length / alternate.length)
+                self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(alternate), speed=3, dt=1)
+                self.assertIsNone(self.session.selected_exit)
                 return
         self.fail("No suitable real-data junction found")
+
+    def test_reverse_does_not_allow_remote_service_or_recovery_while_moving(self):
+        self.cmd("accept")
+        self.at_stop(self.session.pickup)
+        self.session.speed = -3
+        with self.assertRaises(RuleError):
+            self.cmd("service")
+        self.session.paused = False
+        with self.assertRaises(RuleError):
+            self.cmd("recover")
+
+    def test_wrongway_and_restricted_turns_warn_without_blocking(self):
+        for edge in self.roads.edges.values():
+            if edge.oneway and not edge.wrongway and edge.length > 30:
+                self.session.edge, self.session.point = edge.id, self.game.midpoint(edge)
+                self.session.heading = self.roads.angle(edge)
+                self.session.paused = False
+                self.session.history = (edge.way,)
+                a = self.session.point
+                self.cmd("move", x=a[0] - math.cos(self.session.heading),
+                         y=a[1] - math.sin(self.session.heading), heading=self.session.heading, speed=-2, dt=0.5)
+                self.assertEqual(self.game.snapshot(self.session)["warning"], "wrongway")
+                break
+        else:
+            self.fail("No one-way road found")
+        for edge in self.roads.edges.values():
+            if edge.wrongway or edge.length < 20:
+                continue
+            illegal = [e for e in self.roads.branches(edge, set()) if not self.roads.legal(edge, e, (edge.way,))]
+            if not illegal:
+                continue
+            nxt = illegal[0]
+            node = self.roads.nodes[edge.b]
+            heading = self.roads.angle(edge)
+            self.session.edge, self.session.point = edge.id, (node[0] - math.cos(heading), node[1] - math.sin(heading))
+            self.session.heading, self.session.history = heading, (edge.way,)
+            self.cmd("move", x=node[0], y=node[1], heading=self.roads.angle(nxt), speed=2, dt=0.5)
+            self.assertIn(self.game.snapshot(self.session)["warning"], {"restricted", "wrongway"})
+            return
+        self.fail("No restricted real-road exit found")
+
+    def test_offroad_and_corner_cutting_are_rejected_atomically(self):
+        self.cmd("pause", paused=False)
+        edge = self.roads.edges[self.session.edge]
+        x, y = self.session.point
+        heading = self.roads.angle(edge)
+        original = (self.session.point, self.session.edge, self.session.fuel)
+        with self.assertRaisesRegex(RuleError, "footprint"):
+            self.cmd("move", x=x - math.sin(heading) * 15, y=y + math.cos(heading) * 15,
+                     heading=heading, speed=10, dt=1)
+        self.assertEqual((self.session.point, self.session.edge, self.session.fuel), original)
+        with self.assertRaisesRegex(RuleError, "footprint"):
+            self.cmd("move", x=x, y=y, heading=heading, speed=0, dt=1,
+                     trail=[{"x": x - math.sin(heading) * 12, "y": y + math.cos(heading) * 12, "heading": heading}])
+        self.assertEqual((self.session.point, self.session.edge, self.session.fuel), original)
 
     def test_closure_prevents_movement_and_routing(self):
         edge = self.roads.edges[self.session.edge]
@@ -245,6 +355,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(bad.status_code, 422)
         missing = self.client.post("/api/sessions/missing/commands", json={"seq": 1, "command": {"action": "accept"}})
         self.assertEqual(missing.status_code, 404)
+
+    def test_api_vehicle_cap_matches_driving_configuration(self):
+        state = self.client.post("/api/sessions").json()
+        url = f"/api/sessions/{state['id']}/commands"
+        command = {"action": "move", "x": state["x"], "y": state["y"],
+                   "heading": state["heading"], "dt": 0, "speed": DRIVING["max_speed"]}
+        self.assertEqual(self.client.post(url, json={"seq": 1, "command": command}).status_code, 200)
+        command["speed"] = DRIVING["max_speed"] + 0.01
+        self.assertEqual(self.client.post(url, json={"seq": 2, "command": command}).status_code, 422)
+        self.assertEqual(self.client.get("/api/map").json()["driving"]["max_speed"], DRIVING["max_speed"])
 
 
 if __name__ == "__main__":

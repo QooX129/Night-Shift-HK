@@ -42,10 +42,10 @@
       <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
       <button id="garage" class="quiet" data-i18n="garage">Rest stop / garage</button>
     </section>
-    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · S / ↓ brake · A D / ← → steer · Space pause</div>
+    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
       <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
-      <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
+      <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE / REV</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
     </div>
     <footer class="attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · <a href="/data-license.html">ODbL &amp; source</a> · <span data-i18n="notnavigation">Game map, not real navigation</span></footer>
   </main>
@@ -54,14 +54,14 @@
     <div class="dialog-eyebrow">夜更的士 · NIGHT SHIFT HK</div>
     <h2 data-i18n="welcome">Your streets. Your shift.</h2>
     <p data-i18n="intro">A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.</p>
-    <div class="instructions"><p data-i18n="introdrive">Steer freely with WASD / arrow keys, or the touch pedals. S / ↓ brakes; there is no reverse gear.</p><p data-i18n="introturn">At a junction, time pauses. Choose an exit and turn assist guides you through before handing back control.</p><p data-i18n="introstops">Stop at the coloured roadside marker to pick up or drop off. Fuel, traffic, and closures are simulated. Buildings have no collisions.</p></div>
+    <div class="instructions"><p data-i18n="introdrive">Steer with WASD / arrow keys or touch pedals. Hold brake after stopping for low-speed reverse. The taxi stays on the road.</p><p data-i18n="introturn">Ordinary junctions highlight exits. Only connected stacked-road forks pause for a choice. You always steer manually.</p><p data-i18n="introstops">Stop at the coloured roadside marker to pick up or drop off. Fuel, traffic, and closures are simulated. Buildings have no collisions.</p></div>
     <p class="muted" data-i18n="introsave">Progress lasts for this page session only. Reloading starts a new shift.</p>
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
   </dialog>
   <dialog id="junction">
-    <div class="dialog-eyebrow" data-i18n="junction">JUNCTION AHEAD · TIME PAUSED</div>
-    <h2 data-i18n="choose">Which way, driver?</h2>
-    <p class="muted" data-i18n="turnhelp">Choose an exit. We will guide the turn, then steering is yours.</p>
+    <div class="dialog-eyebrow" data-i18n="junction">STACKED-ROAD FORK · TIME PAUSED</div>
+    <h2 data-i18n="choose">Which road, driver?</h2>
+    <p class="muted" data-i18n="turnhelp">Choose an exit to highlight in cyan, then steer yourself. Other connected exits remain available.</p>
     <div id="exits"></div>
   </dialog>
   <dialog id="pause-dialog">
@@ -75,7 +75,7 @@
     <p data-i18n="garagetext">Refuel and install upgrades while stopped at the blue rest-stop marker. Upgrades last for this shift.</p>
     <button id="refuel" class="secondary" data-i18n="refuel">Fill tank · $0.50 per %</button>
     <button id="efficiency" class="secondary" data-i18n="efficiency">Efficient engine · $100 · 35% less fuel</button>
-    <button id="engine" class="secondary" data-i18n="engine">Engine tune · $160 · higher top speed</button>
+    <button id="engine" class="secondary" data-i18n="engine">Engine tune · $160 · 30% faster acceleration · 150 km/h cap</button>
     <button id="recover" class="secondary" data-i18n="recover">Return to rest stop · up to $20</button>
     <p class="muted" data-i18n="recoveryhelp">Recovery returns you to the rest stop and supplies emergency fuel. It does not complete your passenger's trip.</p>
     <button id="garage-close" class="primary" data-i18n="resume">Back to the streets</button>

@@ -6,8 +6,8 @@ The local prototype is implemented and its recorded local test suites pass.
 The user chose to finish with the runnable local game and deployment instructions,
 without creating a public hosting service.
 
-This document records work and verification performed during development.
-The documentation update itself did not rerun the tests.
+This document records work and verification performed during development,
+including the accepted road-boundary and manual-junction redesign below.
 See [PLAN.md](PLAN.md) for scope and roadmap, and [README.md](README.md) for running
 and publishing the game.
 
@@ -20,8 +20,10 @@ Clarification established:
 
 - Start in Mong Kok / Yau Ma Tei rather than all Hong Kong.
 - Use free steering, not automatic travel between junctions.
-- Pause at junctions and briefly assist the selected turn.
-- Allow off-road/wrong-way movement with warnings; omit collisions initially.
+- Initially pause at junctions and briefly assist the selected turn; superseded
+  by manual junctions and advisory stacked-road choices in the subsequent redesign.
+- Initially allow off-road/wrong-way movement with warnings; the redesign prohibits
+  off-road movement while retaining warning-only wrong-way/restricted turns.
 - Show suggested routes without requiring the player to follow them.
 - Use OpenStreetMap instead of requiring Google Maps.
 - Include bilingual content, passenger personalities, simulated traffic/closures,
@@ -75,7 +77,7 @@ links exposed through the [map data licence page](web/data-license.html).
 |---|---|---|
 | Foundation | Complete locally | FastAPI service, strict API commands, sessions, static delivery, setup documentation |
 | District data | Complete for prototype | Source extract, derived graph/backdrop, restrictions, versioning, service points |
-| Driving slice | Complete for prototype | Keyboard/touch steering, metric physics, follow camera, zoom/overview, warnings, junction assistance |
+| Driving slice | Updated locally | Manual keyboard/touch steering, reverse, full-footprint road confinement, sliding, ordinary exit highlights, advisory stacked-road choices |
 | Passenger loop | Complete locally | Orders, roadside pickup/drop-off checks, route suggestions, fares, replay-safe rewards |
 | Dialogue | Complete for prototype | Three authored passenger personalities with English and Traditional Chinese content |
 | Traffic and closures | Complete for prototype | Seeded congestion, changing closures, route effects, blocked-road handling |
@@ -123,7 +125,7 @@ performance tests disable tracing rather than measuring the recorder's overhead.
 
 ## 6. Recorded verification
 
-The final implementation validation run recorded:
+The initial prototype validation run recorded:
 
 | Suite | Result | Coverage examples |
 |---|---|---|
@@ -137,6 +139,119 @@ This is not a physical phone benchmark.
 
 Tests are in [tests](tests), with browser configuration in
 [playwright.config.mjs](playwright.config.mjs).
+
+### Manual-driving redesign
+
+The user accepted these changes after clarification:
+
+- Confine the complete taxi footprint to approximate road corridors and slide
+  along boundaries where possible.
+- Derive width from road class; keep a conservative world-sized footprint
+  separate from the readable screen-sized taxi icon.
+- Remove steering assistance entirely.
+- Highlight ordinary-junction exits without pausing or opening a popup.
+- Pause for selection only at connected forks whose branches lead to different
+  stacked-road levels. A simple unconnected flyover crossing never qualifies.
+- Selecting an exit adds a local cyan highlight only; another exit is still
+  permitted. Clear the highlight on entering an exit or leaving the approach.
+- Allow wrong-way driving and prohibited turns with warnings.
+- Add low-speed reverse by holding brake after stopping.
+
+Implementation changes:
+
+- Shared widths and a conservative 2.5 m taxi radius are exposed in the map API.
+  Road rendering and physics use this same model.
+- Browser movement is constrained to connected road capsules. Server checkpoints
+  validate intermediate positions and reject off-road paths atomically.
+- Wrong-way reverse edges are marked separately from legal GPS exits.
+- Outgoing branch levels use bounded lookahead. Detection excludes the incoming
+  road behind the taxi and recalculates available choices around closures.
+- The old turn/assist-completion commands and automatic movement code were removed.
+- Reverse uses signed speed, absolute-speed stopping checks, movement-based fuel,
+  and reversed steering response.
+
+Issues caught during the update:
+
+- Reducing speed repeatedly during edge contact killed sliding momentum; boundary
+  handling now removes outward displacement without automatically changing heading.
+- Rendering before the initial session arrived could stop the animation loop;
+  drawing now waits for both map and session state.
+- Comparing all roads around a node could mistake a bridge behind the taxi for
+  a stacked choice. Detection now compares only available exits ahead.
+
+Manual-redesign verification:
+
+| Suite | Result | Added coverage |
+|---|---|---|
+| Python rules/API | 23 passed | Corridor/path validation, warning-only restricted/wrong-way movement, reverse stopping checks, connected stacked choices without automatic movement |
+| JavaScript physics | 8 passed | Sliding, reverse/dead ends, footprint confinement over 6,000 simulation steps, disconnected flyovers, traffic/fuel/closures/bounds |
+| Chromium browser | 16 passed | Manual ordinary junctions, reverse, advisory stacked selector, clock pause, cyan render/clear, alternative exits, existing gameplay/network regressions |
+
+The browser selector test uses a deterministic map fixture for repeatable visual
+behavior; Python tests separately validate choices against the real district graph.
+Reference-browser active-driving measurements remained approximately 60 FPS.
+Physical phone/Safari coverage remains unverified.
+
+### Earlier previews, visible boundaries, and taxi speed
+
+The user requested earlier junction highlights, half-transparent light-red road
+boundaries, and a Toyota Crown taxi-like maximum speed. Clarification selected:
+
+- A four-second preview horizon, clamped to 60–180 m.
+- Thin light-red outlines at 50% opacity, without filling the road red.
+- A 150 km/h arcade cap for both standard and tuned engines.
+
+Implementation:
+
+- Rendering previews follow connected segments to the first fork, including
+  bends and short OSM geometry segments. Closed exits, dead ends, disconnected
+  flyovers, and loops do not introduce speculative choices.
+- The near-junction trigger for the advisory stacked-road popup is unchanged.
+- A cached road-union outline mask avoids internal segment/junction seams and
+  opacity buildup. The road interior retains its original colours.
+- Shared Python/map metadata supplies the 150 / 3.6 m/s cap and acceleration
+  values to browser physics, API validation, and server travel validation.
+- The $160 engine tune raises acceleration from 7 to 9.1 m/s² (+30%), not top
+  speed. Reverse, congestion, fuel, and full-footprint confinement are retained.
+- Toyota's checked heritage page did not establish a top speed. Documentation
+  therefore identifies 150 km/h as the agreed game approximation, not a
+  manufacturer claim or legal speed limit.
+
+Verification for the speed/early-preview update:
+
+| Suite | Result | Added coverage |
+|---|---|---|
+| Python rules/API | 25 passed | Exact-cap movement and API acceptance, above-cap rejection, shared map speed metadata |
+| JavaScript physics | 13 passed | Four-second/minimum/maximum preview horizons, connected bends, closures, loops, disconnected flyovers, equal engine caps, +30% acceleration, high-speed short-segment continuity |
+| Chromium browser | 18 passed | Early exits before stacked popup, unchanged advisory flow, actual light-red boundary pixels/50% compositing, unchanged interior, existing gameplay and performance checks |
+
+The first JavaScript run exposed a strict floating-point distance assertion
+(59.999999999999986 versus 60 m); the test now uses a numerical tolerance.
+Boundary screenshots were inspected. Physical devices and realistic vehicle
+dynamics remain unverified.
+
+### Full forward-road highlights and stronger boundaries
+
+The user requested the entire road ahead and possible exits be highlighted, and
+increased light-red boundary opacity to 80%. Clarification selected the stretch
+from the taxi to the next junction, then each exit to its following junction.
+This supersedes the four-second/60–180 m highlight range above.
+
+- Highlights start at the taxi's projected position, not behind it. They follow
+  bends and short OSM segments, stopping at forks, dead ends, closures, or loops.
+- Available exits are highlighted for their entire stretch to the following
+  junction; the GPS exit stays brighter and a selected exit stays cyan.
+- Forward highlights remain visible while stopped facing forward. No steering,
+  speed, road confinement, or stacked-popup timing changed.
+- Light-red boundary outlines now composite at 80% opacity; road interiors stay
+  unchanged.
+
+Latest verification: **14 JavaScript tests and 18 Chromium browser tests passed**,
+including full multi-segment exit extents, stopped/distant forward visibility,
+closure/loop/flyover isolation, actual highlight path coordinates, 80% compositing,
+the existing advisory-selector flow, and desktop/phone-emulated performance.
+`git diff --check` passed. Python was unchanged and its suite was not rerun for
+this rendering update. Physical phone/Safari coverage remains unverified.
 
 ### Reproduce the checks
 

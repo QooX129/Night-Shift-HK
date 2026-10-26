@@ -1,11 +1,11 @@
-import { stepCar, stepAssist, makeAssist, project, angleDifference } from "./physics.mjs";
+import { stepCar, RoadNetwork } from "./physics.mjs";
 import { MapView } from "./map.mjs";
 import { en, zh } from "./i18n.mjs";
 
 const $ = id => document.getElementById(id);
 let lang = "en", state = null, view = null, mapData, stops;
-let car = { x: 0, y: 0, speed: 0, heading: 0 };
-let paused = true, busy = false, moving = false, pending = null, elapsed = 0, assist = null;
+let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
+let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 const controls = { gas: false, brake: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
@@ -24,8 +24,8 @@ function applyState(next, resetPosition = false) {
   if (mapData && next.version !== mapData.version) throw new Error("Map version changed. Reload to start a new shift.");
   state = next;
   if (resetPosition) {
-    car = { x: next.x, y: next.y, speed: next.speed, heading: next.heading };
-    elapsed = 0;
+    car = { x: next.x, y: next.y, speed: next.speed, heading: next.heading, edge: next.edge };
+    elapsed = 0; trail = [];
   }
   updateUI();
 }
@@ -60,8 +60,8 @@ async function send(action, fields = {}) {
   } catch (error) {
     if (error.status && error.status < 500) {
       pending = null;
-      car = { x: state.x, y: state.y, speed: 0, heading: state.heading };
-      elapsed = 0;
+      car = { x: state.x, y: state.y, speed: 0, heading: state.heading, edge: state.edge };
+      elapsed = 0; trail = [];
     } else error.message = `${t("retryNetwork")} (${error.message})`;
     showError(error, Boolean(pending));
     throw error;
@@ -70,9 +70,9 @@ async function send(action, fields = {}) {
 async function flush() {
   while (moving) await new Promise(resolve => setTimeout(resolve, 10));
   if (!state || (elapsed < 0.001 && Math.hypot(car.x - state.x, car.y - state.y) < 0.05)) return;
-  const dt = elapsed; elapsed = 0;
+  const dt = elapsed, samples = trail; elapsed = 0; trail = [];
   moving = true;
-  try { await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt }); }
+  try { await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples }); }
   finally { moving = false; }
 }
 async function perform(task) {
@@ -104,22 +104,20 @@ async function resume() {
 }
 function localMatch() {
   if (!state || !view) return null;
-  const edge = view.edges.get(state.edge);
-  return { edge, ...project(car, mapData.nodes[edge.a], mapData.nodes[edge.b]) };
+  return { edge: roads.edges.get(car.edge) };
 }
 function nearJunction() {
-  if (car.speed < 0.6 || !state.junction || !state.options.length || junctionLatch === state.junction || state.warning || assist) return false;
-  const match = localMatch(), node = mapData.nodes[state.junction];
-  const angle = Math.atan2(node[1] - mapData.nodes[match.edge.a][1], node[0] - mapData.nodes[match.edge.a][0]);
-  const triggerDistance = Math.min(32, match.edge.length * 0.4);
-  return match.distance < 16 && Math.hypot(car.x - node[0], car.y - node[1]) < triggerDistance && Math.cos(car.heading - angle) > 0.35;
+  const approach = roads.approach(car, new Set(state.closed));
+  return approach?.stacked && junctionLatch !== approach.node;
 }
 async function promptJunction() {
+  paused = true;
+  while (moving) await new Promise(resolve => setTimeout(resolve, 10));
+  if ($("error-dialog").open) return;
   await perform(async () => {
-    paused = true;
     await flush(); car.speed = 0;
     await send("pause", { paused: true });
-    if (!state.options.length) {
+    if (!state.stacked_choice) {
       await send("pause", { paused: false }); paused = false;
       return;
     }
@@ -141,11 +139,11 @@ function renderExits() {
     text.textContent = `${t(direction)} · ${lang === "zh" ? option.zh : option.name}`;
     const small = document.createElement("small");
     small.textContent = option.edge === suggested ? t("suggested") : lang === "zh" ? option.name : option.zh;
+    if (option.restricted) small.textContent += ` · ${t("restricted")}`;
     text.append(small); button.append(arrow, text);
     button.addEventListener("click", () => perform(async () => {
-      await send("turn", { incoming: state.edge, exit: option.edge });
-      junctionLatch = state.junction || view.edges.get(state.assist[0]).b;
-      assist = makeAssist(car, state.assist, view.edges, mapData.nodes);
+      await send("select_road", { incoming: state.edge, exit: option.edge });
+      junctionLatch = state.selected_junction;
       $("junction").close(); paused = false; resetControls();
     }));
     $("exits").append(button);
@@ -200,25 +198,15 @@ function frame(timestamp) {
       const dt = 1 / 60;
       stepBank -= dt;
       const match = localMatch();
-      const factor = match.distance <= 18 ? (state.traffic[match.edge.way] || 1) : 1;
-      if (assist) {
-        if (stepAssist(car, assist, dt, factor, state.fuel, controls.brake)) {
-          const exit = assist.exit;
-          paused = true;
-          perform(async () => {
-            await flush();
-            if (state.edge !== exit) throw new Error("Turn alignment was lost. Return to the road and try again.");
-            await send("assist_done");
-            assist = null; paused = false; resetControls();
-          });
-        }
-      } else {
-        const old = { ...car };
-        boundary = !stepCar(car, controls, dt, { maxSpeed: state.upgrades.includes("engine") ? 23 : 18, traffic: factor, fuel: state.fuel, bounds: mapData.bounds });
-        if (state.closed.includes(match.edge.way) && match.distance < 20 && car.speed > 0) {
-          Object.assign(car, old); car.speed = 0; closureWarning = true;
-        } else if (match.distance > 24 || !state.closed.includes(match.edge.way)) closureWarning = false;
-      }
+      const factor = state.traffic[match.edge.way] || 1;
+      const result = stepCar(car, controls, dt, {
+        acceleration: state.upgrades.includes("engine") ? roads.driving.upgraded_acceleration : roads.driving.acceleration,
+        traffic: factor,
+        fuel: state.fuel, roads, closed: new Set(state.closed),
+      });
+      boundary = result.blocked && !result.closed;
+      closureWarning = result.closed;
+      trail.push({ x: car.x, y: car.y, heading: car.heading });
       elapsed += dt;
       if (paused) break;
     }
@@ -226,7 +214,7 @@ function frame(timestamp) {
       // Movement failures are displayed by send(); stop the simulation until resolved.
       flush().catch(error => { if (!$("error-dialog").open) showError(error, false); });
     }
-    if (!busy && !moving && !pending && nearJunction()) promptJunction();
+    if (!busy && nearJunction()) promptJunction();
     if (junctionLatch) {
       const node = mapData.nodes[junctionLatch];
       if (Math.hypot(car.x - node[0], car.y - node[1]) > 60) junctionLatch = null;
@@ -238,9 +226,9 @@ function frame(timestamp) {
       $("notice").textContent = t("wait");
     }
   }
-  if (view) view.render(car, state, lang, assist);
-  $("speed").textContent = Math.round(car.speed * 3.6);
-  $("drive-mode").textContent = t(assist ? "assist" : "manual");
+  if (view && state) view.render(car, state, lang, roads.preview(car, new Set(state.closed)));
+  $("speed").textContent = Math.round(Math.abs(car.speed) * 3.6);
+  $("drive-mode").textContent = t(car.speed < -0.05 ? "reverse" : "manual");
   requestAnimationFrame(frame);
 }
 
@@ -262,7 +250,7 @@ $("cancel-job").addEventListener("click", () => perform(async () => {
   const wasPaused = paused; paused = true; await flush(); await send("next"); paused = wasPaused;
 }));
 for (const id of ["recover", "recover-pause"]) $(id).addEventListener("click", () => perform(async () => {
-  await send("recover"); applyState(state, true); assist = null; junctionLatch = null; openDialog("garage-dialog");
+  await send("recover"); applyState(state, true); junctionLatch = null; openDialog("garage-dialog");
 }));
 $("refuel").addEventListener("click", () => perform(() => send("refuel")));
 for (const kind of ["engine", "efficiency"]) $(kind).addEventListener("click", () => perform(() => send("upgrade", { kind })));
@@ -279,7 +267,6 @@ $("retry").addEventListener("click", async () => {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pending),
     });
     pending = null; applyState(next, true);
-    assist = next.assist.length ? makeAssist(car, next.assist, view.edges, mapData.nodes) : null;
     await send("pause", { paused: true });
     openDialog("pause-dialog");
   } catch (error) { showError(error, Boolean(pending)); }
@@ -316,6 +303,7 @@ openDialog("welcome");
 requestAnimationFrame(frame);
 try {
   [mapData, stops] = await Promise.all([fetchJSON("/api/map"), fetchJSON("/api/stops")]);
+  roads = new RoadNetwork(mapData);
   view = new MapView($("map"), mapData, stops);
   applyState(await fetchJSON("/api/sessions", { method: "POST" }), true);
   view.camera = { x: car.x, y: car.y };

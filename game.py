@@ -6,7 +6,7 @@ import random
 import time
 from uuid import uuid4
 
-from roads import Edge, Point, RoadMap
+from roads import DRIVING, Edge, Point, RoadMap
 
 
 class RuleError(ValueError):
@@ -48,8 +48,9 @@ class Session:
     closed: set[int] = field(default_factory=set)
     traffic: dict[int, float] = field(default_factory=dict)
     incident: int = 0
-    last_assist: str | None = None
-    assisted_edges: list[str] = field(default_factory=list)
+    selected_exit: str | None = None
+    selected_junction: str | None = None
+    warning: str = ""
     route: list[str] | None = None
     route_key: tuple | None = None
     route_point: Point | None = None
@@ -158,7 +159,7 @@ class Game:
         current = self.roads.edges[session.edge]
         target = self.roads.edges[stop.edge]
         return (
-            session.speed <= 0.6 and math.dist(session.point, stop.point) <= 13
+            abs(session.speed) <= 0.6 and math.dist(session.point, stop.point) <= 13
             and current.way == target.way
             and (current.layer, current.bridge, current.tunnel) == (target.layer, target.bridge, target.tunnel)
         )
@@ -181,27 +182,63 @@ class Game:
         left, top, right, bottom = self.roads.bounds
         if not (left <= point[0] <= right and top <= point[1] <= bottom):
             raise RuleError("Outside the playable district. Use Return to road.")
-        if not 0 <= speed <= 32 or not 0 <= elapsed <= 4:
+        if not -4 <= speed <= DRIVING["max_speed"] or not 0 <= elapsed <= 4:
             raise RuleError("Invalid speed or movement interval.")
         if session.paused and (distance > 0.5 or elapsed > 0.01):
             raise RuleError("Resume the game before driving.")
-        if distance > elapsed * 32 + 6:
+        if distance > elapsed * DRIVING["max_speed"] + 6:
             raise RuleError("Movement jumped too far. Pause and return to the road.")
         if session.fuel <= 0 and distance > 0.5:
             raise RuleError("Out of fuel. Call recovery.")
         previous = self.roads.edges[session.edge]
-        match = self.roads.match(point, heading, previous)
-        if match and match.distance < 18 and match.edge.way in session.closed and distance > 0.5:
-            raise RuleError("Road closed. Stop and choose another road, or call recovery.")
-        if match and match.distance < 22:
-            if match.edge.id != previous.id:
-                session.history = self.roads.history(session.history, match.edge.way)
-            session.edge = match.edge.id
+        history = session.history
+        warning = session.warning
+        cursor = old
+        total_distance = 0.0
+        trail = [*payload.get("trail", []), {"x": point[0], "y": point[1], "heading": heading}]
+        for sample in trail:
+            destination = (float(sample["x"]), float(sample["y"]))
+            sample_heading = float(sample["heading"])
+            if not all(math.isfinite(v) for v in (*destination, sample_heading)):
+                raise RuleError("Movement must contain finite numbers.")
+            segment = math.dist(cursor, destination)
+            total_distance += segment
+            if total_distance > elapsed * DRIVING["max_speed"] + 6:
+                raise RuleError("Movement jumped too far. Pause and return to the road.")
+            steps = max(1, math.ceil(segment / 0.4))
+            origin = cursor
+            for i in range(1, steps + 1):
+                sample_point = (origin[0] + (destination[0] - origin[0]) * i / steps,
+                                origin[1] + (destination[1] - origin[1]) * i / steps)
+                radius = self.roads.document["driving"]["taxi_radius"]
+                if not (left + radius <= sample_point[0] <= right - radius
+                        and top + radius <= sample_point[1] <= bottom - radius):
+                    raise RuleError("The taxi footprint must remain inside the playable district.")
+                match = self.roads.corridor_match(sample_point, sample_heading, previous)
+                if match is None:
+                    raise RuleError("The taxi footprint must remain on a connected road.")
+                if match.edge.way in session.closed and segment > 0.01:
+                    raise RuleError("Road closed. Stop and choose another road, or call recovery.")
+                if match.edge.id != previous.id:
+                    if previous.b == match.edge.a and previous.a != match.edge.b:
+                        warning = "" if self.roads.legal(previous, match.edge, history) else "restricted"
+                    history = self.roads.history(history, match.edge.way)
+                    previous = match.edge
+            cursor = destination
+        if session.paused and total_distance > 0.01:
+            raise RuleError("Resume the game before driving.")
+        if session.fuel <= 0 and total_distance > 0.01:
+            raise RuleError("Out of fuel. Call recovery.")
+        session.edge, session.history, session.warning = previous.id, history, warning
+        if session.selected_junction:
+            node = self.roads.nodes[session.selected_junction]
+            if previous.a == session.selected_junction or math.dist(point, node) > 45:
+                session.selected_exit = session.selected_junction = None
         session.point, session.speed, session.heading = point, speed, heading
         session.elapsed += elapsed
         efficiency = 0.65 if "efficiency" in session.upgrades else 1
-        session.fuel = max(0, session.fuel - distance * 0.006 * efficiency)
-        if session.elapsed // 100 > session.incident and self.incident_ways and not session.assisted_edges:
+        session.fuel = max(0, session.fuel - total_distance * 0.006 * efficiency)
+        if session.elapsed // 100 > session.incident and self.incident_ways:
             session.incident = int(session.elapsed // 100)
             occupied = self.roads.edges[session.edge].way
             choices = [w for w in self.incident_ways if w != occupied]
@@ -253,7 +290,7 @@ class Game:
                 raise RuleError("Finish or cancel the current order first.")
             self.offer(session)
         elif action == "recover":
-            if not session.paused and session.speed > 0.6:
+            if not session.paused and abs(session.speed) > 0.6:
                 raise RuleError("Stop before calling recovery.")
             edge = self.roads.edges[self.depot.edge]
             session.point = self.depot.point
@@ -262,8 +299,8 @@ class Game:
             session.speed, session.paused = 0, True
             session.money = max(0, session.money - 20)
             session.fuel = max(session.fuel, 12)
-            session.assisted_edges = []
-            session.last_assist = None
+            session.selected_exit = session.selected_junction = None
+            session.warning = ""
             session.route_key = None
             session.dialogue = "recovery"
         elif action == "refuel":
@@ -287,14 +324,8 @@ class Game:
             session.money -= price
             session.upgrades.append(kind)
             session.dialogue = "upgrade"
-        elif action == "turn":
-            self.start_turn(session, payload["incoming"], payload["exit"])
-        elif action == "assist_done":
-            if not session.assisted_edges:
-                raise RuleError("There is no assisted turn to finish.")
-            if session.edge not in session.assisted_edges:
-                raise RuleError("Turn not yet aligned with the selected exit.")
-            session.assisted_edges = []
+        elif action == "select_road":
+            self.select_road(session, payload["incoming"], payload["exit"])
         else:
             raise RuleError("Unknown game action.")
         session.seq = seq
@@ -303,43 +334,32 @@ class Game:
         session.last_response = result
         return result
 
-    def start_turn(self, session: Session, incoming_id: str, exit_id: str) -> None:
+    def select_road(self, session: Session, incoming_id: str, exit_id: str) -> None:
         incoming = self.roads.edges.get(incoming_id)
         if incoming is None or incoming.id != session.edge:
             raise RuleError("The intersection no longer matches your road.")
-        match = self.roads.match(session.point, session.heading, incoming)
+        match = self.roads.corridor_match(session.point, session.heading, incoming)
         if (
-            not session.paused or not match or match.distance > 18 or match.wrong_way
-            or math.dist(session.point, self.roads.nodes[incoming.b]) > 42
+            not session.paused or not match
+            or math.dist(session.point, self.roads.nodes[incoming.b]) > min(32, incoming.length * 0.4) + 1.5
+            or math.cos(session.heading - self.roads.angle(incoming)) <= 0.35
+            or not self.roads.stacked_choice(incoming, session.closed)
         ):
             raise RuleError("Stop on the approach before choosing a turn.")
-        options = self.roads.exits(incoming, session.history, session.closed)
+        options = self.roads.branches(incoming, session.closed)
+        if len(options) < 2:
+            raise RuleError("There is no stacked-road choice on this approach.")
         chosen = next((e for e in options if e.id == exit_id), None)
         if chosen is None:
-            raise RuleError("That exit is restricted or closed.")
-        path = [incoming.id, chosen.id]
-        visited = set(path)
-        edge = chosen
-        distance = chosen.length
-        history = self.roads.history(session.history, chosen.way)
-        while distance < 24 and len(self.roads.neighbors.get(edge.b, ())) <= 2:
-            exits = self.roads.exits(edge, history, session.closed)
-            if len(exits) != 1 or exits[0].id in visited:
-                break
-            edge = exits[0]
-            path.append(edge.id)
-            visited.add(edge.id)
-            history = self.roads.history(history, edge.way)
-            distance += edge.length
-        session.assisted_edges = path
-        session.last_assist = incoming.b
+            raise RuleError("That exit is disconnected or closed.")
+        session.selected_exit, session.selected_junction = chosen.id, incoming.b
         session.paused = False
-        session.dialogue = "turn"
+        session.dialogue = "selected"
 
     def snapshot(self, session: Session) -> dict:
         edge = self.roads.edges[session.edge]
-        match = self.roads.match(session.point, session.heading, edge)
-        warning = "offroad" if not match or match.distance > 18 else "wrongway" if match.wrong_way else ""
+        wrongway = edge.oneway and (edge.wrongway != (session.speed < -0.05))
+        warning = "wrongway" if wrongway else session.warning
         target = self.target(session)
         no_route = False
         if target:
@@ -351,10 +371,11 @@ class Game:
         else:
             session.route = None
         options = []
-        if not warning and len(self.roads.neighbors.get(edge.b, ())) >= 3:
-            for nxt in self.roads.exits(edge, session.history, session.closed):
+        if len(self.roads.neighbors.get(edge.b, ())) >= 3:
+            for nxt in self.roads.branches(edge, session.closed):
                 delta = math.atan2(math.sin(self.roads.angle(nxt) - self.roads.angle(edge)), math.cos(self.roads.angle(nxt) - self.roads.angle(edge)))
-                options.append({"edge": nxt.id, "name": nxt.name, "zh": nxt.zh, "angle": delta})
+                options.append({"edge": nxt.id, "name": nxt.name, "zh": nxt.zh, "angle": delta,
+                                "restricted": not self.roads.legal(edge, nxt, session.history)})
         return {
             "id": session.id, "version": self.roads.version, "seq": session.seq,
             "x": session.point[0], "y": session.point[1], "heading": session.heading,
@@ -366,8 +387,9 @@ class Game:
             "passenger": PASSENGERS[session.passenger], "dialogue": session.dialogue,
             "route": session.route, "no_route": no_route, "warning": warning,
             "options": options, "junction": edge.b if options else None,
+            "stacked_choice": self.roads.stacked_choice(edge, session.closed),
             "closed": sorted(session.closed), "traffic": session.traffic,
-            "assist": session.assisted_edges[:],
+            "selected_exit": session.selected_exit, "selected_junction": session.selected_junction,
             "service_ready": bool(target and self.stop_valid(session, target)),
             "depot_ready": self.stop_valid(session, self.depot),
         }

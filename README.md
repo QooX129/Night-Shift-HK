@@ -21,21 +21,41 @@ source map, or access a remotely hosted game.
 
 ## Play
 
-- **W / Up:** accelerate. **S / Down:** brake. **A/D / Left/Right:** steer.
+- **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
+  reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
 - Phones show separate touch steering, brake, and accelerator controls.
 - **Space / Pause:** pause the taxi and simulation clock. Changing browser tabs
   also pauses the game.
 - Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
   Stop at the **yellow** destination marker to complete the trip and receive earnings.
 - The route is a suggestion; you may choose another legal route.
-- On approaching a junction, choose an exit. Turn assist follows connected road
-  geometry at low speed, then returns manual steering. Brake still works during
-  assistance; steering and the accelerator do not fight the assisted turn.
-- Off-road and wrong-way driving give warnings rather than collisions.
+- Steering is always manual. Ordinary junctions highlight the connected exits
+  without opening a popup; the GPS-recommended exit is brighter. Highlight the
+  whole road ahead from the taxi to the next junction, then each available exit
+  to its following junction or dead end, including short segments and bends.
+  This remains visible when stopped facing forward; closed roads and disconnected
+  crossings are excluded. Stacked-road popup timing is unchanged.
+- Only a connected fork with exits leading to different stacked-road levels
+  pauses for a choice. Selecting an exit highlights it **cyan** locally, without
+  moving or turning the taxi. Another connected exit remains available; the
+  highlight clears once you enter an exit or leave the junction area.
+- An unconnected flyover crossing never opens a selector or changes the current
+  road level. Reach other levels through actual connecting roads/ramps.
+- The full simulated taxi footprint stays inside approximate road corridors.
+  Thin light-red outlines mark the road edges at 80% opacity, without tinting
+  the road interior.
+  Contact with a road edge removes outward movement and allows sliding along
+  the edge. Reverse if facing a dead end or a boundary.
+- Wrong-way entry and restricted turns remain possible with warnings. GPS routes
+  still respect the directed road graph and supported turn restrictions.
 - Orange roads have simulated congestion; red roads are closed. A new simulated
   closure is selected approximately every 100 seconds of active game time.
 - The **blue** marker is the taxi rest stop. Stop there to refuel or buy upgrades.
   Fuel efficiency costs $100; the engine tune costs $160. Upgrades last one shift.
+  The engine tune improves forward acceleration by 30%, not top speed.
+- Standard and tuned engines share a **150 km/h** top-speed cap; congestion can
+  lower it. This is the agreed Crown Comfort-inspired arcade approximation,
+  **not a verified Toyota specification or a legal road speed limit**.
 - If stuck or out of fuel, pause and use **Return to rest stop**. Recovery costs up
   to $20, adds emergency fuel, and does not complete the passenger trip.
 - **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
@@ -47,7 +67,8 @@ sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
 
 - Locally packaged, attributed district roads, buildings, parks, and bilingual road names.
 - Directed road routing with node and ordered via-way turn restrictions.
-- Keyboard and touch driving, warnings, pause/resume, and assisted junction turns.
+- Keyboard/touch manual driving, low-speed reverse, road boundaries, warnings,
+  pause/resume, and advisory stacked-road choices.
 - Passenger orders, pickup/drop-off validation, earnings, and bilingual personalities.
 - Seeded congestion, changing simulated closures, fuel, refuelling, and two upgrades.
 - Explicit network failure/retry and idempotent commands.
@@ -76,17 +97,40 @@ Safari performance. Screenshots and failed-test traces are written to
 
 ### Verified local build
 
-- 17 Python rule/API tests pass, including driving a complete passenger trip over
-  the real graph and replay-safe trip completion.
-- 4 JavaScript physics tests pass.
-- 12 Chromium browser tests pass across desktop and phone-emulated viewports,
-  including assisted junction turns, bilingual UI, touch pedals, purchases,
-  connection failures/retry, and slow acknowledgements.
+- 25 Python rule/API tests pass, including a complete real-graph passenger trip,
+  replay-safe rewards, road containment, advisory choices, warning-only turns,
+  and acceptance at/rejection above the shared 150 km/h cap.
+- 14 JavaScript physics tests pass, including boundary sliding, reverse, extended
+  footprint containment, disconnected flyovers, full forward/exit paths across short
+  segments, exact speed caps, acceleration upgrades, and high-speed corridor travel.
+- 18 Chromium browser tests pass across desktop and phone-emulated viewports,
+  including manual junctions, cyan selection rendering/clearing, reverse,
+  full forward highlighting before the popup, 80%-opacity outline rendering,
+  bilingual UI, touch pedals, purchases, connection retry, and slow acknowledgements.
 - Active free-steering animation measured approximately 60 FPS in both reference
   Chromium viewports. Performance tests disable trace recording to avoid measuring
   the recorder instead of the game.
-- The packaged dataset contains 5,194 nodes, 6,682 directed edges, and 291 parsed
-  turn restrictions. No unhandled restriction relations were found in this extract.
+- The packaged source graph contains 5,194 nodes, 6,682 directed edges, and 291
+  parsed turn restrictions. The served map additionally includes explicitly
+  marked wrong-way reverse edges for manual driving; these are not legal GPS exits.
+  No unhandled restriction relations were found in this extract.
+
+### Road-boundary model
+
+Road widths are game estimates shared by rendering, browser physics, and server
+validation: primary 16 m, secondary 14 m, tertiary 12 m, local/link roads 10 m,
+and service/living streets 8 m. These are not surveyed road or lane widths.
+
+A conservative 2.5 m-radius circle encloses the simulated taxi body. Its centre
+stays within a road capsule narrowed by that radius, keeping the complete
+footprint inside the rendered road. The readable screen-sized icon is separate
+and can extend beyond the road edge at some zoom levels.
+
+Movement checkpoints carry the intervening positions. The backend checks the
+connected road corridor along those paths, rejecting off-road movement and
+unconnected level changes rather than silently snapping the taxi.
+Stacked-fork detection follows each outgoing branch for up to 100 m or the next
+fork, using available layer/bridge/tunnel tags. Incomplete tags can miss a choice.
 
 Public hosting is intentionally deferred. A physical phone, Safari, and the Docker
 image have not been tested; the Dockerfile is provided as a deployment option, not
@@ -146,10 +190,10 @@ multiplayer service.
 
 ## Boundaries and known limitations
 
-- Real centre-line geometry is not a lane/collision mesh. Buildings, other cars,
-  pedestrians, reverse gear, and physical traffic lights are not simulated.
-- Closely spaced OSM nodes appear as separate junctions; turn assist follows
-  polylines, not realistic vehicle dynamics. No real navigation accuracy is claimed.
+- Road capsules derived from centre lines are not a surveyed lane/kerb mesh.
+  Buildings, other cars, pedestrians, and physical traffic lights are not simulated.
+- Closely spaced OSM nodes can remain separate junctions; highlights and
+  stacked-fork detection are game approximations. No real navigation accuracy is claimed.
 - Road matching considers direction, prior connectivity, and level metadata,
   but free movement at ambiguous stacked roads can still require recovery.
 - The graph supports ordered via-way restrictions but does not implement every

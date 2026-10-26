@@ -56,25 +56,48 @@ test("touch controls, responsive layout, and visible attribution", async ({ page
   await page.screenshot({ path: testInfo.outputPath("game.png") });
 });
 
-test("junction choice assists into the selected exit then returns manual control", async ({ page }, testInfo) => {
-  let latest;
+test("ordinary real-map junctions stay manual and movement remains within road corridors", async ({ page }) => {
+  const moves = [];
   page.on("response", async response => {
-    if (response.url().includes("/commands") && response.ok()) latest = await response.json();
+    if (response.url().includes("/commands") && response.ok()) {
+      const body = await response.json();
+      if (body.elapsed > 0) moves.push(body);
+    }
   });
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
   await expect(page.locator("#welcome")).not.toBeVisible();
   await page.keyboard.down("w");
-  await expect(page.locator("#junction")).toBeVisible({ timeout: 12000 });
+  await page.waitForTimeout(6500);
   await page.keyboard.up("w");
-  await page.screenshot({ path: testInfo.outputPath("junction.png") });
-  await page.locator(".exit-option").first().click();
-  await expect(page.locator("#drive-mode")).toHaveText("TURN ASSIST");
-  await expect(page.locator("#drive-mode")).toHaveText("MANUAL", { timeout: 20000 });
+  await page.locator("#pause").click();
+  await expect(page.locator("#pause-dialog")).toBeVisible();
   await expect(page.locator("#error-dialog")).not.toBeVisible();
   await expect(page.locator("#junction")).not.toBeVisible();
-  expect(latest.assist).toEqual([]);
+  expect(moves.length).toBeGreaterThan(5);
+  const map = await (await page.request.get("/api/map")).json();
+  const edges = new Map(map.edges.map(e => [e.id, e]));
+  for (const position of moves) {
+    const edge = edges.get(position.edge), a = map.nodes[edge.a], b = map.nodes[edge.b];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const t = Math.max(0, Math.min(1, ((position.x - a[0]) * dx + (position.y - a[1]) * dy) / (dx * dx + dy * dy)));
+    const distance = Math.hypot(position.x - a[0] - t * dx, position.y - a[1] - t * dy);
+    expect(distance + map.driving.taxi_radius).toBeLessThanOrEqual(map.driving.widths[edge.kind] / 2 + 1e-5);
+  }
+});
+
+test("brake pedal holds low-speed reverse without leaving the road", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+  await page.keyboard.down("s");
+  await expect(page.locator("#drive-mode")).toHaveText("REVERSE");
+  await page.keyboard.up("s");
+  await page.locator("#pause").click();
+  await expect(page.locator("#pause-dialog")).toBeVisible();
+  await expect(page.locator("#error-dialog")).not.toBeVisible();
 });
 
 test("lost connection pauses and offers idempotent retry", async ({ page }) => {

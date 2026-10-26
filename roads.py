@@ -1,14 +1,32 @@
 """Metric road geometry, turn restrictions, and routing for the district."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 import heapq
 import itertools
 import json
 import math
 from pathlib import Path
+from typing import TypedDict
 
 
 Point = tuple[float, float]
+class DrivingConfig(TypedDict):
+    taxi_radius: float
+    widths: dict[str, float]
+    max_speed: float
+    acceleration: float
+    upgraded_acceleration: float
+
+
+DRIVING: DrivingConfig = {
+    "taxi_radius": 2.5,
+    "max_speed": 150 / 3.6,
+    "acceleration": 7,
+    "upgraded_acceleration": 9.1,
+    "widths": {"primary": 16, "secondary": 14, "tertiary": 12, "unclassified": 10,
+               "residential": 10, "living_street": 8, "service": 8,
+               "primary_link": 10, "secondary_link": 10, "tertiary_link": 10},
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +43,7 @@ class Edge:
     layer: str
     bridge: str
     tunnel: str
+    wrongway: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,9 +69,17 @@ class RoadMap:
         self.bounds: list[float] = self.document["bounds"]
         self.nodes: dict[str, Point] = {k: tuple(v) for k, v in self.document["nodes"].items()}
         self.edges = {e["id"]: Edge(**e) for e in self.document["edges"]}
+        existing = {(e.way, e.a, e.b) for e in self.edges.values()}
+        for edge in list(self.edges.values()):
+            if (edge.way, edge.b, edge.a) not in existing:
+                reverse = replace(edge, id=f"~{edge.id}", a=edge.b, b=edge.a, wrongway=True)
+                self.edges[reverse.id] = reverse
+        self.document["edges"] = [asdict(e) for e in self.edges.values()]
+        self.document["driving"] = DRIVING
+        self.version += "-manual-2"
+        self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
-        self.grid: dict[tuple[int, int], list[Edge]] = {}
         self.restrictions = self.document["restrictions"]
         self.history_size = max((len(r.get("via_ways", [])) + 1 for r in self.restrictions), default=1)
         self.node_rules: dict[str, list[dict]] = {}
@@ -67,10 +94,64 @@ class RoadMap:
             self.outgoing.setdefault(edge.a, []).append(edge)
             self.neighbors.setdefault(edge.a, set()).add(edge.b)
             self.neighbors.setdefault(edge.b, set()).add(edge.a)
-            a, b = self.nodes[edge.a], self.nodes[edge.b]
-            for x in range(math.floor(min(a[0], b[0]) / 60), math.floor(max(a[0], b[0]) / 60) + 1):
-                for y in range(math.floor(min(a[1], b[1]) / 60), math.floor(max(a[1], b[1]) / 60) + 1):
-                    self.grid.setdefault((x, y), []).append(edge)
+        self.branch_levels = {edge.id: self.branch_level(edge) for edge in self.edges.values()}
+        self.document["branch_levels"] = {key: list(level) for key, level in self.branch_levels.items()}
+        self.document["stacked_junctions"] = sorted({
+            edge.b for edge in self.edges.values() if self.stacked_choice(edge, set())
+        })
+
+    def radius(self, edge: Edge) -> float:
+        return DRIVING["widths"].get(edge.kind, 10) / 2 - DRIVING["taxi_radius"]
+
+    def corridor_edges(self, point: Point, previous: Edge) -> list[Edge]:
+        """Reach other segments only through nearby shared OSM nodes, never crossings."""
+        found = {previous.id: previous}
+        stack = [previous]
+        while stack:
+            edge = stack.pop()
+            for node in (edge.a, edge.b):
+                if math.dist(point, self.nodes[node]) > self.radius(edge) + 1:
+                    continue
+                for nxt in self.outgoing.get(node, []):
+                    if nxt.id not in found:
+                        found[nxt.id] = nxt
+                        stack.append(nxt)
+        # Opposite directions share one physical segment even far from its endpoints.
+        for edge in self.outgoing.get(previous.b, []):
+            if edge.b == previous.a and edge.way == previous.way:
+                found[edge.id] = edge
+        return list(found.values())
+
+    def corridor_match(self, point: Point, heading: float, previous: Edge) -> Match | None:
+        matches = []
+        for edge in self.corridor_edges(point, previous):
+            nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])
+            if distance <= self.radius(edge) + 1e-6:
+                score = distance + (1 - math.cos(heading - self.angle(edge))) * 0.15
+                matches.append((score, edge.id, Match(edge, nearest, distance, fraction, edge.wrongway)))
+        return min(matches, key=lambda m: (m[0], m[1]))[2] if matches else None
+
+    def branches(self, incoming: Edge, closed: set[int]) -> list[Edge]:
+        return [e for e in self.outgoing.get(incoming.b, [])
+                if e.b != incoming.a and e.way not in closed]
+
+    def branch_level(self, edge: Edge) -> tuple[str, str, str]:
+        distance, seen = 0.0, {edge.a}
+        signature = (edge.layer, edge.bridge, edge.tunnel)
+        while distance < 100:
+            distance += edge.length
+            if (edge.layer, edge.bridge, edge.tunnel) != ("0", "no", "no"):
+                return (edge.layer, edge.bridge, edge.tunnel)
+            seen.add(edge.a)
+            choices = [e for e in self.outgoing.get(edge.b, []) if e.b not in seen]
+            if len(choices) != 1:
+                break
+            edge = choices[0]
+        return signature
+
+    def stacked_choice(self, incoming: Edge, closed: set[int]) -> bool:
+        options = self.branches(incoming, closed)
+        return len(options) >= 2 and len({self.branch_levels[e.id] for e in options}) > 1
 
     def angle(self, edge: Edge) -> float:
         a, b = self.nodes[edge.a], self.nodes[edge.b]
@@ -82,7 +163,7 @@ class RoadMap:
         return (*previous, way)[-self.history_size:]
 
     def legal(self, incoming: Edge, outgoing: Edge, history: tuple[int, ...]) -> bool:
-        if incoming.b != outgoing.a:
+        if incoming.b != outgoing.a or outgoing.wrongway:
             return False
         reverse = incoming.a == outgoing.b
         if reverse and len(self.neighbors.get(incoming.b, ())) > 1:
@@ -120,30 +201,6 @@ class RoadMap:
             e for e in self.outgoing.get(incoming.b, [])
             if e.way not in closed and self.legal(incoming, e, history)
         ]
-
-    def match(self, point: Point, heading: float, previous: Edge | None = None) -> Match | None:
-        gx, gy = math.floor(point[0] / 60), math.floor(point[1] / 60)
-        candidates = {}
-        for x in range(gx - 1, gx + 2):
-            for y in range(gy - 1, gy + 2):
-                for edge in self.grid.get((x, y), []):
-                    candidates[edge.id] = edge
-        best = None
-        best_score = math.inf
-        for edge in candidates.values():
-            nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])
-            alignment = math.cos(heading - self.angle(edge))
-            score = distance + (1 - alignment) * 5
-            if previous:
-                connected = edge.id == previous.id or edge.a in (previous.a, previous.b) or edge.b in (previous.a, previous.b)
-                if not connected:
-                    score += 14
-                if (edge.layer, edge.bridge, edge.tunnel) != (previous.layer, previous.bridge, previous.tunnel) and not connected:
-                    score += 35
-            if score < best_score:
-                best_score = score
-                best = Match(edge, nearest, distance, fraction, alignment < -0.35)
-        return best if best and best.distance <= 32 else None
 
     def route(self, start: Edge, target: Edge, history: tuple[int, ...], closed: set[int], traffic: dict[int, float]) -> list[str] | None:
         if target.way in closed:

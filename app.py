@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from game import Game, RuleError
-from roads import RoadMap
+from roads import DRIVING, RoadMap
 
 ROOT = Path(__file__).resolve().parent
 mimetypes.add_type("text/javascript", ".mjs")
@@ -23,13 +23,17 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class Move(StrictModel):
-    action: Literal["move"]
+class Position(StrictModel):
     x: float = Field(allow_inf_nan=False)
     y: float = Field(allow_inf_nan=False)
     heading: float = Field(allow_inf_nan=False)
-    speed: float = Field(ge=0, le=32, allow_inf_nan=False)
+
+
+class Move(Position):
+    action: Literal["move"]
+    speed: float = Field(ge=-4, le=DRIVING["max_speed"], allow_inf_nan=False)
     dt: float = Field(ge=0, le=4, allow_inf_nan=False)
+    trail: list[Position] = Field(default_factory=list, max_length=240)
 
 
 class Pause(StrictModel):
@@ -37,8 +41,8 @@ class Pause(StrictModel):
     paused: bool
 
 
-class Turn(StrictModel):
-    action: Literal["turn"]
+class SelectRoad(StrictModel):
+    action: Literal["select_road"]
     incoming: str = Field(max_length=100)
     exit: str = Field(max_length=100)
 
@@ -49,12 +53,12 @@ class Upgrade(StrictModel):
 
 
 class Simple(StrictModel):
-    action: Literal["accept", "service", "next", "recover", "refuel", "assist_done"]
+    action: Literal["accept", "service", "next", "recover", "refuel"]
 
 
 class Command(StrictModel):
     seq: int = Field(ge=1)
-    command: Annotated[Move | Pause | Turn | Upgrade | Simple, Field(discriminator="action")]
+    command: Annotated[Move | Pause | SelectRoad | Upgrade | Simple, Field(discriminator="action")]
 
 
 @app.get("/api/health")
@@ -63,8 +67,8 @@ def health() -> dict:
 
 
 @app.get("/api/map")
-def map_data() -> FileResponse:
-    return FileResponse(ROOT / "data" / "district.json", media_type="application/json")
+def map_data() -> dict:
+    return roads.document
 
 
 @app.get("/api/source")
