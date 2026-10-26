@@ -69,8 +69,17 @@ export class RoadNetwork {
       if (!inBounds(point)) continue;
       // Never use projection to jump onto a road beyond this frame's travel distance.
       if (Math.hypot(point.x - old.x, point.y - old.y) > Math.hypot(desired.x - old.x, desired.y - old.y) + 1e-6) continue;
-      const match = this.match(point, heading, previous);
-      if (!match || closed.has(match.edge.way)) continue;
+      // Match the server's sampled path, not just endpoints across a concave road corner.
+      const steps = Math.max(1, Math.ceil(Math.hypot(point.x - old.x, point.y - old.y) / 0.4));
+      let current = previous, match = null;
+      for (let i = 1; i <= steps; i++) {
+        const sample = { x: old.x + (point.x - old.x) * i / steps,
+          y: old.y + (point.y - old.y) * i / steps };
+        match = this.match(sample, heading, current);
+        if (!match || closed.has(match.edge.way)) { match = null; break; }
+        current = match.edge;
+      }
+      if (!match) continue;
       const error = Math.hypot(desired.x - point.x, desired.y - point.y);
       if (!best || error < best.error - 1e-8 || (Math.abs(error - best.error) < 1e-8 && match.score < best.match.score)) best = { ...point, error, match };
     }

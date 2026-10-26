@@ -221,3 +221,30 @@ test("150 km/h movement crosses short connected segments without jumping road co
   }
   assert.ok(Number(car.edge.slice(1)) > 10);
 });
+
+test("boundary sliding cannot cut outside a concave connected-road corner between valid endpoints", () => {
+  const nodes = { a: [-2.07, 435.21], b: [-3.38, 439.51], c: [-6.65, 442.92] };
+  const edges = [
+    { id: "ab", a: "a", b: "b", way: 1, kind: "secondary", length: 4.5 },
+    { id: "bc", a: "b", b: "c", way: 1, kind: "secondary", length: 4.7 },
+  ];
+  for (const edge of [...edges]) edges.push({ ...edge, id: `~${edge.id}`, a: edge.b, b: edge.a });
+  const roads = new RoadNetwork({ nodes, edges, bounds: [-100, 400, 100, 500],
+    driving: { taxi_radius: 2.5, widths: { secondary: 14 } } });
+  const old = { x: -7.354127361445913, y: 437.1135950866321 };
+  const desired = { x: -7.68115699260194, y: 437.4936843546785 };
+  const heading = 2.5402007220180094, previous = roads.edges.get("ab");
+  assert.ok(roads.match(old, heading, previous));
+  assert.ok(roads.match(desired, heading, previous));
+  const midpoint = { x: (old.x + desired.x) / 2, y: (old.y + desired.y) / 2 };
+  assert.equal(roads.match(midpoint, heading, previous), null, "fixture must reproduce an off-road interior point");
+  const result = roads.constrain(old, desired, heading, previous, new Set());
+  const steps = Math.max(1, Math.ceil(Math.hypot(result.x - old.x, result.y - old.y) / 0.4));
+  let current = previous;
+  for (let i = 1; i <= steps; i++) {
+    const match = roads.match({ x: old.x + (result.x - old.x) * i / steps,
+      y: old.y + (result.y - old.y) * i / steps }, heading, current);
+    assert.ok(match, "every movement substep must be server-valid");
+    current = match.edge;
+  }
+});

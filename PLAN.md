@@ -23,6 +23,9 @@ and [README.md](README.md) for setup and controls.
   available exits to their following junctions/dead ends, including short geometry
   segments and bends. Show it while stopped facing forward; exclude closed roads
   and disconnected crossings. Keep stacked-popup timing separate and unchanged.
+  Draw the yellow destination route above all other road highlights.
+  Add legal traffic-direction arrows, with left-side opposing arrows on two-way
+  roads; exclude synthetic wrong-way edges and omit very short segments.
 - Only connected forks involving stacked-road exits pause for an advisory choice.
   Cyan marks the selected exit locally and clears after entry; the player may
   steer into another connected exit.
@@ -31,7 +34,8 @@ and [README.md](README.md) for setup and controls.
 - Enforce approximate road corridors with boundary sliding and a conservative
   full-taxi footprint. Wrong-way entry and restricted turns remain possible
   with warnings; GPS recommendations remain legal.
-  Draw thin light-red road-edge outlines at 80% opacity, leaving interiors unchanged.
+  Draw light-red road-edge outlines at 80% opacity with a 1.6 m stroke centred on
+  the approximate boundary, leaving the rest of the interiors unchanged.
 - Cap both standard and tuned taxis at 150 km/h, an agreed arcade approximation,
   not a verified Crown Comfort specification or road speed limit. The $160 engine
   tune increases forward acceleration by 30%; congestion still lowers speed.

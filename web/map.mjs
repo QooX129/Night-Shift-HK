@@ -53,6 +53,7 @@ export class MapView {
       }
     }
     this.drawRoadBoundaries(c, s);
+    this.drawRoadDirections(c);
     const labelled = new Set();
     const occupied = new Set();
     for (const e of [...this.unique].sort((a, b) => b.length - a.length)) {
@@ -84,7 +85,7 @@ export class MapView {
     for (const erase of [false, true]) {
       c.globalCompositeOperation = erase ? "destination-out" : "source-over";
       for (const edge of this.unique) {
-        c.lineWidth = (this.data.driving.widths[edge.kind] ?? 10) + (erase ? -1 : 1);
+        c.lineWidth = (this.data.driving.widths[edge.kind] ?? 10) + (erase ? -1.6 : 1.6);
         c.beginPath(); this.roadPath(c, edge); c.stroke();
       }
     }
@@ -92,6 +93,30 @@ export class MapView {
     context.globalAlpha = 0.8;
     context.drawImage(mask, 0, 0);
     context.restore();
+  }
+  drawRoadDirections(c) {
+    const legal = this.data.edges.filter(edge => !edge.wrongway);
+    const directions = new Set(legal.map(edge => `${edge.way}:${edge.a}:${edge.b}`));
+    c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = 0.9;
+    for (const edge of legal) {
+      if (edge.length < 16) continue;
+      const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
+      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const offset = directions.has(`${edge.way}:${edge.b}:${edge.a}`)
+        ? (this.data.driving.widths[edge.kind] ?? 10) / 4 : 0;
+      const count = Math.max(1, Math.floor(edge.length / 55));
+      for (let i = 0; i < count; i++) {
+        const t = (i + 0.5) / count;
+        c.save();
+        c.translate(a[0] + (b[0] - a[0]) * t + Math.sin(angle) * offset,
+          a[1] + (b[1] - a[1]) * t - Math.cos(angle) * offset);
+        c.rotate(angle);
+        c.beginPath(); c.moveTo(-3, 0); c.lineTo(3, 0);
+        c.moveTo(0, -2); c.lineTo(3, 0); c.lineTo(0, 2); c.stroke();
+        c.restore();
+      }
+    }
+    c.restore();
   }
   render(car, state, lang, approach) {
     const c = this.ctx, w = this.width, h = this.height;
@@ -127,11 +152,6 @@ export class MapView {
         c.lineWidth = (closed.has(e.way) ? 5 : 2) / Math.max(zoom, 0.8);
         c.beginPath(); this.roadPath(c, e); c.stroke();
       }
-      if (state.route) {
-        c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
-        for (const id of state.route) this.roadPath(c, this.edges.get(id));
-        c.stroke(); c.lineWidth = 2.5 / zoom; c.strokeStyle = state.phase === "pickup" ? "#92d7b6" : "#f5c65a"; c.stroke();
-      }
       if (approach) {
         this.highlightExit(c, approach.edges[0], "#92d7b6", zoom, approach);
         const index = state.route?.indexOf(approach.incoming) ?? -1;
@@ -147,6 +167,11 @@ export class MapView {
           const path = approach?.exits.find(exit => exit.edge.id === state.selected_exit)?.path;
           this.highlightExit(c, this.edges.get(state.selected_exit), "#55e9ff", zoom, path);
         }
+      }
+      if (state.route) {
+        c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
+        for (const id of state.route) this.roadPath(c, this.edges.get(id));
+        c.stroke(); c.lineWidth = 2.5 / zoom; c.strokeStyle = state.phase === "pickup" ? "#92d7b6" : "#f5c65a"; c.stroke();
       }
       for (const stop of this.stops) {
         const active = state.phase === "pickup" ? stop.id === state.pickup : state.phase === "onboard" ? stop.id === state.destination : false;

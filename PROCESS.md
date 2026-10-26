@@ -253,6 +253,51 @@ the existing advisory-selector flow, and desktop/phone-emulated performance.
 `git diff --check` passed. Python was unchanged and its suite was not rerun for
 this rendering update. Physical phone/Safari coverage remains unverified.
 
+### GPS priority, thicker boundaries, and legal traffic arrows
+
+- The passenger-destination GPS route now draws after forward, exit, and cyan
+  selected-road highlights. Markers and the taxi still draw above road overlays.
+- Boundary strokes increased from approximately 1 m to 1.6 m, centred on the
+  same estimated road edges, retaining light red and 80% opacity.
+- Cached arrows show legal edge directions only; synthetic wrong-way reverse
+  edges never generate arrows. Two-way roads use opposing arrows offset to
+  each direction's left side. Short segments under 16 m omit arrows, and longer
+  segments repeat them approximately every 55 m.
+- No driving rules, steering, speed, or popup timing changed.
+
+Verification: **22 Chromium browser tests passed** across desktop and
+phone-emulated viewports, including route compositing order, legal one-way versus
+two-way arrows, left-side placement, short-segment suppression, thicker-boundary
+pixels, and existing gameplay/performance checks. Screenshots were inspected.
+Python and JavaScript physics were unchanged and were not rerun for this update.
+Arrows describe packaged OSM data rather than verified current road signage.
+
+### Boundary-contact 409 rejection
+
+The user reported boundary contact occasionally produced HTTP 409 and paused the
+game. A deterministic browser-to-real-API driving test reproduced the exact
+response: "The taxi footprint must remain on a connected road."
+
+The failing slide had valid on-road endpoints but an off-road midpoint around a
+concave corner formed by short connected segments. Browser collision handling
+validated only the final position; the server sampled the intervening path.
+This was a path-validation mismatch, not a reason to disable conflict handling.
+
+- Browser collision candidates now validate the complete frame movement using
+  the server's 0.4 m sampling interval and sequential connected-edge matching.
+- Candidates that cut outside the corridor are rejected locally. Existing
+  boundary sliding remains available where the path is valid.
+- Server confinement, disconnected-level protection, and explicit error handling
+  remain unchanged.
+- A small geometry regression checks valid endpoints with an invalid midpoint.
+  The API regression runs twelve deterministic forward/reverse steering patterns
+  with repeated boundary contacts and real movement requests.
+
+Verification: **25 Python, 15 JavaScript, and 24 Chromium browser tests passed**.
+The originally failing desktop replay and phone-emulated replay both pass.
+`git diff --check` passed. Temporary diagnostic instrumentation was removed.
+Physical phone and Safari checks remain outstanding.
+
 ### Reproduce the checks
 
 After installing the development dependencies as described in

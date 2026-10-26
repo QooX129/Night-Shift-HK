@@ -29,6 +29,8 @@ source map, or access a remotely hosted game.
 - Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
   Stop at the **yellow** destination marker to complete the trip and receive earnings.
 - The route is a suggestion; you may choose another legal route.
+  The yellow passenger-destination guide renders above forward, exit, and cyan
+  selected-road highlights so it remains visible where they overlap.
 - Steering is always manual. Ordinary junctions highlight the connected exits
   without opening a popup; the GPS-recommended exit is brighter. Highlight the
   whole road ahead from the taxi to the next junction, then each available exit
@@ -42,12 +44,17 @@ source map, or access a remotely hosted game.
 - An unconnected flyover crossing never opens a selector or changes the current
   road level. Reach other levels through actual connecting roads/ramps.
 - The full simulated taxi footprint stays inside approximate road corridors.
-  Thin light-red outlines mark the road edges at 80% opacity, without tinting
+  Light-red outlines mark the road edges at 80% opacity, with a slightly thicker
+  1.6 m stroke centred on the approximate boundary, without tinting
   the road interior.
   Contact with a road edge removes outward movement and allows sliding along
   the edge. Reverse if facing a dead end or a boundary.
 - Wrong-way entry and restricted turns remain possible with warnings. GPS routes
   still respect the directed road graph and supported turn restrictions.
+  Small arrows show legal traffic directions, not the taxi's chosen direction.
+  One-way roads point one way; two-way roads have opposing arrows on the left
+  side of each travel direction. Segments shorter than 16 m omit arrows to limit
+  clutter. Arrows reflect the packaged graph, not live road signage.
 - Orange roads have simulated congestion; red roads are closed. A new simulated
   closure is selected approximately every 100 seconds of active game time.
 - The **blue** marker is the taxi rest stop. Stop there to refuel or buy upgrades.
@@ -100,12 +107,13 @@ Safari performance. Screenshots and failed-test traces are written to
 - 25 Python rule/API tests pass, including a complete real-graph passenger trip,
   replay-safe rewards, road containment, advisory choices, warning-only turns,
   and acceptance at/rejection above the shared 150 km/h cap.
-- 14 JavaScript physics tests pass, including boundary sliding, reverse, extended
+- 15 JavaScript physics tests pass, including boundary sliding, reverse, extended
   footprint containment, disconnected flyovers, full forward/exit paths across short
   segments, exact speed caps, acceleration upgrades, and high-speed corridor travel.
-- 18 Chromium browser tests pass across desktop and phone-emulated viewports,
+- 24 Chromium browser tests pass across desktop and phone-emulated viewports,
   including manual junctions, cyan selection rendering/clearing, reverse,
-  full forward highlighting before the popup, 80%-opacity outline rendering,
+  full forward highlighting before the popup, thicker 80%-opacity outlines,
+  legal traffic arrows, destination-guide rendering priority,
   bilingual UI, touch pedals, purchases, connection retry, and slow acknowledgements.
 - Active free-steering animation measured approximately 60 FPS in both reference
   Chromium viewports. Performance tests disable trace recording to avoid measuring
@@ -129,6 +137,9 @@ and can extend beyond the road edge at some zoom levels.
 Movement checkpoints carry the intervening positions. The backend checks the
 connected road corridor along those paths, rejecting off-road movement and
 unconnected level changes rather than silently snapping the taxi.
+Browser collision handling also validates intermediate positions at the same
+0.4 m sampling interval, preventing boundary slides from cutting across concave
+road corners and triggering a rejected movement/forced pause.
 Stacked-fork detection follows each outgoing branch for up to 100 m or the next
 fork, using available layer/bridge/tunnel tags. Incomplete tags can miss a choice.
 
