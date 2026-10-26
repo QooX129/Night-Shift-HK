@@ -1,0 +1,12 @@
+{
+  "name": "night-shift-hk",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/physics.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0"
+  }
+}

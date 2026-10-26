@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111b24">
+  <title>Night Shift HK · 香港的士</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="game">
+    <canvas id="map" aria-label="Driving map of Mong Kok and Yau Ma Tei"></canvas>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Night Shift HK home"><span class="brand-icon">的</span><span>NIGHT SHIFT <b>HK</b><small data-i18n="district">MONG KOK · YAU MA TEI</small></span></a>
+      <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
+    </header>
+
+    <section class="dispatch panel" aria-labelledby="dispatch-title">
+      <div class="eyebrow"><span class="dot"></span><span data-i18n="dispatch">KOWLOON DISPATCH</span><span class="badge">01</span></div>
+      <h1 id="dispatch-title" data-i18n="yourshift">The city is calling.</h1>
+      <p class="muted" id="status" role="status" aria-live="polite"></p>
+      <div class="passenger"><div class="avatar" id="avatar">林</div><div><strong id="passenger-name">—</strong><small id="passenger-role">—</small></div><span class="fare" id="fare">HK$ —</span></div>
+      <div class="stops">
+        <div><span class="stop-dot pickup-dot"></span><div><small data-i18n="pickup">PICKUP</small><p id="pickup-name">—</p></div></div>
+        <div><span class="stop-dot destination-dot"></span><div><small data-i18n="destination">DROP-OFF</small><p id="destination-name">—</p></div></div>
+      </div>
+      <blockquote id="dialogue"></blockquote>
+      <button id="job-action" class="primary" disabled data-i18n="loading">Loading roads…</button>
+      <button id="cancel-job" class="text-button" hidden data-i18n="cancel">Cancel / find another order</button>
+    </section>
+
+    <aside class="map-tools" aria-label="Map tools">
+      <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="overview" aria-label="Toggle district overview">⌖</button>
+    </aside>
+    <div class="district-label">九龍 <span>KOWLOON</span></div>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+    <section class="dashboard panel" aria-label="Taxi dashboard">
+      <div class="speed"><strong id="speed">0</strong><span>km/h</span><small id="drive-mode">MANUAL</small></div>
+      <div class="dash-stat"><small data-i18n="earnings">WALLET</small><strong id="money">$120</strong><span id="trips">0 trips</span></div>
+      <div class="dash-stat fuel-stat"><small data-i18n="fuel">FUEL</small><strong id="fuel">100%</strong><div class="fuel-track"><i id="fuel-bar"></i></div></div>
+      <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
+      <button id="garage" class="quiet" data-i18n="garage">Rest stop / garage</button>
+    </section>
+    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · S / ↓ brake · A D / ← → steer · Space pause</div>
+    <div class="touch-controls" aria-label="Touch driving controls">
+      <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
+      <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
+    </div>
+    <footer class="attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · <a href="/data-license.html">ODbL &amp; source</a> · <span data-i18n="notnavigation">Game map, not real navigation</span></footer>
+  </main>
+
+  <dialog id="welcome">
+    <div class="dialog-eyebrow">夜更的士 · NIGHT SHIFT HK</div>
+    <h2 data-i18n="welcome">Your streets. Your shift.</h2>
+    <p data-i18n="intro">A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.</p>
+    <div class="instructions"><p data-i18n="introdrive">Steer freely with WASD / arrow keys, or the touch pedals. S / ↓ brakes; there is no reverse gear.</p><p data-i18n="introturn">At a junction, time pauses. Choose an exit and turn assist guides you through before handing back control.</p><p data-i18n="introstops">Stop at the coloured roadside marker to pick up or drop off. Fuel, traffic, and closures are simulated. Buildings have no collisions.</p></div>
+    <p class="muted" data-i18n="introsave">Progress lasts for this page session only. Reloading starts a new shift.</p>
+    <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
+  </dialog>
+  <dialog id="junction">
+    <div class="dialog-eyebrow" data-i18n="junction">JUNCTION AHEAD · TIME PAUSED</div>
+    <h2 data-i18n="choose">Which way, driver?</h2>
+    <p class="muted" data-i18n="turnhelp">Choose an exit. We will guide the turn, then steering is yours.</p>
+    <div id="exits"></div>
+  </dialog>
+  <dialog id="pause-dialog">
+    <div class="dialog-eyebrow" data-i18n="paused">SHIFT PAUSED</div><h2 data-i18n="breather">Take a breather.</h2>
+    <p data-i18n="pausetext">The taxi, shift clock, and fuel are paused.</p>
+    <button id="resume" class="primary" data-i18n="resume">Back to the streets</button>
+    <button id="recover-pause" class="secondary" data-i18n="recover">Return to rest stop · up to $20</button>
+  </dialog>
+  <dialog id="garage-dialog">
+    <div class="dialog-eyebrow" data-i18n="garage">REST STOP / GARAGE</div><h2 data-i18n="pitstop">A little care goes a long way.</h2>
+    <p data-i18n="garagetext">Refuel and install upgrades while stopped at the blue rest-stop marker. Upgrades last for this shift.</p>
+    <button id="refuel" class="secondary" data-i18n="refuel">Fill tank · $0.50 per %</button>
+    <button id="efficiency" class="secondary" data-i18n="efficiency">Efficient engine · $100 · 35% less fuel</button>
+    <button id="engine" class="secondary" data-i18n="engine">Engine tune · $160 · higher top speed</button>
+    <button id="recover" class="secondary" data-i18n="recover">Return to rest stop · up to $20</button>
+    <p class="muted" data-i18n="recoveryhelp">Recovery returns you to the rest stop and supplies emergency fuel. It does not complete your passenger's trip.</p>
+    <button id="garage-close" class="primary" data-i18n="resume">Back to the streets</button>
+  </dialog>
+  <dialog id="error-dialog">
+    <div class="dialog-eyebrow" data-i18n="radio">DISPATCH RADIO</div><h2 data-i18n="connection">We need a moment.</h2>
+    <p id="error-message" role="alert"></p><button id="retry" class="primary" data-i18n="retry">Retry command</button>
+    <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
+    <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
+  </dialog>
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>
