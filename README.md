@@ -4,12 +4,25 @@ A Python-powered, browser-based taxi game on real OpenStreetMap roads around
 Mong Kok and Yau Ma Tei. Drive freely, choose exits at junctions, and take fictional
 passengers through Kowloon.
 
-## Run on Windows
+## Run locally
 
 Requires Python 3.11 or newer. Runtime validation was performed with Python 3.14.
+Run the commands from the project directory. Create a virtual environment, install
+the Python dependencies, and start the web server using the instructions for your
+operating system.
+
+### macOS and Linux
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+### Windows (PowerShell)
 
 ```powershell
-python -m venv .venv
+py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m uvicorn app:app --host 127.0.0.1 --port 8000
 ```
@@ -18,35 +31,44 @@ Open <http://127.0.0.1:8000>. The packaged map works without Google keys, map ti
 live geocoding, external fonts, or third-party requests from the game page.
 An internet connection is only needed to install dependencies, refresh the
 source map, or access a remotely hosted game.
+To stop the server, press **Ctrl+C** in the terminal.
 
 ## Play
 
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
   reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
+- **Space:** handbrake; it slows the taxi without engaging reverse. **Esc:** open
+  the pause menu. Changing browser tabs also pauses the game.
 - Phones show separate touch steering, brake, and accelerator controls.
-- **Space / Pause:** pause the taxi and simulation clock. Changing browser tabs
-  also pauses the game.
 - Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
   Stop at the **yellow** destination marker to complete the trip and receive earnings.
 - The route is a suggestion; you may choose another legal route.
   The yellow passenger-destination guide renders above forward, exit, and cyan
   selected-road highlights so it remains visible where they overlap.
-- Steering is always manual. Ordinary junctions highlight the connected exits
-  without opening a popup; the GPS-recommended exit is brighter. Highlight the
+- Steering remains under your control. Ordinary junctions highlight the connected exits
+  without opening a popup; the GPS-recommended exit is brighter. Junctions with
+  more than two available exits and connected stacked-road forks pause to offer
+  a route choice before the junction. The GPS-recommended exit is identified in
+  the list. The taxi resumes at its approach speed after selection. Until it
+  travels into the selected road (up to 2.5 m along its first segment), steering
+  sensitivity and steering assist are temporarily increased, and the taxi is
+  constrained to that exit. On entry, the taxi's facing direction is aligned
+  with the selected road without changing its speed. Normal
+  steering sensitivity resumes once the selected road is reached. Highlight the
   whole road ahead from the taxi to the next junction, then each available exit
   to its following junction or dead end, including short segments and bends.
   This remains visible when stopped facing forward; closed roads and disconnected
-  crossings are excluded. Stacked-road popup timing is unchanged.
-- Only a connected fork with exits leading to different stacked-road levels
-  pauses for a choice. Selecting an exit highlights it **cyan** locally, without
-  moving or turning the taxi. Another connected exit remains available; the
-  highlight clears once you enter an exit or leave the junction area.
+  crossings are excluded. Selecting an exit highlights it **cyan** locally;
+  the highlight clears once you enter an exit or leave the junction area.
 - An unconnected flyover crossing never opens a selector or changes the current
   road level. Reach other levels through actual connecting roads/ramps.
+- Steering sensitivity is configured by `STEERING_SENSITIVITY` in
+  `web/physics.mjs`; increase it for faster turning and decrease it for slower,
+  gentler normal steering. `FORCED_JUNCTION_SENSITIVITY` in the same file
+  controls the temporary higher sensitivity while entering a selected exit.
 - The full simulated taxi footprint stays inside approximate road corridors.
-  Light-red outlines mark the road edges at 80% opacity, with a slightly thicker
-  1.6 m stroke centred on the approximate boundary, without tinting
-  the road interior.
+  Light-red outlines mark both the road edges and the inner taxi-centre collider
+  limits at 80% opacity, using 1.6 m strokes without tinting the road interior.
   Contact with a road edge removes outward movement and allows sliding along
   the edge. Reverse if facing a dead end or a boundary.
 - Wrong-way entry and restricted turns remain possible with warnings. GPS routes
@@ -88,9 +110,26 @@ packaged graph is small enough for direct geometry and heap-based routing.
 
 ## Tests
 
+The Python tests need Python 3.11 or newer. The JavaScript and browser tests also
+need Node.js and npm. Activate the project virtual environment first:
+
+macOS/Linux:
+
+```sh
+source .venv/bin/activate
+```
+
+Windows (PowerShell):
+
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+.\.venv\Scripts\Activate.ps1
+```
+
+Then, on any platform, run:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -p "test_*.py" -v
 npm install
 npm test
 npx playwright install chromium
@@ -131,8 +170,10 @@ and service/living streets 8 m. These are not surveyed road or lane widths.
 
 A conservative 2.5 m-radius circle encloses the simulated taxi body. Its centre
 stays within a road capsule narrowed by that radius, keeping the complete
-footprint inside the rendered road. The readable screen-sized icon is separate
-and can extend beyond the road edge at some zoom levels.
+footprint inside the rendered road. The map outlines both the approximate road
+edges and the collider limits inset by the taxi radius, so the visible limits
+match the movement constraint. The readable screen-sized icon is separate and
+can extend beyond the road edge at some zoom levels.
 
 Movement checkpoints carry the intervening positions. The backend checks the
 connected road corridor along those paths, rejecting off-road movement and
@@ -152,14 +193,14 @@ as a verified hosted release.
 The checked-in `data` directory contains the bounded source extract and derived
 database. No player triggers downloads from OpenStreetMap.
 
-```powershell
-.\.venv\Scripts\python.exe tools\prepare_map.py --download
+```sh
+python tools/prepare_map.py --download
 ```
 
 To rebuild from the existing source without downloading:
 
-```powershell
-.\.venv\Scripts\python.exe tools\prepare_map.py
+```sh
+python tools/prepare_map.py
 ```
 
 The importer retains road direction, access, grade-separation metadata, raw
@@ -178,7 +219,7 @@ Use one Python web service or a Docker-capable host. A static-only host cannot
 run the FastAPI backend. The included Dockerfile serves the game on port 8000
 or the host-provided `PORT`.
 
-```powershell
+```sh
 docker build -t night-shift-hk .
 docker run --rm -p 8000:8000 night-shift-hk
 ```
@@ -221,5 +262,5 @@ multiplayer service.
 - `game.py`: sessions, orders, transactions, traffic, fuel, and progression.
 - `roads.py`: metric geometry, matching, directed routes, and restrictions.
 - `web`: original interface, Canvas renderer, bilingual strings, and driving physics.
-- `tools\prepare_map.py`: bounded OSM importer and reproducible database builder.
+- `tools/prepare_map.py`: bounded OSM importer and reproducible database builder.
 - `tests`: Python rules/API checks, JavaScript physics checks, and browser flows.

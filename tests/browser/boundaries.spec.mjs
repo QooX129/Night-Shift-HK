@@ -10,7 +10,7 @@ test("road outlines are light red at 80% opacity without tinting the road interi
     const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 100,
       name: "Local road", zh: "", layer: "0" };
     const data = { nodes: { a: [0, 0], b: [100, 0] }, edges: [edge], backdrop: [],
-      bounds: [-20, -20, 120, 20], driving: { widths: { residential: 10 } } };
+      bounds: [-20, -20, 120, 20], driving: { taxi_radius: 2.5, widths: { residential: 10 } } };
     const alpha = [];
     MapView.prototype.drawRoadBoundaries = function (context, scale) {
       const drawImage = context.drawImage;
@@ -33,6 +33,7 @@ test("road outlines are light red at 80% opacity without tinting the road interi
     });
     const pixel = (view, y) => [...view.backdrop.getContext("2d").getImageData(84, Math.round((y + 20) * 1.4), 1, 1).data];
     const result = { alpha, points, centre: pixel(outlined, 0), oldCentre: pixel(baseline, 0),
+      collider: pixel(outlined, 2.5), oldCollider: pixel(baseline, 2.5),
       edge: pixel(outlined, 5), oldEdge: pixel(baseline, 5),
       outerEdge: pixel(outlined, 5.2), oldOuterEdge: pixel(baseline, 5.2),
       outside: pixel(outlined, 10), oldOutside: pixel(baseline, 10) };
@@ -43,6 +44,8 @@ test("road outlines are light red at 80% opacity without tinting the road interi
   expect(result.points).toEqual([[40, 0], [100, 0], [0, 0]]);
   expect(result.centre).toEqual(result.oldCentre);
   expect(result.outside).toEqual(result.oldOutside);
+  expect(result.collider[0]).toBeGreaterThan(result.oldCollider[0] + 20);
+  expect(result.collider[0]).toBeGreaterThan(result.collider[1]);
   expect(result.edge[0]).toBeGreaterThan(result.oldEdge[0] + 20);
   expect(result.edge[0]).toBeGreaterThan(result.edge[1]);
   expect(result.outerEdge[0]).toBeGreaterThan(result.oldOuterEdge[0] + 20);

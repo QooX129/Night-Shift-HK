@@ -21,7 +21,8 @@ test("stacked selection pauses time, highlights only, and permits a different ex
     paused: true, elapsed: 0, fuel: 100, money: 120, trips: 0, upgrades: [], phase: "available",
     fare: 60, pickup: "pickup", destination: "dest", passenger: { name: "Test rider", zh: "乘客", role: "Fixture", role_zh: "測試" },
     dialogue: "offer", warning: "", route: ["in", "upper"], no_route: false, closed: [], traffic: {},
-    selected_exit: null, selected_junction: null, service_ready: false, depot_ready: false, junction: "b", stacked_choice: true,
+    selected_exit: null, selected_junction: null, service_ready: false, depot_ready: false, junction: "b",
+    stacked_choice: true, junction_choice: true,
     options: [
       { edge: "upper", name: "Flyover", zh: "天橋", angle: 0 },
       { edge: "surface", name: "Surface street", zh: "地面街道", angle: Math.PI / 2 },
@@ -39,8 +40,15 @@ test("stacked selection pauses time, highlights only, and permits a different ex
     commands.push(command);
     state = { ...state, seq: body.seq };
     if (command.action === "move") {
-      state = { ...state, x: command.x, y: command.y, heading: command.heading, speed: command.speed, elapsed: state.elapsed + command.dt };
-    } else if (command.action === "pause") state = { ...state, paused: command.paused, speed: 0 };
+      const enteredSelectedRoad = command.y > 0;
+      state = { ...state, x: command.x, y: command.y, heading: command.heading,
+        speed: command.speed, elapsed: state.elapsed + command.dt,
+        edge: enteredSelectedRoad ? "surface" : state.edge,
+        selected_exit: enteredSelectedRoad ? null : state.selected_exit,
+        selected_junction: enteredSelectedRoad ? null : state.selected_junction };
+    } else if (command.action === "pause") state = {
+      ...state, paused: command.paused, speed: command.preserve_speed ? state.speed : 0,
+    };
     else if (command.action === "select_road") state = { ...state, paused: false, selected_exit: command.exit, selected_junction: "b", dialogue: "selected" };
     else throw new Error(`Unexpected fixture command: ${command.action}`);
     await route.fulfill({ json: state });
@@ -68,25 +76,26 @@ test("stacked selection pauses time, highlights only, and permits a different ex
   await expect(page.locator("#junction")).not.toBeVisible();
   await expect(page.locator("#junction")).toBeVisible();
   await page.keyboard.up("w");
-  const clock = state.elapsed, point = [state.x, state.y], heading = state.heading;
+  const clock = state.elapsed;
   await page.waitForTimeout(500);
   expect(state.elapsed).toBe(clock);
+  const approachSpeed = state.speed;
   await page.getByRole("button", { name: /Turn right/ }).click();
   await expect(page.locator("#junction")).not.toBeVisible();
   await expect(page.locator("#drive-mode")).toHaveText("MANUAL");
   expect(state.selected_exit).toBe("surface");
+  expect(state.speed).toBe(approachSpeed);
   await page.waitForTimeout(300);
   await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h => h.edge === "surface" && h.color === "#55e9ff"))).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("selected-road.png") });
-  expect([state.x, state.y]).toEqual(point);
-  expect(state.heading).toBe(heading);
   expect(commands.some(c => ["turn", "assist_done"].includes(c.action))).toBe(false);
-  // Selected surface exit turns right; driving straight takes the other road instead.
+  // The selected exit is enforced, and its assist guides the turn.
   await page.keyboard.down("w");
   await page.waitForTimeout(4000);
   await page.keyboard.up("w");
-  expect(state.x).toBeGreaterThan(64);
-  expect(Math.abs(state.y)).toBeLessThan(0.01);
+  expect(state.edge).toBe("surface");
+  expect(state.y).toBeGreaterThan(0);
+  expect(state.selected_exit).toBeNull();
   await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h => h.color === "#55e9ff"))).toBe(false);
   await expect(page.locator("#error-dialog")).not.toBeVisible();
   await expect(page.locator("#junction")).not.toBeVisible();

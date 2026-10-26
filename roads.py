@@ -19,7 +19,7 @@ class DrivingConfig(TypedDict):
 
 
 DRIVING: DrivingConfig = {
-    "taxi_radius": 2.5,
+    "taxi_radius": 4,
     "max_speed": 150 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
@@ -152,6 +152,9 @@ class RoadMap:
     def stacked_choice(self, incoming: Edge, closed: set[int]) -> bool:
         options = self.branches(incoming, closed)
         return len(options) >= 2 and len({self.branch_levels[e.id] for e in options}) > 1
+
+    def junction_choice(self, incoming: Edge, closed: set[int]) -> bool:
+        return len(self.branches(incoming, closed)) > 2 or self.stacked_choice(incoming, closed)
 
     def angle(self, edge: Edge) -> float:
         a, b = self.nodes[edge.a], self.nodes[edge.b]

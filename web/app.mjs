@@ -7,7 +7,7 @@ let lang = "en", state = null, view = null, mapData, stops;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
-const controls = { gas: false, brake: false, left: false, right: false };
+const controls = { gas: false, brake: false, handbrake: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
 const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog"];
 
@@ -108,16 +108,17 @@ function localMatch() {
 }
 function nearJunction() {
   const approach = roads.approach(car, new Set(state.closed));
-  return approach?.stacked && junctionLatch !== approach.node;
+  return approach && (approach.stacked || approach.options.length > 2)
+    && junctionLatch !== approach.node;
 }
 async function promptJunction() {
   paused = true;
   while (moving) await new Promise(resolve => setTimeout(resolve, 10));
   if ($("error-dialog").open) return;
   await perform(async () => {
-    await flush(); car.speed = 0;
-    await send("pause", { paused: true });
-    if (!state.stacked_choice) {
+    await flush();
+    await send("pause", { paused: true, preserve_speed: true });
+    if (!state.junction_choice) {
       await send("pause", { paused: false }); paused = false;
       return;
     }
@@ -203,6 +204,7 @@ function frame(timestamp) {
         acceleration: state.upgrades.includes("engine") ? roads.driving.upgraded_acceleration : roads.driving.acceleration,
         traffic: factor,
         fuel: state.fuel, roads, closed: new Set(state.closed),
+        selectedExit: state.selected_exit, selectedJunction: state.selected_junction,
       });
       boundary = result.blocked && !result.closed;
       closureWarning = result.closed;
@@ -276,17 +278,28 @@ for (const id of dialogs) $(id).addEventListener("cancel", event => {
   event.preventDefault();
   if (id === "pause-dialog" || id === "garage-dialog") resume();
 });
-const bindings = { w: "gas", arrowup: "gas", s: "brake", arrowdown: "brake", a: "left", arrowleft: "left", d: "right", arrowright: "right" };
+const bindings = {
+  w: "gas", arrowup: "gas", s: "brake", arrowdown: "brake",
+  a: "left", arrowleft: "left", d: "right", arrowright: "right",
+};
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
   if (bindings[key] && !paused) { controls[bindings[key]] = true; event.preventDefault(); }
-  if (event.code === "Space" && !event.repeat && !event.target.closest("button,dialog")) {
+  if (event.code === "Space" && !paused) {
+    controls.handbrake = true;
     event.preventDefault();
+  }
+  if (event.key === "Escape" && !event.repeat) {
+    event.preventDefault();
+    if ($("junction").open) return;
+    if (dialogs.some(id => $(id).open)) return;
     if (!paused) pauseTo("pause-dialog");
-    else if ($("pause-dialog").open) resume();
   }
 });
-window.addEventListener("keyup", event => { if (bindings[event.key.toLowerCase()]) controls[bindings[event.key.toLowerCase()]] = false; });
+window.addEventListener("keyup", event => {
+  if (bindings[event.key.toLowerCase()]) controls[bindings[event.key.toLowerCase()]] = false;
+  if (event.code === "Space") controls.handbrake = false;
+});
 for (const button of document.querySelectorAll("[data-control]")) {
   button.addEventListener("pointerdown", event => {
     event.preventDefault(); button.setPointerCapture(event.pointerId);

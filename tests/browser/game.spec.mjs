@@ -100,6 +100,27 @@ test("brake pedal holds low-speed reverse without leaving the road", async ({ pa
   await expect(page.locator("#error-dialog")).not.toBeVisible();
 });
 
+test("space handbrake slows without reversing and Escape opens pause menu", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await page.keyboard.down("w");
+  await page.waitForTimeout(1200);
+  await page.keyboard.up("w");
+  const before = Number(await page.locator("#speed").textContent());
+  expect(before).toBeGreaterThan(0);
+
+  await page.keyboard.down("Space");
+  await page.waitForTimeout(1000);
+  await page.keyboard.up("Space");
+  const after = Number(await page.locator("#speed").textContent());
+  expect(after).toBeLessThan(before);
+  await expect(page.locator("#drive-mode")).not.toHaveText("REVERSE");
+
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-dialog")).toBeVisible();
+});
+
 test("lost connection pauses and offers idempotent retry", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();

@@ -39,6 +39,7 @@ class Move(Position):
 class Pause(StrictModel):
     action: Literal["pause"]
     paused: bool
+    preserve_speed: bool = False
 
 
 class SelectRoad(StrictModel):

@@ -42,7 +42,7 @@
       <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
       <button id="garage" class="quiet" data-i18n="garage">Rest stop / garage</button>
     </section>
-    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space pause</div>
+    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Esc pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
       <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
       <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE / REV</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
@@ -59,9 +59,9 @@
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
   </dialog>
   <dialog id="junction">
-    <div class="dialog-eyebrow" data-i18n="junction">STACKED-ROAD FORK · TIME PAUSED</div>
+    <div class="dialog-eyebrow" data-i18n="junction">JUNCTION CHOICE · TIME PAUSED</div>
     <h2 data-i18n="choose">Which road, driver?</h2>
-    <p class="muted" data-i18n="turnhelp">Choose an exit to highlight in cyan, then steer yourself. Other connected exits remain available.</p>
+    <p class="muted" data-i18n="turnhelp">The GPS-recommended exit is highlighted in gold. After selection, steering sensitivity and assist increase until you enter that road.</p>
     <div id="exits"></div>
   </dialog>
   <dialog id="pause-dialog">

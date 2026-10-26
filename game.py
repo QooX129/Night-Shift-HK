@@ -6,7 +6,7 @@ import random
 import time
 from uuid import uuid4
 
-from roads import DRIVING, Edge, Point, RoadMap
+from roads import DRIVING, Edge, Point, RoadMap, project
 
 
 class RuleError(ValueError):
@@ -219,6 +219,20 @@ class Game:
                     raise RuleError("The taxi footprint must remain on a connected road.")
                 if match.edge.way in session.closed and segment > 0.01:
                     raise RuleError("Road closed. Stop and choose another road, or call recovery.")
+                if session.selected_exit and session.selected_junction:
+                    junction = self.roads.nodes[session.selected_junction]
+                    junction_distance = math.dist(sample_point, junction)
+                    selected = self.roads.edges[session.selected_exit]
+                    _, selected_distance, _ = project(
+                        sample_point, self.roads.nodes[selected.a], self.roads.nodes[selected.b],
+                    )
+                    if (
+                        match.edge.a == session.selected_junction
+                        and match.edge.id != session.selected_exit
+                        and junction_distance > radius + 1.5
+                        and selected_distance > self.roads.radius(selected) + max(1.0, junction_distance * 0.5)
+                    ):
+                        raise RuleError("Enter the selected exit at this junction.")
                 if match.edge.id != previous.id:
                     if previous.b == match.edge.a and previous.a != match.edge.b:
                         warning = "" if self.roads.legal(previous, match.edge, history) else "restricted"
@@ -232,7 +246,7 @@ class Game:
         session.edge, session.history, session.warning = previous.id, history, warning
         if session.selected_junction:
             node = self.roads.nodes[session.selected_junction]
-            if previous.a == session.selected_junction or math.dist(point, node) > 45:
+            if previous.id == session.selected_exit or math.dist(point, node) > 45:
                 session.selected_exit = session.selected_junction = None
         session.point, session.speed, session.heading = point, speed, heading
         session.elapsed += elapsed
@@ -265,7 +279,8 @@ class Game:
             self.update_position(session, payload)
         elif action == "pause":
             session.paused = bool(payload["paused"])
-            session.speed = 0
+            if not payload.get("preserve_speed", False):
+                session.speed = 0
         elif action == "accept":
             if session.phase != "available":
                 raise RuleError("There is no order to accept.")
@@ -341,14 +356,14 @@ class Game:
         match = self.roads.corridor_match(session.point, session.heading, incoming)
         if (
             not session.paused or not match
-            or math.dist(session.point, self.roads.nodes[incoming.b]) > min(32, incoming.length * 0.4) + 1.5
+            or math.dist(session.point, self.roads.nodes[incoming.b]) > min(60, incoming.length * 0.8) + 1.5
             or math.cos(session.heading - self.roads.angle(incoming)) <= 0.35
-            or not self.roads.stacked_choice(incoming, session.closed)
+            or not self.roads.junction_choice(incoming, session.closed)
         ):
             raise RuleError("Stop on the approach before choosing a turn.")
         options = self.roads.branches(incoming, session.closed)
         if len(options) < 2:
-            raise RuleError("There is no stacked-road choice on this approach.")
+            raise RuleError("There is no junction choice on this approach.")
         chosen = next((e for e in options if e.id == exit_id), None)
         if chosen is None:
             raise RuleError("That exit is disconnected or closed.")
@@ -388,6 +403,7 @@ class Game:
             "route": session.route, "no_route": no_route, "warning": warning,
             "options": options, "junction": edge.b if options else None,
             "stacked_choice": self.roads.stacked_choice(edge, session.closed),
+            "junction_choice": self.roads.junction_choice(edge, session.closed),
             "closed": sorted(session.closed), "traffic": session.traffic,
             "selected_exit": session.selected_exit, "selected_junction": session.selected_junction,
             "service_ready": bool(target and self.stop_valid(session, target)),

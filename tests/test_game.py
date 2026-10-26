@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
@@ -47,6 +48,14 @@ class RoadTests(unittest.TestCase):
         self.assertIsNone(r.route(r.edges["ab"], r.edges["bf"], (1,), set(), {}))
         self.assertIsNone(r.route(r.edges["ab"], r.edges["ce"], (1,), set(), {}))
         self.assertEqual(r.route(r.edges["ab"], r.edges["cd"], (1,), set(), {}), ["ab", "bc", "cd"])
+
+    def test_junction_choice_includes_more_than_two_exits(self):
+        self.data["nodes"]["g"] = [40, -40]
+        self.data["edges"].append(dict(self.data["edges"][0], id="bg", a="b", b="g", way=6))
+        r = self.road_map()
+        self.assertEqual(len(r.branches(r.edges["ab"], set())), 3)
+        self.assertFalse(r.stacked_choice(r.edges["ab"], set()))
+        self.assertTrue(r.junction_choice(r.edges["ab"], set()))
 
     def test_matching_keeps_grade_separated_road(self):
         self.data["nodes"].update({"x": [0, 4], "y": [40, 4]})
@@ -258,6 +267,120 @@ class GameTests(unittest.TestCase):
                 self.assertIsNone(self.session.selected_exit)
                 return
         self.fail("No suitable real-data junction found")
+
+    def test_gps_junction_choice_can_select_among_three_or_more_exits(self):
+        for edge in self.roads.edges.values():
+            options = self.roads.branches(edge, set())
+            if len(options) <= 2 or edge.length <= 30:
+                continue
+            self.session.point = (
+                self.roads.nodes[edge.b][0] - math.cos(self.roads.angle(edge)) * 12,
+                self.roads.nodes[edge.b][1] - math.sin(self.roads.angle(edge)) * 12,
+            )
+            self.session.edge, self.session.heading = edge.id, self.roads.angle(edge)
+            self.session.history = (edge.way,)
+            self.session.paused = True
+            self.session.speed = 18
+            self.assertTrue(self.game.snapshot(self.session)["junction_choice"])
+            self.cmd("select_road", incoming=edge.id, exit=options[0].id)
+            self.assertEqual(self.session.selected_exit, options[0].id)
+            self.assertEqual(self.session.selected_junction, edge.b)
+            self.assertFalse(self.session.paused)
+            self.assertEqual(self.session.speed, 18)
+            return
+        self.fail("No junction with at least three available exits was found")
+
+    def test_selected_exit_cannot_be_bypassed_at_the_junction(self):
+        for incoming in self.roads.edges.values():
+            options = self.roads.branches(incoming, set())
+            alternate_options = [
+                option for option in options
+                if option.length > 8
+                and abs(math.sin(self.roads.angle(option) - self.roads.angle(options[0]))) > 0.7
+            ] if options else []
+            if (
+                len(options) < 2 or incoming.length <= 30
+                or not self.roads.junction_choice(incoming, set()) or not alternate_options
+            ):
+                continue
+            self.session.point = (
+                self.roads.nodes[incoming.b][0] - math.cos(self.roads.angle(incoming)) * 12,
+                self.roads.nodes[incoming.b][1] - math.sin(self.roads.angle(incoming)) * 12,
+            )
+            self.session.edge, self.session.heading = incoming.id, self.roads.angle(incoming)
+            self.session.history = (incoming.way,)
+            self.session.paused = True
+            chosen, alternate = options[0], alternate_options[0]
+            self.cmd("select_road", incoming=incoming.id, exit=chosen.id)
+            node = self.roads.nodes[incoming.b]
+            self.cmd("move", x=node[0], y=node[1], heading=self.roads.angle(alternate),
+                     speed=3, dt=1)
+            length = min(alternate.length * 0.8, 10)
+            point = (
+                node[0] + (self.roads.nodes[alternate.b][0] - node[0]) * length / alternate.length,
+                node[1] + (self.roads.nodes[alternate.b][1] - node[1]) * length / alternate.length,
+            )
+            with self.assertRaisesRegex(RuleError, "selected exit"):
+                self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(alternate),
+                         speed=3, dt=1)
+            return
+        self.fail("No junction with alternate exits was found")
+
+    def test_junction_pause_can_preserve_speed(self):
+        self.session.speed = 18
+        self.cmd("pause", paused=True, preserve_speed=True)
+        self.assertTrue(self.session.paused)
+        self.assertEqual(self.session.speed, 18)
+
+    def test_selected_road_overlap_does_not_reject_a_valid_turn(self):
+        from roads import project
+
+        for incoming in self.roads.edges.values():
+            options = self.roads.branches(incoming, set())
+            long_options = [option for option in options if option.length > 11.5]
+            if (
+                incoming.length <= 30 or len(options) < 2
+                or not self.roads.junction_choice(incoming, set()) or not long_options
+            ):
+                continue
+            chosen = long_options[0]
+            self.session.point = (
+                self.roads.nodes[incoming.b][0] - math.cos(self.roads.angle(incoming)) * 12,
+                self.roads.nodes[incoming.b][1] - math.sin(self.roads.angle(incoming)) * 12,
+            )
+            self.session.edge, self.session.heading = incoming.id, self.roads.angle(incoming)
+            self.session.history = (incoming.way,)
+            self.session.paused = True
+            self.cmd("select_road", incoming=incoming.id, exit=chosen.id)
+
+            ambiguous_id = "!test-overlap"
+            ambiguous = replace(chosen, id=ambiguous_id, way=chosen.way + 1)
+            self.roads.edges[ambiguous_id] = ambiguous
+            self.roads.outgoing[ambiguous.a].append(ambiguous)
+            self.roads.branch_levels[ambiguous_id] = self.roads.branch_levels[chosen.id]
+            try:
+                start = self.roads.nodes[chosen.a]
+                end = self.roads.nodes[chosen.b]
+                distance = min(5.7, chosen.length / 2)
+                point = (
+                    start[0] + (end[0] - start[0]) * distance / chosen.length,
+                    start[1] + (end[1] - start[1]) * distance / chosen.length,
+                )
+                match = self.roads.corridor_match(point, self.roads.angle(chosen), ambiguous)
+                self.assertEqual(match.edge.id, ambiguous_id)
+                _, selected_distance, _ = project(point, start, end)
+                self.assertLessEqual(selected_distance, self.roads.radius(chosen) + 1)
+                node = self.roads.nodes[incoming.b]
+                self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(chosen),
+                         speed=3, dt=4,
+                         trail=[{"x": node[0], "y": node[1], "heading": self.roads.angle(incoming)}])
+                self.assertEqual(self.session.point, point)
+            finally:
+                self.roads.outgoing[ambiguous.a].remove(ambiguous)
+                del self.roads.branch_levels[ambiguous_id]
+                del self.roads.edges[ambiguous_id]
+            return
+        self.fail("No suitable selected-junction test case was found")
 
     def test_reverse_does_not_allow_remote_service_or_recovery_while_moving(self):
         self.cmd("accept")

@@ -81,12 +81,19 @@ export class MapView {
     const c = mask.getContext("2d");
     const [left, top] = this.data.bounds;
     c.scale(scale, scale); c.translate(-left, -top);
-    c.lineCap = "round"; c.strokeStyle = "#ffa0a0";
-    for (const erase of [false, true]) {
-      c.globalCompositeOperation = erase ? "destination-out" : "source-over";
-      for (const edge of this.unique) {
-        c.lineWidth = (this.data.driving.widths[edge.kind] ?? 10) + (erase ? -1.6 : 1.6);
-        c.beginPath(); this.roadPath(c, edge); c.stroke();
+    c.lineCap = "round"; c.strokeStyle = "#f15e5e";
+    for (const limit of ["road", "collider"]) {
+      for (const erase of [false, true]) {
+        c.globalCompositeOperation = erase ? "destination-out" : "source-over";
+        for (const edge of this.unique) {
+          const width = this.data.driving.widths[edge.kind] ?? 10;
+          const halfWidth = limit === "road"
+            ? width / 2
+            : width / 2 - 2;//(this.data.driving.taxi_radius ?? 0);
+          c.lineWidth = Math.max(0, halfWidth * 1.5 + (erase ? -1.0 : 1.0));
+          if (c.lineWidth === 0) continue;
+          c.beginPath(); this.roadPath(c, edge); c.stroke();
+        }
       }
     }
     context.save(); context.resetTransform();

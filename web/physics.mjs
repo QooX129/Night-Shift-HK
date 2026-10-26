@@ -1,6 +1,37 @@
 export function angleDifference(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
+export const STEERING_SENSITIVITY = 2.2;
+export const FORCED_JUNCTION_SENSITIVITY = 5.5;
+const FORCED_JUNCTION_ASSIST_MAX = 3.5;
+const SELECTED_ROAD_CONFIRM_DISTANCE = 2.5;
+
+function enteredSelectedRoad(car, roads, exitId, junction) {
+  if (car.edge !== exitId || exitId == null || junction == null) return false;
+  const edge = roads.edges.get(exitId);
+  if (!edge || edge.a !== junction) return false;
+  const progress = project(car, roads.nodes[edge.a], roads.nodes[edge.b]).t * edge.length;
+  return progress >= Math.min(SELECTED_ROAD_CONFIRM_DISTANCE, edge.length / 2);
+}
+
+function selectedRoadAssist(car, roads, exitId, junction) {
+  if (exitId == null || junction == null || car.speed <= 0.05) return 0;
+  const exit = roads.edges.get(exitId);
+  if (!exit || exit.a !== junction || enteredSelectedRoad(car, roads, exitId, junction)) return 0;
+  const node = roads.nodes[junction];
+  const distance = Math.hypot(car.x - node[0], car.y - node[1]);
+  const influence = Math.max(0, Math.min(1, (60 - distance) / 35));
+  const speedFactor = Math.min(1, car.speed / 3);
+  const exitAngle = roads.angle(exit);
+  const lookahead = Math.min(exit.length / 2, Math.max(0.4, roads.radius(exit)));
+  const targetAngle = Math.atan2(
+    node[1] + Math.sin(exitAngle) * lookahead - car.y,
+    node[0] + Math.cos(exitAngle) * lookahead - car.x,
+  );
+  const difference = angleDifference(targetAngle, car.heading);
+  return Math.max(-FORCED_JUNCTION_ASSIST_MAX, Math.min(FORCED_JUNCTION_ASSIST_MAX, difference * 3))
+    * influence * speedFactor;
+}
 export function project(point, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1];
   const t = Math.max(0, Math.min(1, ((point.x - a[0]) * dx + (point.y - a[1]) * dy) / (dx * dx + dy * dy)));
@@ -45,9 +76,10 @@ export class RoadNetwork {
     }
     return [...found.values()];
   }
-  match(point, heading, previous) {
+  match(point, heading, previous, selectedExit = null, selectedJunction = null) {
     let best = null;
     for (const edge of this.candidates(point, previous)) {
+      if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
       const projection = project(point, this.nodes[edge.a], this.nodes[edge.b]);
       if (projection.distance > this.radius(edge) + 1e-6) continue;
       const score = projection.distance + (1 - Math.cos(heading - this.angle(edge))) * 0.15;
@@ -55,12 +87,13 @@ export class RoadNetwork {
     }
     return best;
   }
-  constrain(old, desired, heading, previous, closed) {
+  constrain(old, desired, heading, previous, closed, selectedExit = null, selectedJunction = null) {
     const radius = this.driving.taxi_radius;
     const [left, top, right, bottom] = this.bounds;
     const inBounds = p => p.x >= left + radius && p.x <= right - radius && p.y >= top + radius && p.y <= bottom - radius;
     let best = null, sawClosed = false;
     for (const edge of this.candidates(desired, previous)) {
+      if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
       if (closed.has(edge.way)) { sawClosed = true; continue; }
       const p = project(desired, this.nodes[edge.a], this.nodes[edge.b]);
       const limit = this.radius(edge);
@@ -75,7 +108,7 @@ export class RoadNetwork {
       for (let i = 1; i <= steps; i++) {
         const sample = { x: old.x + (point.x - old.x) * i / steps,
           y: old.y + (point.y - old.y) * i / steps };
-        match = this.match(sample, heading, current);
+        match = this.match(sample, heading, current, selectedExit, selectedJunction);
         if (!match || closed.has(match.edge.way)) { match = null; break; }
         current = match.edge;
       }
@@ -90,7 +123,7 @@ export class RoadNetwork {
     const edge = this.edges.get(car.edge);
     if (!edge || car.speed <= 0.6 || Math.cos(car.heading - this.angle(edge)) <= 0.35) return null;
     const node = this.nodes[edge.b];
-    if (Math.hypot(car.x - node[0], car.y - node[1]) > Math.min(32, edge.length * 0.4)) return null;
+    if (Math.hypot(car.x - node[0], car.y - node[1]) > Math.min(60, edge.length * 0.8)) return null;
     const options = (this.outgoing.get(edge.b) || []).filter(e => e.b !== edge.a && !closed.has(e.way));
     if (options.length < 2) return null;
     const levels = new Set(options.map(e => JSON.stringify(this.branchLevels[e.id])));
@@ -126,10 +159,14 @@ export class RoadNetwork {
 
 export function stepCar(car, input, dt, {
   roads, maxSpeed = roads.driving.max_speed, acceleration = roads.driving.acceleration,
-  traffic = 1, fuel = 100, closed = new Set(),
+  traffic = 1, fuel = 100, closed = new Set(), selectedExit = null, selectedJunction = null,
 } = {}) {
   const step = Math.min(Math.max(dt, 0), 1 / 30);
-  if (input.brake) {
+  const aligningSelectedExit = roads && selectedExit != null && selectedJunction != null
+    && !enteredSelectedRoad(car, roads, selectedExit, selectedJunction);
+  if (input.handbrake) {
+    car.speed = Math.sign(car.speed) * Math.max(0, Math.abs(car.speed) - 28 * step);
+  } else if (input.brake) {
     car.speed = car.speed > 0 ? Math.max(0, car.speed - 19 * step) : fuel > 0 ? Math.max(-4 * traffic, car.speed - 3 * step) : 0;
   } else if (input.gas && fuel > 0) {
     car.speed = car.speed < 0 ? Math.min(0, car.speed + 19 * step) : Math.min(maxSpeed * traffic, car.speed + acceleration * step);
@@ -138,11 +175,27 @@ export function stepCar(car, input, dt, {
   }
   car.speed = Math.max(-4 * traffic, Math.min(maxSpeed * traffic, car.speed));
   if (fuel <= 0) car.speed = 0;
-  if (Math.abs(car.speed) > 0.05) car.heading += ((input.right ? 1 : 0) - (input.left ? 1 : 0)) * 1.8 * Math.max(-1, Math.min(1, car.speed / 3)) * step;
+  if (Math.abs(car.speed) > 0.05) {
+    const forcingSelectedExit = roads && selectedExit != null && selectedJunction != null
+      && !enteredSelectedRoad(car, roads, selectedExit, selectedJunction);
+    const manualSteering = ((input.right ? 1 : 0) - (input.left ? 1 : 0))
+      * (forcingSelectedExit ? FORCED_JUNCTION_SENSITIVITY : STEERING_SENSITIVITY)
+      * Math.max(-1, Math.min(1, car.speed / 3));
+    const assist = roads
+      ? selectedRoadAssist(car, roads, selectedExit, selectedJunction)
+      : 0;
+    car.heading += (manualSteering + assist) * step;
+  }
   const old = { x: car.x, y: car.y };
   const desired = { x: car.x + Math.cos(car.heading) * car.speed * step, y: car.y + Math.sin(car.heading) * car.speed * step };
-  const constrained = roads ? roads.constrain(old, desired, car.heading, roads.edges.get(car.edge), closed) : { ...desired, edge: car.edge, blocked: false, closed: false };
+  const constrained = roads
+    ? roads.constrain(old, desired, car.heading, roads.edges.get(car.edge), closed, selectedExit, selectedJunction)
+    : { ...desired, edge: car.edge, blocked: false, closed: false };
   car.x = constrained.x; car.y = constrained.y; car.edge = constrained.edge;
+  if (aligningSelectedExit && car.speed > 0.05 && car.edge === selectedExit) {
+    const exit = roads.edges.get(selectedExit);
+    if (exit.a === selectedJunction) car.heading = roads.angle(exit);
+  }
   if (constrained.blocked) {
     const travel = Math.hypot(car.x - old.x, car.y - old.y);
     if (travel < 1e-7) car.speed = 0;
