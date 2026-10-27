@@ -69,10 +69,13 @@ To stop the server, press **Ctrl+C** in the terminal.
   `web/physics.mjs`; increase it for faster turning and decrease it for slower,
   gentler normal steering.
 - The full simulated taxi footprint stays inside approximate road corridors.
-  Light-red outlines mark both the road edges and the inner taxi-centre collider
-  limits at 80% opacity, using 1.6 m strokes without tinting the road interior.
+  A single light-red outline marks the taxi-centre collider edges at 80% opacity,
+  using 1 m strokes without tinting the road interior.
   Contact with a road edge removes outward movement and allows sliding along
   the edge. Reverse if facing a dead end or a boundary.
+  The outline follows the actual collision limit (`road width / 2 - taxi_radius`),
+  including narrow roads and joined junction perimeters, without a decorative
+  outer road outline.
 - Wrong-way entry and restricted turns remain possible with warnings. GPS routes
   still respect the directed road graph and supported turn restrictions.
   Small arrows show legal traffic directions, not the taxi's chosen direction.

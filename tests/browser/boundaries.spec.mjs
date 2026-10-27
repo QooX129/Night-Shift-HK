@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("road outlines are light red at 80% opacity without tinting the road interior", async ({ page }, testInfo) => {
+test("only collider outlines are light red at 80% opacity without tinting the road interior", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
@@ -36,8 +36,8 @@ test("road outlines are light red at 80% opacity without tinting the road interi
     const pixel = (view, y) => [...view.backdrop.getContext("2d").getImageData(84, Math.round((y + 20) * 1.4), 1, 1).data];
     const result = { alpha, points, centre: pixel(outlined, 0), oldCentre: pixel(baseline, 0),
       collider: pixel(outlined, 2.5), oldCollider: pixel(baseline, 2.5),
-      edge: pixel(outlined, 5), oldEdge: pixel(baseline, 5),
-      outerEdge: pixel(outlined, 5.2), oldOuterEdge: pixel(baseline, 5.2),
+      edge: pixel(outlined, 7.5), oldEdge: pixel(baseline, 7.5),
+      outerEdge: pixel(outlined, 7.7), oldOuterEdge: pixel(baseline, 7.7),
       outside: pixel(outlined, 10), oldOutside: pixel(baseline, 10) };
     document.body.replaceChildren(outlined.backdrop);
     return result;
@@ -48,10 +48,72 @@ test("road outlines are light red at 80% opacity without tinting the road interi
   expect(result.outside).toEqual(result.oldOutside);
   expect(result.collider[0]).toBeGreaterThan(result.oldCollider[0] + 20);
   expect(result.collider[0]).toBeGreaterThan(result.collider[1]);
-  expect(result.edge[0]).toBeGreaterThan(result.oldEdge[0] + 20);
-  expect(result.edge[0]).toBeGreaterThan(result.edge[1]);
-  expect(result.outerEdge[0]).toBeGreaterThan(result.oldOuterEdge[0] + 20);
+  expect(result.edge).toEqual(result.oldEdge);
+  expect(result.outerEdge).toEqual(result.oldOuterEdge);
   await page.screenshot({ path: testInfo.outputPath("road-boundaries.png") });
+});
+
+test("narrow-road collider outlines match physics limits including zero-width centre corridors", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  const results = await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs");
+    const { RoadNetwork } = await import("/physics.mjs");
+    const results = [];
+    for (const width of [8, 10, 16]) {
+      for (const taxiRadius of [3, 4]) {
+        const edge = { id: "road", a: "a", b: "b", way: 1, kind: "service", length: 100,
+          name: "Local road", zh: "", layer: "0" };
+        const data = { nodes: { a: [0, 0], b: [100, 0] }, edges: [edge], backdrop: [],
+          bounds: [-20, -20, 120, 20], driving: { taxi_radius: taxiRadius, widths: { service: width } } };
+        const roads = new RoadNetwork(data);
+        const view = new MapView(document.createElement("canvas"), data, []);
+        view.buildBackdrop(data.bounds, 4);
+        const c = view.backdrop.getContext("2d");
+        const pixel = y => [...c.getImageData(240, Math.round((20 + y) * 4), 1, 1).data];
+        const radius = roads.radius(edge);
+        results.push({
+          width, taxiRadius, radius,
+          left: pixel(-radius), right: pixel(radius),
+          outer: pixel(width * 0.75),
+          centre: pixel(0),
+        });
+      }
+    }
+    return results;
+  });
+  for (const result of results) {
+    for (const point of [result.left, result.right]) {
+      expect(point[0], JSON.stringify(result)).toBeGreaterThan(point[1] + 30);
+    }
+    expect(result.outer[0]).toBeLessThan(result.outer[1]);
+    if (result.radius > 0.5) expect(result.centre[0]).toBeLessThan(result.centre[1]);
+  }
+});
+
+test("collider outline follows the joined junction perimeter without blocking its interior", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  const pixels = await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs");
+    const data = {
+      nodes: { a: [-20, 0], b: [0, 0], c: [20, 0], d: [0, 20] },
+      edges: [["a", "b"], ["b", "c"], ["b", "d"]].map(([a, b], i) => ({
+        id: `${i}`, a, b, way: i, kind: "residential", length: 20,
+        name: "Local road", layer: "0",
+      })),
+      backdrop: [], bounds: [-30, -30, 30, 30],
+      driving: { taxi_radius: 3, widths: { residential: 10 } },
+    };
+    const view = new MapView(document.createElement("canvas"), data, []);
+    view.buildBackdrop(data.bounds, 4);
+    const c = view.backdrop.getContext("2d");
+    const pixel = (x, y) => [...c.getImageData((x + 30) * 4, (y + 30) * 4, 1, 1).data];
+    return { centre: pixel(0, 0), opening: pixel(0, 2),
+      horizontal: pixel(-7, -2), vertical: pixel(2, 7) };
+  });
+  for (const point of [pixels.centre, pixels.opening]) expect(point[0]).toBeLessThan(point[1]);
+  for (const point of [pixels.horizontal, pixels.vertical]) expect(point[0]).toBeGreaterThan(point[1] + 30);
 });
 
 test("road arrows show only legal directions with left-side opposing arrows on two-way roads", async ({ page }) => {
