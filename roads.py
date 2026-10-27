@@ -19,7 +19,7 @@ class DrivingConfig(TypedDict):
 
 
 DRIVING: DrivingConfig = {
-    "taxi_radius": 4,
+    "taxi_radius": 3,
     "max_speed": 150 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,

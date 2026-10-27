@@ -63,8 +63,13 @@ export class RoadNetwork {
     const radius = this.driving.taxi_radius;
     const [left, top, right, bottom] = this.bounds;
     const inBounds = p => p.x >= left + radius && p.x <= right - radius && p.y >= top + radius && p.y <= bottom - radius;
+    const approachingSelection = previous.b === selectedJunction
+      && project(desired, this.nodes[previous.a], this.nodes[previous.b]).t < 1
+      && Math.cos(heading - this.angle(previous)) > 0.35;
     let best = null, sawClosed = false;
     for (const edge of this.candidates(desired, previous)) {
+      // Overlapping exit corridors must not bypass the full-width junction arrival.
+      if (approachingSelection && edge.id !== previous.id) continue;
       if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
       if (closed.has(edge.way)) { sawClosed = true; continue; }
       const p = project(desired, this.nodes[edge.a], this.nodes[edge.b]);
@@ -95,7 +100,9 @@ export class RoadNetwork {
     const edge = this.edges.get(car.edge);
     if (!edge || car.speed <= 0.6 || Math.cos(car.heading - this.angle(edge)) <= 0.35) return null;
     const node = this.nodes[edge.b];
-    if (Math.hypot(car.x - node[0], car.y - node[1]) > Math.min(60, edge.length * 0.8)) return null;
+    const projection = project(car, this.nodes[edge.a], node);
+    if (projection.distance > this.radius(edge) + 1e-6
+        || (1 - projection.t) * edge.length > Math.min(60, edge.length * 0.8)) return null;
     const options = (this.outgoing.get(edge.b) || []).filter(e => e.b !== edge.a && !closed.has(e.way));
     if (options.length < 2) return null;
     const levels = new Set(options.map(e => JSON.stringify(this.branchLevels[e.id])));

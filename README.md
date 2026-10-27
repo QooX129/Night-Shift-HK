@@ -54,6 +54,9 @@ To stop the server, press **Ctrl+C** in the terminal.
   road in cyan without selecting it. Selection queues the exit and resumes the
   approach without moving or rotating the taxi. Only when the taxi reaches the
   junction does it snap to face along the chosen road, preserving its speed.
+  Junction detection spans the full drivable width, including at the road edges
+  and on short approach segments. Overlapping exit corridors cannot bypass a
+  queued turn before the taxi reaches the junction.
   There is no steering assist or temporary sensitivity boost; manual steering
   remains unchanged before and after the snap. Highlight the
   whole road ahead from the taxi to the next junction, then each available exit

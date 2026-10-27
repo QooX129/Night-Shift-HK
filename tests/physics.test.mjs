@@ -120,7 +120,7 @@ test("a taxi snapped onto the selected road continues straight without assist", 
 
 test("queued turns snap only on junction arrival and preserve speed across sharp exits", () => {
   for (const angle of [0, Math.PI / 2, -Math.PI / 2, Math.PI - 0.1, -Math.PI + 0.1]) {
-    for (const offset of [-1, 0, 1]) {
+    for (const offset of [-2.5, -1, 0, 1, 2.5]) {
       const roads = network(), car = carAt(45, offset);
       roads.nodes.d = [60 + Math.cos(angle) * 60, Math.sin(angle) * 60];
       car.speed = 10;
@@ -143,6 +143,55 @@ test("queued turns snap only on junction arrival and preserve speed across sharp
       assert.equal(car.edge, "bd");
       assert.equal(car.speed, 10);
     }
+  }
+});
+
+test("queued junction arrival covers both road boundaries even while steering into an overlapping exit", () => {
+  for (const width of [10, 14, 16]) {
+    for (const side of [-1, 1]) {
+      for (const heading of [-0.2, 0.2]) {
+        const roads = network();
+        roads.driving.widths.residential = width;
+        const radius = roads.radius(roads.edges.get("ab"));
+        const car = carAt(45, side * radius);
+        car.heading = heading; car.speed = 10;
+        let snapped;
+        for (let frame = 0; frame < 120; frame++) {
+          const before = { ...car };
+          const result = stepCar(car, { gas: true }, 1 / 60, {
+            roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
+          });
+          if (result.junctionPoint) {
+            snapped = result;
+            assert.ok(before.x < 60 && before.x + Math.cos(heading) * 10 / 60 >= 60 - 1e-8);
+            break;
+          }
+          assert.equal(car.edge, "ab", "an overlapping exit must not steal the queued arrival");
+          assert.equal(car.heading, heading, "approach must retain manual steering");
+          assert.ok(Math.abs(car.y) <= radius + 1e-6);
+        }
+        assert.ok(snapped, `width=${width}, side=${side}, heading=${heading}`);
+        assert.deepEqual(snapped.junctionPoint, { x: 60, y: 0, heading });
+        assert.equal(car.edge, "bd");
+        assert.equal(car.heading, Math.PI / 2);
+        assert.equal(car.speed, 10);
+      }
+    }
+  }
+});
+
+test("short-road junction detection spans the full drivable width, not a centre-point circle", () => {
+  const roads = network({ stacked: true });
+  roads.nodes.a = [59, 0];
+  roads.edges.get("ab").length = 1;
+  for (const offset of [-2.5, 0, 2.5]) {
+    const car = carAt(59.3, offset);
+    car.speed = 3;
+    assert.equal(roads.approach(car)?.node, "b");
+    car.x = 59.1;
+    assert.equal(roads.approach(car), null, "must not extend the approach distance");
+    car.x = 59.3; car.y = Math.sign(offset || 1) * 2.51;
+    assert.equal(roads.approach(car), null, "must not extend beyond the road corridor");
   }
 });
 

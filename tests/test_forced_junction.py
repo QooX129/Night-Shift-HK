@@ -90,6 +90,20 @@ class ForcedJunctionTests(unittest.TestCase):
                 self.assertEqual((session.point, session.heading, session.edge, session.history), old)
                 self.assertTrue(session.paused)
 
+    def test_short_approach_accepts_selection_at_both_road_boundaries(self):
+        self.roads.nodes["a"] = (59, 0)
+        incoming = replace(self.roads.edges["ab"], length=1, kind="primary")
+        self.roads.edges["ab"] = incoming
+        self.roads.outgoing["a"] = [incoming]
+        for side in [-1, 1]:
+            with self.subTest(side=side):
+                session = self.session((59.5, side * self.roads.radius(incoming)))
+                session.paused = True
+                self.game.select_road(session, "ab", "bd")
+                self.assertEqual(session.selected_exit, "bd")
+                self.assertEqual(session.selected_junction, "b")
+                self.assertFalse(session.paused)
+
     def test_selected_matching_excludes_wrong_exit_without_relaxing_boundaries(self):
         self.assertIsNone(self.roads.corridor_match((68, 0), 0, self.roads.edges["ab"], "bd", "b"))
         match = self.roads.corridor_match((60, 0), 0, self.roads.edges["ab"], "bd", "b")
@@ -112,7 +126,9 @@ let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const roads = new RoadNetwork(JSON.parse(input));
 const cases = [];
-for (const start of [[45, 0, 0], [59, 0, 0], [59, 0.9, 1.2], [60, 1, 0.4]]) {
+const radius = roads.radius(roads.edges.get('ab'));
+for (const start of [[45, 0, 0], [59, 0, 0], [59, 0.9, 1.2], [60, 1, 0.4],
+  [45, radius, 0.2], [45, -radius, -0.2]]) {
   for (const right of [false, true]) {
     const car = { x: start[0], y: start[1], heading: start[2], speed: 10, edge: 'ab' };
     const batches = [];
@@ -130,7 +146,7 @@ for (const start of [[45, 0, 0], [59, 0, 0], [59, 0.9, 1.2], [60, 1, 0.4]]) {
       batches.push({ x: car.x, y: car.y, heading: car.heading, speed: car.speed,
         dt: 0.3, trail, contacts, snaps });
     }
-    cases.push({ start, batches });
+    cases.push({ start, right, batches });
   }
 }
 console.log(JSON.stringify(cases));
@@ -144,11 +160,16 @@ console.log(JSON.stringify(cases));
         for case in json.loads(result.stdout):
             session = self.session(tuple(case["start"][:2]))
             session.heading = case["start"][2]
+            case_snaps = 0
             for batch in case["batches"]:
                 contacts += batch.pop("contacts")
-                snaps += batch.pop("snaps")
+                batch_snaps = batch.pop("snaps")
+                snaps += batch_snaps
+                case_snaps += batch_snaps
                 # A client may retain its selection while the previous response is in flight.
                 self.game.update_position(session, batch)
                 self.assertTrue(math.isfinite(session.heading))
+            if case["start"][0] == 45 and not case["right"]:
+                self.assertEqual(case_snaps, 1, "boundary approaches must execute the queued turn exactly once")
         self.assertGreater(contacts, 0, "the regression must exercise actual wall contact")
         self.assertGreater(snaps, 0, "the regression must submit a junction snap trail")

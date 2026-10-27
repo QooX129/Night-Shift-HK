@@ -6,7 +6,7 @@ import random
 import time
 from uuid import uuid4
 
-from roads import DRIVING, Edge, Point, RoadMap
+from roads import DRIVING, Edge, Point, RoadMap, project
 
 
 class RuleError(ValueError):
@@ -343,9 +343,10 @@ class Game:
         if incoming is None or incoming.id != session.edge:
             raise RuleError("The intersection no longer matches your road.")
         match = self.roads.corridor_match(session.point, session.heading, incoming)
+        _, _, fraction = project(session.point, self.roads.nodes[incoming.a], self.roads.nodes[incoming.b])
         if (
             not session.paused or not match
-            or math.dist(session.point, self.roads.nodes[incoming.b]) > min(60, incoming.length * 0.8) + 1.5
+            or (1 - fraction) * incoming.length > min(60, incoming.length * 0.8) + 1.5
             or math.cos(session.heading - self.roads.angle(incoming)) <= 0.35
             or not self.roads.junction_choice(incoming, session.closed)
         ):
