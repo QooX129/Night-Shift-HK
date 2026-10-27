@@ -235,7 +235,7 @@ class Game:
         session.edge, session.history, session.warning = previous.id, history, warning
         if session.selected_junction:
             node = self.roads.nodes[session.selected_junction]
-            if previous.id == session.selected_exit or math.dist(point, node) > 45:
+            if previous.id == session.selected_exit or math.dist(point, node) > 61.5:
                 session.selected_exit = session.selected_junction = None
         session.point, session.speed, session.heading = point, speed, heading
         session.elapsed += elapsed

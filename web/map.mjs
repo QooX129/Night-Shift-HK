@@ -125,7 +125,7 @@ export class MapView {
     }
     c.restore();
   }
-  render(car, state, lang, approach) {
+  render(car, state, lang, approach, previewExit = null) {
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
     const zoom = this.overview ? Math.min((w - (w > 800 ? 370 : 25)) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
@@ -170,11 +170,13 @@ export class MapView {
       if (state.selected_exit && state.selected_junction && car.edge === state.edge) {
         const node = this.data.nodes[state.selected_junction];
         const current = this.edges.get(car.edge);
-        if (current.a !== state.selected_junction && Math.hypot(car.x - node[0], car.y - node[1]) < 45) {
+        if (current.a !== state.selected_junction && Math.hypot(car.x - node[0], car.y - node[1]) <= 61.5) {
           const path = approach?.exits.find(exit => exit.edge.id === state.selected_exit)?.path;
           this.highlightExit(c, this.edges.get(state.selected_exit), "#55e9ff", zoom, path);
         }
       }
+      const preview = approach?.exits.find(exit => exit.edge.id === previewExit);
+      if (preview) this.highlightExit(c, preview.edge, "#55e9ff", zoom, preview.path);
       if (state.route) {
         c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
         for (const id of state.route) this.roadPath(c, this.edges.get(id));

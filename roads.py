@@ -133,7 +133,11 @@ class RoadMap:
             nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])
             if distance <= self.radius(edge) + 1e-6:
                 score = distance + (1 - math.cos(heading - self.angle(edge))) * 0.15
-                matches.append((score, edge.id, Match(edge, nearest, distance, fraction, edge.wrongway)))
+                match = Match(edge, nearest, distance, fraction, edge.wrongway)
+                if (edge.id == previous.id and edge.b == selected_junction and fraction < 1
+                        and math.cos(heading - self.angle(edge)) > 0.35):
+                    return match
+                matches.append((score, edge.id, match))
         return min(matches, key=lambda m: (m[0], m[1]))[2] if matches else None
 
     def branches(self, incoming: Edge, closed: set[int]) -> list[Edge]:

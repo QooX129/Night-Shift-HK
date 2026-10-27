@@ -7,6 +7,7 @@ let lang = "en", state = null, view = null, mapData, stops;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
+let previewExit = null;
 const controls = { gas: false, brake: false, handbrake: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
 const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog"];
@@ -126,6 +127,7 @@ async function promptJunction() {
   });
 }
 function renderExits() {
+  previewExit = null;
   $("exits").replaceChildren();
   const index = state.route?.indexOf(state.edge) ?? -1;
   const suggested = index >= 0 ? state.route[index + 1] : null;
@@ -142,9 +144,19 @@ function renderExits() {
     small.textContent = option.edge === suggested ? t("suggested") : lang === "zh" ? option.name : option.zh;
     if (option.restricted) small.textContent += ` · ${t("restricted")}`;
     text.append(small); button.append(arrow, text);
+    for (const event of ["pointerenter", "focus"]) {
+      button.addEventListener(event, () => { previewExit = option.edge; });
+    }
+    for (const event of ["pointerleave", "blur"]) {
+      button.addEventListener(event, () => {
+        if (previewExit === option.edge) previewExit = null;
+      });
+    }
     button.addEventListener("click", () => perform(async () => {
       await send("select_road", { incoming: state.edge, exit: option.edge });
+      applyState(state, true);
       junctionLatch = state.selected_junction;
+      lastFrame = performance.now(); stepBank = 0;
       $("junction").close(); paused = false; resetControls();
     }));
     $("exits").append(button);
@@ -208,6 +220,7 @@ function frame(timestamp) {
       });
       boundary = result.blocked && !result.closed;
       closureWarning = result.closed;
+      if (result.junctionPoint) trail.push(result.junctionPoint);
       trail.push({ x: car.x, y: car.y, heading: car.heading });
       elapsed += dt;
       if (paused) break;
@@ -228,7 +241,8 @@ function frame(timestamp) {
       $("notice").textContent = t("wait");
     }
   }
-  if (view && state) view.render(car, state, lang, roads.preview(car, new Set(state.closed)));
+  if (view && state) view.render(car, state, lang, roads.preview(car, new Set(state.closed)),
+    $("junction").open ? previewExit : null);
   $("speed").textContent = Math.round(Math.abs(car.speed) * 3.6);
   $("drive-mode").textContent = t(car.speed < -0.05 ? "reverse" : "manual");
   requestAnimationFrame(frame);

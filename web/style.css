@@ -921,8 +921,8 @@ dialog p {
     position: fixed;
     inset: auto max(16px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-bottom)) auto;
     margin: 0;
-    width: min(280px, calc(100vw - 32px));
-    max-height: min(55dvh, 500px);
+    width: min(350px, calc(100vw - 32px));
+    max-height: min(55dvh, 600px);
     padding: 18px;
     border-radius: 14px;
     overflow-y: auto;

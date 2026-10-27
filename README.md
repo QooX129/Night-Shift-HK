@@ -50,23 +50,21 @@ To stop the server, press **Ctrl+C** in the terminal.
   more than two available exits and connected stacked-road forks pause to offer
   a route choice before the junction in a compact, scrollable bottom-right GPS
   panel, without dimming or blurring the map. The GPS-recommended exit is identified in
-  the list. The taxi resumes at its approach speed after selection. Until it
-  travels into the selected road (up to 2.5 m along its first segment), steering
-  sensitivity and steering assist are temporarily increased, and the taxi is
-  constrained to that exit. On entry, the taxi's facing direction is aligned
-  with the selected road without changing its speed. Normal
-  steering sensitivity resumes once the selected road is reached. Highlight the
+  the list. Hover over an option or focus it with the keyboard to preview its
+  road in cyan without selecting it. Selection queues the exit and resumes the
+  approach without moving or rotating the taxi. Only when the taxi reaches the
+  junction does it snap to face along the chosen road, preserving its speed.
+  There is no steering assist or temporary sensitivity boost; manual steering
+  remains unchanged before and after the snap. Highlight the
   whole road ahead from the taxi to the next junction, then each available exit
   to its following junction or dead end, including short segments and bends.
   This remains visible when stopped facing forward; closed roads and disconnected
-  crossings are excluded. Selecting an exit highlights it **cyan** locally;
-  the highlight clears once you enter an exit or leave the junction area.
+  crossings are excluded. The selected-road highlight clears on entry.
 - An unconnected flyover crossing never opens a selector or changes the current
   road level. Reach other levels through actual connecting roads/ramps.
 - Steering sensitivity is configured by `STEERING_SENSITIVITY` in
   `web/physics.mjs`; increase it for faster turning and decrease it for slower,
-  gentler normal steering. `FORCED_JUNCTION_SENSITIVITY` in the same file
-  controls the temporary higher sensitivity while entering a selected exit.
+  gentler normal steering.
 - The full simulated taxi footprint stays inside approximate road corridors.
   Light-red outlines mark both the road edges and the inner taxi-centre collider
   limits at 80% opacity, using 1.6 m strokes without tinting the road interior.

@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 // A small deterministic map isolates stacked-fork UI from changing OSM geometry.
-test("stacked selection pauses time, highlights only, and permits a different exit", async ({ page }, testInfo) => {
+test("stacked selection previews the exit and waits until arrival to snap", async ({ page }, testInfo) => {
   const commands = [];
   const edges = [
     { id: "in", a: "a", b: "b", way: 1, kind: "residential", length: 60, name: "Approach", zh: "入口", layer: "0" },
@@ -49,7 +49,10 @@ test("stacked selection pauses time, highlights only, and permits a different ex
     } else if (command.action === "pause") state = {
       ...state, paused: command.paused, speed: command.preserve_speed ? state.speed : 0,
     };
-    else if (command.action === "select_road") state = { ...state, paused: false, selected_exit: command.exit, selected_junction: "b", dialogue: "selected" };
+    else if (command.action === "select_road") state = {
+      ...state,
+      paused: false, selected_exit: command.exit, selected_junction: "b", dialogue: "selected",
+    };
     else throw new Error(`Unexpected fixture command: ${command.action}`);
     await route.fulfill({ json: state });
   });
@@ -58,7 +61,11 @@ test("stacked selection pauses time, highlights only, and permits a different ex
   await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs");
     const render = MapView.prototype.render, highlight = MapView.prototype.highlightExit;
-    MapView.prototype.render = function (...args) { window.exitHighlights = []; return render.apply(this, args); };
+    MapView.prototype.render = function (...args) {
+      window.renderedCar = { ...args[0] };
+      window.exitHighlights = [];
+      return render.apply(this, args);
+    };
     MapView.prototype.highlightExit = function (context, edge, color, zoom, path) {
       window.exitHighlights.push({ edge: edge.id, color, start: path?.start, segments: path?.edges.map(e => e.id) });
       return highlight.call(this, context, edge, color, zoom, path);
@@ -80,21 +87,53 @@ test("stacked selection pauses time, highlights only, and permits a different ex
   await page.waitForTimeout(500);
   expect(state.elapsed).toBe(clock);
   const approachSpeed = state.speed;
+  const commandCount = commands.length;
+  const rightOption = page.getByRole("button", { name: /Turn right/ });
+  const straightOption = page.getByRole("button", { name: /Straight/ });
+  await rightOption.hover();
+  await expect.poll(() => page.evaluate(() => window.exitHighlights
+    .filter(h => h.color === "#55e9ff").map(h => h.edge))).toEqual(["surface"]);
+  expect(await page.evaluate(() => window.exitHighlights.find(h =>
+    h.edge === "surface" && h.color === "#55e9ff").segments)).toEqual(["surface"]);
+  await straightOption.hover();
+  await expect.poll(() => page.evaluate(() => window.exitHighlights
+    .filter(h => h.color === "#55e9ff").map(h => h.edge))).toEqual(["upper"]);
+  await page.mouse.move(0, 0);
+  await straightOption.evaluate(button => button.blur());
+  await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h =>
+    h.color === "#55e9ff"))).toBe(false);
+  await rightOption.focus();
+  await expect.poll(() => page.evaluate(() => window.exitHighlights
+    .filter(h => h.color === "#55e9ff").map(h => h.edge))).toEqual(["surface"]);
+  expect(commands.length).toBe(commandCount);
+  expect(state.edge).toBe("in");
+  expect(state.elapsed).toBe(clock);
+  const approachX = state.x;
   await page.getByRole("button", { name: /Turn right/ }).click();
   await expect(page.locator("#junction")).not.toBeVisible();
   await expect(page.locator("#drive-mode")).toHaveText("MANUAL");
   expect(state.selected_exit).toBe("surface");
   expect(state.speed).toBe(approachSpeed);
-  await page.waitForTimeout(300);
-  await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h => h.edge === "surface" && h.color === "#55e9ff"))).toBe(true);
+  expect(state.x).toBe(approachX);
+  expect(state.y).toBe(0);
+  expect(state.heading).toBe(0);
+  expect(state.elapsed).toBe(clock);
+  expect(await page.evaluate(() => window.renderedCar.x)).toBeLessThan(60);
+  expect(await page.evaluate(() => window.renderedCar.heading)).toBe(0);
   await page.screenshot({ path: testInfo.outputPath("selected-road.png") });
   expect(commands.some(c => ["turn", "assist_done"].includes(c.action))).toBe(false);
-  // The selected exit is enforced, and its assist guides the turn.
   await page.keyboard.down("w");
-  await page.waitForTimeout(4000);
+  await expect.poll(() => commands.some(c => c.action === "move" &&
+    c.x > approachX && c.x < 60 && c.y === 0 && c.heading === 0)).toBe(true);
+  await expect.poll(() => commands.some(c => c.action === "move" && c.y >= 2)).toBe(true);
   await page.keyboard.up("w");
+  const firstMove = commands.find(c => c.action === "move" && c.y >= 2);
+  expect(commands.filter(c => c.action === "move").some(c =>
+    c.trail.some(p => p.x === 60 && p.y === 0))).toBe(true);
+  expect(firstMove.trail.filter(p => p.y > 0).every(p =>
+    p.x === 60 && p.heading === Math.PI / 2)).toBe(true);
   expect(state.edge).toBe("surface");
-  expect(state.y).toBeGreaterThan(0);
+  expect(state.y).toBeGreaterThan(2);
   expect(state.selected_exit).toBeNull();
   await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h => h.color === "#55e9ff"))).toBe(false);
   await expect(page.locator("#error-dialog")).not.toBeVisible();

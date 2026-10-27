@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY, FORCED_JUNCTION_SENSITIVITY,
+  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY,
 } from "../web/physics.mjs";
 
 function network({ stacked = false, crossing = false } = {}) {
@@ -22,7 +22,6 @@ function network({ stacked = false, crossing = false } = {}) {
 }
 const carAt = (x = 20, y = 0) => ({ x, y, speed: 0, heading: 0, edge: "ab" });
 const freeDriving = { maxSpeed: 150 / 3.6, acceleration: 7 };
-assert.ok(FORCED_JUNCTION_SENSITIVITY > STEERING_SENSITIVITY);
 
 test("accelerate and steer, brake to a stop, then hold for low-speed reverse", () => {
   const car = carAt();
@@ -88,97 +87,75 @@ test("normal two-exit forks stay manual while stacked forks request a choice", (
   assert.equal(car.heading, 0);
 });
 
-test("selected exits gently assist steering near the chosen junction", () => {
+test("selected exits never add steering assist or raise manual sensitivity", () => {
   const roads = network();
-  const assisted = carAt(52);
-  assisted.speed = 3;
-  stepCar(assisted, {}, 1 / 60, { roads, selectedExit: "bd", selectedJunction: "b" });
-  assert.ok(assisted.heading > 0, "assist should nudge toward the selected right exit");
-
-  const manual = carAt(52);
-  manual.speed = 3;
-  stepCar(manual, {}, 1 / 60, { roads });
-  assert.equal(manual.heading, 0, "unselected junctions must remain fully manual");
-
-  const distant = carAt(-10);
-  distant.speed = 3;
-  stepCar(distant, {}, 1 / 60, { roads, selectedExit: "bd", selectedJunction: "b" });
-  assert.equal(distant.heading, 0, "assist should not begin far from the junction");
-
-  const override = carAt(52);
-  override.speed = 3;
-  stepCar(override, { left: true }, 1 / 60, { roads, selectedExit: "bd", selectedJunction: "b" });
-  assert.ok(override.heading < 0, "manual steering should be able to override the assist");
-
-  const forcedSteer = carAt(40);
-  forcedSteer.speed = 3;
-  stepCar(forcedSteer, { right: true }, 1 / 60, { roads, selectedExit: "bd", selectedJunction: "b" });
-  assert.ok(forcedSteer.heading > STEERING_SENSITIVITY / 60,
-    "forced junction mode should temporarily raise manual steering sensitivity");
-
-  const justEntered = carAt(60, 1);
-  justEntered.edge = "bd";
-  justEntered.heading = Math.PI / 2;
-  justEntered.speed = 3;
-  stepCar(justEntered, { right: true }, 1 / 60, {
-    roads, selectedExit: "bd", selectedJunction: "b",
-  });
-  assert.equal(justEntered.heading, Math.PI / 2,
-    "align the taxi with the selected road while completing the forced turn");
-
-  const normalSteer = carAt(60, 10);
-  normalSteer.edge = "bd";
-  normalSteer.heading = Math.PI / 2;
-  normalSteer.speed = 3;
-  stepCar(normalSteer, { gas: true, right: true }, 1 / 60, {
-    roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
-  });
-  assert.ok(Math.abs(normalSteer.heading - (Math.PI / 2 + STEERING_SENSITIVITY / 60)) < 1e-9,
-    "normal steering sensitivity should return after entering the selected road");
-});
-
-test("forced turns align the taxi facing direction on road entry without changing speed", () => {
-  for (const angle of [Math.PI / 2, -Math.PI / 2, Math.PI - 0.1, -Math.PI + 0.1]) {
-    const roads = network();
-    roads.nodes.d = [60 + Math.cos(angle) * 60, Math.sin(angle) * 60];
-    for (const error of [-0.8, 0.8]) {
-      const car = carAt(60 + Math.cos(angle), Math.sin(angle));
-      car.edge = "bd";
+  for (const [x, y, edge, heading] of [[52, 0, "ab", 0], [60, 1, "bd", Math.PI / 2],
+    [60, 10, "bd", Math.PI / 2]]) {
+    for (const direction of [-1, 0, 1]) {
+      const car = { ...carAt(x, y), edge, heading };
       car.speed = 10;
-      car.heading = angle + error;
-      stepCar(car, { gas: true, right: true }, 1 / 60, {
+      stepCar(car, { gas: true, left: direction < 0, right: direction > 0 }, 1 / 60, {
         roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
       });
-      assert.equal(car.edge, "bd");
-      assert.ok(Math.abs(angleDifference(car.heading, angle)) < 1e-10);
+      assert.ok(Math.abs(car.heading - (heading + direction * STEERING_SENSITIVITY / 60)) < 1e-10);
       assert.equal(car.speed, 10);
     }
   }
 });
 
-test("entering the selected exit aligns heading even when one step passes the confirmation point", () => {
-  const roads = network(), car = carAt(60, 2.4);
-  car.heading = Math.PI / 2 - 0.4;
-  car.speed = 10;
-  stepCar(car, { gas: true }, 1 / 30, {
-    roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
-  });
-  assert.equal(car.edge, "bd");
-  assert.ok(car.y > 2.5);
-  assert.equal(car.heading, Math.PI / 2);
-  assert.equal(car.speed, 10);
-});
-
-test("selected exit constrains junction traversal and steering assist guides onto it", () => {
+test("a taxi snapped onto the selected road continues straight without assist", () => {
   const roads = network();
-  const car = carAt(45);
+  const car = { ...carAt(60, 2), edge: "bd", heading: Math.PI / 2 };
   car.speed = 10;
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < 60; i++) {
     stepCar(car, { gas: true }, 1 / 60, {
       roads, selectedExit: "bd", selectedJunction: "b",
     });
   }
   assert.equal(car.edge, "bd");
+  assert.equal(car.heading, Math.PI / 2);
+  assert.equal(car.x, 60);
+  assert.ok(car.y > 12);
+});
+
+test("queued turns snap only on junction arrival and preserve speed across sharp exits", () => {
+  for (const angle of [0, Math.PI / 2, -Math.PI / 2, Math.PI - 0.1, -Math.PI + 0.1]) {
+    for (const offset of [-1, 0, 1]) {
+      const roads = network(), car = carAt(45, offset);
+      roads.nodes.d = [60 + Math.cos(angle) * 60, Math.sin(angle) * 60];
+      car.speed = 10;
+      const options = { roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b" };
+      for (let frame = 0; frame < 88; frame++) {
+        const result = stepCar(car, { gas: true }, 1 / 60, options);
+        assert.equal(result.junctionPoint, undefined);
+        assert.equal(car.heading, 0);
+        assert.equal(car.edge, "ab");
+        assert.ok(Math.abs(car.y - offset) < 1e-10);
+      }
+      let snapped = null;
+      for (let frame = 0; frame < 4; frame++) {
+        const result = stepCar(car, { gas: true }, 1 / 60, options);
+        if (result.junctionPoint) { snapped = result; break; }
+      }
+      assert.ok(snapped, `turn must snap at arrival: angle=${angle}, offset=${offset}`);
+      assert.deepEqual(snapped.junctionPoint, { x: 60, y: 0, heading: 0 });
+      assert.ok(Math.abs(angleDifference(car.heading, angle)) < 1e-10);
+      assert.equal(car.edge, "bd");
+      assert.equal(car.speed, 10);
+    }
+  }
+});
+
+test("stopping, reversing, or closing the exit does not execute a queued snap", () => {
+  for (const [speed, closed] of [[0, new Set()], [-4, new Set()], [10, new Set([3])]]) {
+    const roads = network(), car = carAt(59.99);
+    car.speed = speed;
+    const result = stepCar(car, {}, 1 / 60, {
+      roads, closed, selectedExit: "bd", selectedJunction: "b",
+    });
+    assert.equal(result.junctionPoint, undefined);
+    assert.equal(car.heading, 0);
+  }
 });
 
 test("dead-end reverse remains in the road footprint and reverses out", () => {

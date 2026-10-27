@@ -59,6 +59,7 @@ test("junctions with three exits offer the GPS-recommended road for selection", 
 
   await page.goto("/");
   await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
   await page.keyboard.down("w");
   await expect(page.locator("#junction")).toBeVisible({ timeout: 10_000 });
   await page.keyboard.up("w");
@@ -85,4 +86,6 @@ test("junctions with three exits offer the GPS-recommended road for selection", 
   await page.locator("#exits .recommended").click();
   await expect(page.locator("#junction")).not.toBeVisible();
   expect(state.selected_exit).toBe("right");
+  expect(state.edge).toBe("in");
+  expect(state.heading).toBe(0);
 });

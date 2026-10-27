@@ -241,7 +241,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(self.session.fuel, 100)
         self.assertEqual(self.session.money, 56)
 
-    def test_stacked_choice_preserves_position_and_accepts_selected_exit(self):
+    def test_stacked_choice_queues_exit_without_moving_or_changing_speed(self):
         for edge in self.roads.edges.values():
             options = self.roads.branches(edge, set())
             if self.roads.stacked_choice(edge, set()) and edge.length > 30:
@@ -251,12 +251,16 @@ class GameTests(unittest.TestCase):
                 )
                 self.session.edge, self.session.heading = edge.id, self.roads.angle(edge)
                 self.session.history = (edge.way,)
-                old = (self.session.point, self.session.heading, self.session.edge)
+                self.session.speed = 18
+                old = (self.session.speed, self.session.elapsed, self.session.fuel)
+                position = (self.session.point, self.session.heading, self.session.edge, self.session.history)
                 self.cmd("select_road", incoming=edge.id, exit=options[0].id)
-                self.assertEqual((self.session.point, self.session.heading, self.session.edge), old)
+                self.assertEqual((self.session.speed, self.session.elapsed, self.session.fuel), old)
                 self.assertEqual(self.session.selected_exit, options[0].id)
                 self.assertFalse(self.session.paused)
                 chosen = options[0]
+                self.assertEqual((self.session.point, self.session.heading, self.session.edge,
+                                  self.session.history), position)
                 node = self.roads.nodes[edge.b]
                 a, b = node, self.roads.nodes[chosen.b]
                 length = min(chosen.length * 0.5, 10)
@@ -313,8 +317,6 @@ class GameTests(unittest.TestCase):
             chosen, alternate = options[0], alternate_options[0]
             self.cmd("select_road", incoming=incoming.id, exit=chosen.id)
             node = self.roads.nodes[incoming.b]
-            self.cmd("move", x=node[0], y=node[1], heading=self.roads.angle(alternate),
-                     speed=3, dt=1)
             length = min(alternate.length * 0.8, 10)
             point = (
                 node[0] + (self.roads.nodes[alternate.b][0] - node[0]) * length / alternate.length,
