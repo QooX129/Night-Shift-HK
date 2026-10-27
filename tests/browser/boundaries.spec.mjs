@@ -22,8 +22,10 @@ test("road outlines are light red at 80% opacity without tinting the road interi
       context.drawImage = drawImage;
     };
     const outlined = new MapView(canvas, data, []);
+    outlined.buildBackdrop(data.bounds, 1.4);
     MapView.prototype.drawRoadBoundaries = () => {};
     const baseline = new MapView(document.createElement("canvas"), data, []);
+    baseline.buildBackdrop(data.bounds, 1.4);
     MapView.prototype.drawRoadBoundaries = draw;
     const points = [];
     const context = { beginPath() {}, moveTo: (...point) => points.push(point),

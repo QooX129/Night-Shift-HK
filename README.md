@@ -106,6 +106,10 @@ overlay. For this small, fixed-north-up district that removes a runtime dependen
 and avoids external tile hosting. Likewise, the offline importer uses Python's
 standard library instead of the larger OSMnx/geospatial dependency stack; the
 packaged graph is small enough for direct geometry and heap-based routing.
+The map cache is rendered from vector geometry at the current zoom and native
+screen pixel density, keeping roads and bilingual labels sharp on high-DPI screens.
+Only the visible area plus a small scrolling margin is cached, rather than a
+high-resolution bitmap of the entire district.
 
 ## Tests
 

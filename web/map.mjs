@@ -9,19 +9,25 @@ export class MapView {
     this.overview = false;
     this.camera = { x: 0, y: 0 };
     this.backdrop = document.createElement("canvas");
-    this.buildBackdrop();
+    const seen = new Set();
+    this.unique = this.data.edges.filter(e => {
+      const key = `${e.way}:${[e.a, e.b].sort().join(":")}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
     this.resize();
     window.addEventListener("resize", () => this.resize());
   }
   resize() {
     this.width = innerWidth; this.height = innerHeight;
-    this.ratio = Math.min(devicePixelRatio || 1, 2);
-    this.canvas.width = this.width * this.ratio;
-    this.canvas.height = this.height * this.ratio;
+    this.ratio = devicePixelRatio || 1;
+    this.canvas.width = Math.ceil(this.width * this.ratio);
+    this.canvas.height = Math.ceil(this.height * this.ratio);
   }
-  buildBackdrop() {
-    const [left, top, right, bottom] = this.data.bounds;
-    const s = 1.4;
+  buildBackdrop(bounds, s) {
+    const [left, top, right, bottom] = bounds;
+    this.backdropBounds = bounds;
+    this.backdropScale = s;
     this.backdrop.width = Math.ceil((right - left) * s);
     this.backdrop.height = Math.ceil((bottom - top) * s);
     const c = this.backdrop.getContext("2d");
@@ -36,12 +42,6 @@ export class MapView {
       c.strokeStyle = shape.kind === "park" ? "#355743" : "#304748";
       c.fill(); c.stroke();
     }
-    const seen = new Set();
-    this.unique = this.data.edges.filter(e => {
-      const key = `${e.way}:${[e.a, e.b].sort().join(":")}`;
-      if (seen.has(key)) return false;
-      seen.add(key); return true;
-    });
     c.lineCap = "round"; c.lineJoin = "round";
     for (const border of [true, false]) {
       for (const e of this.unique) {
@@ -79,7 +79,7 @@ export class MapView {
     const mask = document.createElement("canvas");
     mask.width = this.backdrop.width; mask.height = this.backdrop.height;
     const c = mask.getContext("2d");
-    const [left, top] = this.data.bounds;
+    const [left, top] = this.backdropBounds;
     c.scale(scale, scale); c.translate(-left, -top);
     c.lineCap = "round"; c.strokeStyle = "#f15e5e";
     for (const limit of ["road", "collider"]) {
@@ -126,6 +126,7 @@ export class MapView {
     c.restore();
   }
   render(car, state, lang, approach, previewExit = null) {
+    if (this.ratio !== (devicePixelRatio || 1)) this.resize();
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
     const zoom = this.overview ? Math.min((w - (w > 800 ? 370 : 25)) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
@@ -141,10 +142,22 @@ export class MapView {
     const visibleRight = Math.min(right, this.camera.x + (w - cx) / zoom);
     const visibleBottom = Math.min(bottom, this.camera.y + (h - cy) / zoom);
     if (visibleRight > visibleLeft && visibleBottom > visibleTop) {
-      const sx = this.backdrop.width / (right - left), sy = this.backdrop.height / (bottom - top);
+      const scale = zoom * this.ratio;
+      const cached = this.backdropBounds;
+      if (!cached || this.backdropScale !== scale ||
+          visibleLeft < cached[0] || visibleTop < cached[1] ||
+          visibleRight > cached[2] || visibleBottom > cached[3]) {
+        // Cache a small offscreen margin so driving does not redraw the map every frame.
+        const margin = 128 / zoom;
+        this.buildBackdrop([
+          Math.max(left, visibleLeft - margin), Math.max(top, visibleTop - margin),
+          Math.min(right, visibleRight + margin), Math.min(bottom, visibleBottom + margin),
+        ], scale);
+      }
+      const [cacheLeft, cacheTop] = this.backdropBounds;
       c.drawImage(
-        this.backdrop, (visibleLeft - left) * sx, (visibleTop - top) * sy,
-        (visibleRight - visibleLeft) * sx, (visibleBottom - visibleTop) * sy,
+        this.backdrop, (visibleLeft - cacheLeft) * scale, (visibleTop - cacheTop) * scale,
+        (visibleRight - visibleLeft) * scale, (visibleBottom - visibleTop) * scale,
         visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop,
       );
     }
