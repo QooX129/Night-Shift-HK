@@ -104,6 +104,9 @@ To stop the server, press **Ctrl+C** in the terminal.
 - If stuck or out of fuel, pause and use **Return to rest stop**. Recovery costs up
   to $20, adds emergency fuel, and does not complete the passenger trip.
 - **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
+- **3D / 2D:** switch between the experimental chase-camera view and the original
+  top-down map without restarting your shift. Zoom changes chase distance in 3D;
+  overview shows the whole district. The initial view remains 2D.
 
 There is **no saving**. Reloading starts a new shift. A server restart also clears
 sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
@@ -118,15 +121,42 @@ sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
 - Seeded congestion, changing simulated closures, fuel, refuelling, and two upgrades.
 - Explicit network failure/retry and idempotent commands.
 
-The renderer uses **one Canvas layer** rather than Leaflet plus a separate driving
-overlay. For this small, fixed-north-up district that removes a runtime dependency
-and avoids external tile hosting. Likewise, the offline importer uses Python's
+The 2D renderer uses **one Canvas layer** rather than Leaflet plus a separate driving
+overlay, avoiding external tile hosting. Likewise, the offline importer uses Python's
 standard library instead of the larger OSMnx/geospatial dependency stack; the
 packaged graph is small enough for direct geometry and heap-based routing.
 The map cache is rendered from vector geometry at the current zoom and native
 screen pixel density, keeping roads and bilingual labels sharp on high-DPI screens.
 Only the visible area plus a small scrolling margin is cached, rather than a
 high-resolution bitmap of the entire district.
+
+### Experimental 3D view
+
+Press **3D** in the map tools after starting a shift. This is a visual conversion,
+not a new driving simulation: the Python game, road matching, rectangular collider,
+wall drag, junction selection, orders, fuel, and controls are unchanged. Roads
+remain flat even at stacked crossings; there is no gravity, suspension, slope
+handling, or 3D building collision. Building heights (10–38 m) and window details
+are deterministic artistic approximations, not measured Hong Kong architecture.
+
+The view includes a red-and-silver procedural taxi, extruded OSM building
+footprints, road directions, route/exit highlights, pickup/drop-off/rest-stop
+beacons, and a bilingual current-road label. Nearby building blocks fade when
+they obscure the taxi. On phones the dispatch panel scrolls to leave room for
+the camera. Switch back to **2D** at any time for the detailed map.
+
+Three.js 0.180.0 is packaged locally in `web/vendor/three/`, including its MIT
+licence. There are no CDN, model, font, or texture downloads while playing.
+`npm install` / `npm ci` runs `tools/vendor-three.mjs` to refresh these generated
+files from the locked dependency. Commit the generated files when updating Three.js;
+Python-only startup and the existing Docker image need no Node.js runtime.
+
+3D requires WebGL 2. Initialization failures and context loss are reported on
+screen and leave the 2D view usable. Buildings are batched into small blocks,
+distant blocks are culled, and render resolution is lowered on slow devices
+(minimum 55% of CSS resolution) to favour responsiveness. The 2D renderer retains
+its native high-DPI resolution. Chromium reference tests require at least 24 FPS
+for 3D; actual hardware/browser performance varies.
 
 ## Tests
 

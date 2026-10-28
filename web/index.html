@@ -10,6 +10,7 @@
 <body>
   <main id="game">
     <canvas id="map" aria-label="Driving map of Mong Kok and Yau Ma Tei"></canvas>
+    <canvas id="map-3d" aria-label="3D driving view of Mong Kok and Yau Ma Tei" hidden></canvas>
     <header class="topbar">
       <a class="brand" href="/" aria-label="Night Shift HK home"><span class="brand-icon">的</span><span>NIGHT SHIFT <b>HK</b><small data-i18n="district">MONG KOK · YAU MA TEI</small></span></a>
       <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
@@ -30,8 +31,11 @@
     </section>
 
     <aside class="map-tools" aria-label="Map tools">
+      <button id="view-mode" aria-label="Switch to 3D view" aria-pressed="false" disabled>3D</button>
       <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="overview" aria-label="Toggle district overview">⌖</button>
     </aside>
+    <div id="view-status" class="view-status" role="status" hidden></div>
+    <div id="view-error" class="view-error panel" role="alert" hidden></div>
     <div class="district-label">九龍 <span>KOWLOON</span></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 

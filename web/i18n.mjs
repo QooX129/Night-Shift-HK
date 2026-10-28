@@ -1,4 +1,7 @@
 export const zh = {
+  view3d:"切換至 3D 視角", view2d:"切換至 2D 地圖", loading3d:"正在建立 3D 街區…",
+  preview3d:"3D 預覽 · 平面駕駛模擬", failed3d:"無法啟用 3D，已保留 2D 地圖。需要支援 WebGL 2 的瀏覽器。",
+  lost3d:"3D 圖像連線中斷，已返回 2D。可再按 3D 重試。",
   district:"旺角 · 油麻地", simulated:"模擬城市", pause:"暫停", dispatch:"九龍的士台",
   yourshift:"城市正等緊你。", pickup:"上車地點", destination:"落車地點",
   loading:"正在載入街道…", earnings:"銀包", fuel:"油量", shift:"更份時間",
@@ -30,6 +33,9 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  view3d:"Switch to 3D view", view2d:"Switch to 2D map", loading3d:"Building the 3D district...",
+  preview3d:"3D PREVIEW · FLAT DRIVING PHYSICS", failed3d:"Could not start 3D; the 2D map is still available. A WebGL 2 browser is required.",
+  lost3d:"3D graphics context lost. Returned to 2D; press 3D to retry.",
   district:"MONG KOK · YAU MA TEI", simulated:"SIMULATED CITY", pause:"Pause", dispatch:"KOWLOON DISPATCH",
   yourshift:"The city is calling.", pickup:"PICKUP", destination:"DROP-OFF", loading:"Loading roads…",
   earnings:"WALLET", fuel:"FUEL", shift:"SHIFT TIME", nosave:"Session only · no saves", garage:"Rest stop / garage",

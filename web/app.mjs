@@ -4,6 +4,7 @@ import { en, zh } from "./i18n.mjs";
 
 const $ = id => document.getElementById(id);
 let lang = "en", state = null, view = null, mapData, stops;
+let map2d = null, map3d = null, changingView = false, viewError = null;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
@@ -163,6 +164,7 @@ function renderExits() {
   }
 }
 function updateUI() {
+  updateViewUI();
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
   document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
   $("language").textContent = lang === "en" ? "繁中" : "EN";
@@ -202,6 +204,49 @@ function updateUI() {
   $("notice").hidden = !notice;
   $("notice").textContent = notice ? t(notice) : "";
   if ($("junction").open) renderExits();
+}
+function updateViewUI() {
+  const active = Boolean(map3d && view === map3d);
+  $("view-mode").disabled = !state || changingView;
+  $("view-mode").textContent = changingView ? "..." : active ? "2D" : "3D";
+  $("view-mode").setAttribute("aria-label", t(active ? "view2d" : "view3d"));
+  $("view-mode").setAttribute("aria-pressed", String(active));
+  $("view-status").hidden = !active && !changingView;
+  $("view-status").textContent = t(changingView ? "loading3d" : "preview3d");
+  $("view-error").hidden = !viewError;
+  $("view-error").textContent = viewError ? `${t(viewError.key)} ${viewError.detail}` : "";
+}
+function activateView(next) {
+  next.zoom = view.zoom;
+  next.overview = view.overview;
+  next.camera = { x: car.x, y: car.y };
+  view = next;
+  $("map").hidden = view !== map2d;
+  $("map-3d").hidden = view !== map3d;
+  $("game").classList.toggle("view-3d", view === map3d);
+  if (map3d) {
+    map3d.label.hidden = view !== map3d;
+    map3d.roadLabel.hidden = view !== map3d;
+  }
+  resetControls();
+  updateViewUI();
+}
+async function toggleView() {
+  if (!state || changingView) return;
+  if (view === map3d) { activateView(map2d); return; }
+  changingView = true; viewError = null; updateViewUI();
+  await new Promise(resolve => requestAnimationFrame(resolve));
+  try {
+    if (!map3d) {
+      const { Map3DView } = await import("./map3d.mjs");
+      map3d = new Map3DView($("map-3d"), mapData, stops);
+    }
+    map3d.cameraReady = false;
+    activateView(map3d);
+  } catch (error) {
+    viewError = { key: "failed3d", detail: error.message };
+    console.error("3D renderer initialization failed", error);
+  } finally { changingView = false; updateViewUI(); }
 }
 function frame(timestamp) {
   const delta = Math.min((timestamp - (lastFrame || timestamp)) / 1000, 0.1); lastFrame = timestamp;
@@ -249,6 +294,16 @@ function frame(timestamp) {
 }
 
 $("language").addEventListener("click", () => { lang = lang === "en" ? "zh" : "en"; updateUI(); });
+$("view-mode").addEventListener("click", toggleView);
+$("map-3d").addEventListener("webglcontextlost", event => {
+  event.preventDefault();
+  if (map3d) {
+    if (view === map3d) activateView(map2d);
+    map3d.dispose(); map3d = null;
+  }
+  viewError = { key: "lost3d", detail: "" };
+  updateViewUI();
+});
 $("start").addEventListener("click", resume);
 $("resume").addEventListener("click", resume);
 $("garage-close").addEventListener("click", resume);
@@ -331,7 +386,8 @@ requestAnimationFrame(frame);
 try {
   [mapData, stops] = await Promise.all([fetchJSON("/api/map"), fetchJSON("/api/stops")]);
   roads = new RoadNetwork(mapData);
-  view = new MapView($("map"), mapData, stops);
+  map2d = new MapView($("map"), mapData, stops);
+  view = map2d;
   applyState(await fetchJSON("/api/sessions", { method: "POST" }), true);
   view.camera = { x: car.x, y: car.y };
 } catch (error) { showError(new Error(`${t("loadFailed")} (${error.message})`), false); }

@@ -81,12 +81,89 @@ strong,
     min-height: 400px
 }
 
-#map {
+#map,
+#map-3d {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
     touch-action: none
+}
+
+.world-label {
+    position: absolute;
+    transform: translate(-50%, -100%);
+    padding: 5px 9px;
+    border: 1px solid #85bada;
+    border-radius: 6px;
+    background: #101a22dd;
+    color: #eef2ed;
+    font-size: 12px;
+    pointer-events: none;
+    white-space: nowrap
+}
+
+.road-label {
+    position: absolute;
+    top: 82px;
+    left: 63%;
+    transform: translateX(-50%);
+    max-width: 35vw;
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: #101a22dd;
+    font-size: 13px;
+    text-align: center;
+    pointer-events: none
+}
+
+.view-status,
+.view-error {
+    position: absolute;
+    top: 85px;
+    right: 82px;
+    max-width: min(320px, 85vw);
+    padding: 8px 12px;
+    font-size: 12px;
+    pointer-events: none
+}
+
+@media (max-width: 800px) {
+    .view-status,
+    .view-error {
+        top: auto;
+        bottom: 26px;
+        right: 16px;
+        max-width: calc(100vw - 32px);
+        font-size: 9px;
+        padding: 4px 8px
+    }
+
+    .world-label {
+        font-size: 10px
+    }
+
+    .road-label {
+        left: 50%;
+        top: 65px;
+        max-width: 70vw;
+        font-size: 11px
+    }
+
+    .view-3d .dispatch {
+        max-height: 28vh;
+        overflow-y: auto
+    }
+}
+
+.view-status {
+    background: #101a22cc;
+    border-radius: 8px;
+    color: var(--mint)
+}
+
+.view-error {
+    color: var(--red)
 }
 
 .topbar {
