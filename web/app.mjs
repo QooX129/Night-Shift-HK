@@ -218,7 +218,7 @@ function frame(timestamp) {
         fuel: state.fuel, roads, closed: new Set(state.closed),
         selectedExit: state.selected_exit, selectedJunction: state.selected_junction,
       });
-      boundary = result.blocked && !result.closed;
+      boundary = (result.blocked || result.contact) && !result.closed;
       closureWarning = result.closed;
       if (result.junctionPoint) trail.push(result.junctionPoint);
       trail.push({ x: car.x, y: car.y, heading: car.heading });

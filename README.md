@@ -68,12 +68,23 @@ To stop the server, press **Ctrl+C** in the terminal.
 - Steering sensitivity is configured by `STEERING_SENSITIVITY` in
   `web/physics.mjs`; increase it for faster turning and decrease it for slower,
   gentler normal steering.
-- The full simulated taxi footprint stays inside approximate road corridors.
-  A single light-red outline marks the taxi-centre collider edges at 80% opacity,
+- The taxi uses a rotated rectangular body collider, configured in metres by
+  `taxi_length` and `taxi_width` in `roads.py`'s `DRIVING` settings. The rendered
+  body uses the same dimensions, including its outline, and scales with map zoom.
+  Normal movement and reverse keep the full body within connected road corridors.
+  Manual steering is not cancelled by wall contact: rotation may overlap
+  the boundary. An overlapping taxi can slide along the wall or drive/reverse
+  back onto the road, but movement deeper into the wall remains blocked.
+  Boundary contact applies continuous speed-dependent drag in both forward and
+  reverse, including while accelerating. Tune `BOUNDARY_DRAG` in
+  `web/physics.mjs` (2 per second, exponential speed decay). Queued junction
+  snaps still check rotation clearance. The rectangle conservatively encloses the
+  rounded visual corners. `taxi_radius` is only used by older map fixtures.
+  A single light-red outline marks the physical road edges at 80% opacity,
   using 1 m strokes without tinting the road interior.
   Contact with a road edge removes outward movement and allows sliding along
   the edge. Reverse if facing a dead end or a boundary.
-  The outline follows the actual collision limit (`road width / 2 - taxi_radius`),
+  The outline follows the physical road width (`road width / 2` from the centre),
   including narrow roads and joined junction perimeters, without a decorative
   outer road outline.
 - Wrong-way entry and restricted turns remain possible with warnings. GPS routes

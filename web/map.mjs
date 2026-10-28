@@ -86,8 +86,8 @@ export class MapView {
       c.globalCompositeOperation = erase ? "destination-out" : "source-over";
       for (const edge of this.unique) {
         const width = this.data.driving.widths[edge.kind] ?? 10;
-        const radius = Math.max(0, width / 2 - this.data.driving.taxi_radius);
-        const strokeWidth = Math.max(0, radius * 1 + (erase ? -1 : 1));
+        const radius = Math.max(0, width / 2 - (this.data.driving.taxi_length ? 0 : this.data.driving.taxi_radius));
+        const strokeWidth = Math.max(0, radius * 2 + (erase ? -1 : 1));
         if (strokeWidth === 0) continue;
         c.lineWidth = strokeWidth;
         c.beginPath(); this.roadPath(c, edge); c.stroke();
@@ -206,7 +206,9 @@ export class MapView {
       }
     }
     c.save(); c.translate(car.x, car.y); c.rotate(car.heading);
-    const s = 1 / zoom;
+    const body = this.data.driving;
+    if (body.taxi_length) c.scale(body.taxi_length / 27, body.taxi_width / 13);
+    const s = body.taxi_length ? 1 : 1 / zoom;
     c.fillStyle = "#f5c65a1f";
     c.beginPath(); c.arc(0, 0, 22 * s, 0, Math.PI * 2); c.fill();
     c.fillStyle = "#060d1490"; c.fillRect(-11 * s, -4 * s, 26 * s, 12 * s);

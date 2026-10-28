@@ -12,6 +12,8 @@ from typing import TypedDict
 Point = tuple[float, float]
 class DrivingConfig(TypedDict):
     taxi_radius: float
+    taxi_length: float
+    taxi_width: float
     widths: dict[str, float]
     max_speed: float
     acceleration: float
@@ -20,6 +22,8 @@ class DrivingConfig(TypedDict):
 
 DRIVING: DrivingConfig = {
     "taxi_radius": 3,
+    "taxi_length": 8,
+    "taxi_width": 4,
     "max_speed": 150 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
@@ -76,7 +80,7 @@ class RoadMap:
                 self.edges[reverse.id] = reverse
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
         self.document["driving"] = DRIVING
-        self.version += "-manual-2"
+        self.version += "-manual-3"
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -101,23 +105,83 @@ class RoadMap:
         })
 
     def radius(self, edge: Edge) -> float:
-        return DRIVING["widths"].get(edge.kind, 10) / 2 - DRIVING["taxi_radius"]
+        return DRIVING["widths"].get(edge.kind, 10) / 2
 
-    def corridor_edges(self, point: Point, previous: Edge) -> list[Edge]:
+    def body_fits(
+        self, point: Point, heading: float, previous: Edge, padding: float = 0, allowance: float = 0,
+    ) -> bool:
+        half_length, half_width = DRIVING["taxi_length"] / 2 + padding, DRIVING["taxi_width"] / 2 + padding
+        cosine, sine = math.cos(heading), math.sin(heading)
+        edges = self.corridor_edges(point, previous)
+        left, top, right, bottom = self.bounds
+
+        def world(x: float, y: float) -> Point:
+            return (point[0] + x * cosine - y * sine, point[1] + x * sine + y * cosine)
+
+        def inside(p: Point, edge: Edge) -> bool:
+            return project(p, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + allowance + 1e-6
+
+        def covered(x0: float, y0: float, x1: float, y1: float, depth: int) -> bool:
+            corners = [world(x0, y0), world(x1, y0), world(x1, y1), world(x0, y1)]
+            if any(not (left - allowance <= p[0] <= right + allowance
+                        and top - allowance <= p[1] <= bottom + allowance) for p in corners):
+                return False
+            # Convex road capsules cover the whole cell when they cover its corners.
+            if any(all(inside(p, edge) for p in corners) for edge in edges):
+                return True
+            if depth == 0 or any(not any(inside(p, edge) for edge in edges) for p in corners):
+                return False
+            x, y = (x0 + x1) / 2, (y0 + y1) / 2
+            return (covered(x0, y0, x, y, depth - 1) and covered(x, y0, x1, y, depth - 1)
+                    and covered(x0, y, x, y1, depth - 1) and covered(x, y, x1, y1, depth - 1))
+
+        return covered(-half_length, -half_width, half_length, half_width, 6)
+
+    def penetration(self, point: Point, heading: float, previous: Edge) -> float:
+        if self.body_fits(point, heading, previous):
+            return 0
+        low, high = 0.0, math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"])
+        for _ in range(32):
+            middle = (low + high) / 2
+            if self.body_fits(point, heading, previous, allowance=middle):
+                high = middle
+            else:
+                low = middle
+        return high
+
+    def rotation_fits(self, point: Point, start: float, end: float, previous: Edge) -> bool:
+        angle = math.atan2(math.sin(end - start), math.cos(end - start))
+        steps = max(1, math.ceil(abs(angle) / 0.02))
+        if angle == 0:
+            return self.body_fits(point, start, previous)
+        # Bound the entire angular sweep between samples by padded rectangles.
+        padding = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) * abs(angle) / (4 * steps)
+        return all(self.body_fits(point, start + angle * (i - 0.5) / steps, previous, padding)
+                   for i in range(1, steps + 1))
+
+    def corridor_edges(
+        self, point: Point, previous: Edge,
+        selected_exit: str | None = None, selected_junction: str | None = None,
+    ) -> list[Edge]:
         """Reach other segments only through nearby shared OSM nodes, never crossings."""
         found = {previous.id: previous}
         stack = [previous]
         while stack:
             edge = stack.pop()
             for node in (edge.a, edge.b):
-                if math.dist(point, self.nodes[node]) > self.radius(edge) + 1:
+                reach = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
+                if math.dist(point, self.nodes[node]) > self.radius(edge) + reach:
                     continue
                 for nxt in self.outgoing.get(node, []):
+                    if node == selected_junction and nxt.id != selected_exit:
+                        continue
                     if nxt.id not in found:
                         found[nxt.id] = nxt
                         stack.append(nxt)
         # Opposite directions share one physical segment even far from its endpoints.
         for edge in self.outgoing.get(previous.b, []):
+            if edge.a == selected_junction and edge.id != selected_exit:
+                continue
             if edge.b == previous.a and edge.way == previous.way:
                 found[edge.id] = edge
         return list(found.values())
@@ -125,9 +189,12 @@ class RoadMap:
     def corridor_match(
         self, point: Point, heading: float, previous: Edge,
         selected_exit: str | None = None, selected_junction: str | None = None,
+        *, check_body: bool = True, allowance: float = 0,
     ) -> Match | None:
+        if check_body and not self.body_fits(point, heading, previous, allowance=allowance):
+            return None
         matches = []
-        for edge in self.corridor_edges(point, previous):
+        for edge in self.corridor_edges(point, previous, selected_exit, selected_junction):
             if selected_junction is not None and edge.a == selected_junction and edge.id != selected_exit:
                 continue
             nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])

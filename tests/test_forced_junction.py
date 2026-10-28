@@ -4,11 +4,12 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 
 from game import Game, RuleError, Session
-from roads import RoadMap
+from roads import DRIVING, RoadMap
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ForcedJunctionTests(unittest.TestCase):
     def setUp(self):
+        dimensions = patch.dict(DRIVING, taxi_length=5.4, taxi_width=2.6)
+        dimensions.start()
+        self.addCleanup(dimensions.stop)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         edges = [
@@ -37,6 +41,45 @@ class ForcedJunctionTests(unittest.TestCase):
     def session(self, point=(59, 0)):
         return Session("test", point, 0, "ab", (1,), speed=10, paused=False,
                        selected_exit="bd", selected_junction="b")
+
+    def test_rectangular_body_clearance_matches_its_heading_and_corners(self):
+        edge = self.roads.edges["ab"]
+        for heading in [0, math.pi / 6, math.pi / 4, math.pi / 2, math.pi, -math.pi / 4]:
+            support = (abs(math.sin(heading)) * DRIVING["taxi_length"]
+                       + abs(math.cos(heading)) * DRIVING["taxi_width"]) / 2
+            for side in [-1, 1]:
+                with self.subTest(heading=heading, side=side):
+                    self.assertTrue(self.roads.body_fits((25, side * (5 - support - 0.001)), heading, edge))
+                    self.assertFalse(self.roads.body_fits((25, side * (5 - support + 0.001)), heading, edge))
+        self.assertTrue(self.roads.body_fits((25, 3.6), 0, edge))
+        self.assertFalse(self.roads.body_fits((25, 3.6), math.pi / 2, edge))
+
+    def test_server_allows_rotation_overlap_but_rejects_movement_through_walls(self):
+        session = self.session((25, 3.6))
+        for heading in [math.pi / 2, math.pi / 4, 0]:
+            self.game.update_position(session, dict(
+                x=25, y=3.6, heading=heading, speed=0, dt=0.1,
+            ))
+            self.assertEqual(session.point, (25, 3.6))
+            self.assertEqual(session.heading, heading)
+        with self.assertRaisesRegex(RuleError, "connected road"):
+            self.game.update_position(session, dict(
+                x=25, y=3.8, heading=0, speed=0, dt=0.1,
+            ))
+        self.assertEqual(session.point, (25, 3.6))
+        self.assertEqual(session.heading, 0)
+
+    def test_server_accepts_sliding_and_recovery_but_not_deeper_penetration(self):
+        session = self.session((25, 3.7))
+        heading = math.pi / 4
+        self.game.update_position(session, dict(x=25, y=3.7, heading=heading, speed=0, dt=0.1))
+        self.game.update_position(session, dict(x=26, y=3.7, heading=heading, speed=2, dt=0.5))
+        self.assertEqual(session.point, (26, 3.7))
+        self.game.update_position(session, dict(x=25, y=3.5, heading=heading, speed=-2, dt=0.5))
+        self.assertEqual(session.point, (25, 3.5))
+        with self.assertRaisesRegex(RuleError, "connected road"):
+            self.game.update_position(session, dict(x=25, y=3.8, heading=heading, speed=2, dt=0.5))
+        self.assertEqual(session.point, (25, 3.5))
 
     def test_selection_queues_turn_without_moving_the_taxi(self):
         for angle in [0, math.pi / 2, -math.pi / 2, math.pi - 0.1, -math.pi + 0.1]:
@@ -95,9 +138,14 @@ class ForcedJunctionTests(unittest.TestCase):
         incoming = replace(self.roads.edges["ab"], length=1, kind="primary")
         self.roads.edges["ab"] = incoming
         self.roads.outgoing["a"] = [incoming]
+        self.roads.nodes["p"] = (0, 0)
+        rear = replace(incoming, id="ap", a="a", b="p", length=59)
+        self.roads.edges[rear.id] = rear
+        self.roads.outgoing["a"].append(rear)
         for side in [-1, 1]:
             with self.subTest(side=side):
-                session = self.session((59.5, side * self.roads.radius(incoming)))
+                clearance = self.roads.radius(incoming) - math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
+                session = self.session((59.5, side * clearance))
                 session.paused = True
                 self.game.select_road(session, "ab", "bd")
                 self.assertEqual(session.selected_exit, "bd")
@@ -126,13 +174,14 @@ let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const roads = new RoadNetwork(JSON.parse(input));
 const cases = [];
-const radius = roads.radius(roads.edges.get('ab'));
+const radius = roads.radius(roads.edges.get('ab')) -
+  (Math.sin(0.2) * roads.driving.taxi_length + Math.cos(0.2) * roads.driving.taxi_width) / 2 - 0.01;
 for (const start of [[45, 0, 0], [59, 0, 0], [59, 0.9, 1.2], [60, 1, 0.4],
   [45, radius, 0.2], [45, -radius, -0.2]]) {
   for (const right of [false, true]) {
     const car = { x: start[0], y: start[1], heading: start[2], speed: 10, edge: 'ab' };
     const batches = [];
-    for (let batch = 0; batch < 10; batch++) {
+    for (let batch = 0; batch < 30; batch++) {
       const trail = [];
       let contacts = 0;
       let snaps = 0;
@@ -169,7 +218,7 @@ console.log(JSON.stringify(cases));
                 # A client may retain its selection while the previous response is in flight.
                 self.game.update_position(session, batch)
                 self.assertTrue(math.isfinite(session.heading))
-            if case["start"][0] == 45 and not case["right"]:
+            if case["start"] == [45, 0, 0] and not case["right"]:
                 self.assertEqual(case_snaps, 1, "boundary approaches must execute the queued turn exactly once")
         self.assertGreater(contacts, 0, "the regression must exercise actual wall contact")
         self.assertGreater(snaps, 0, "the regression must submit a junction snap trail")

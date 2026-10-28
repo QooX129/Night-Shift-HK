@@ -207,16 +207,15 @@ class Game:
                 raise RuleError("Movement jumped too far. Pause and return to the road.")
             steps = max(1, math.ceil(segment / 0.4))
             origin = cursor
+            sample_cursor = cursor
             for i in range(1, steps + 1):
                 sample_point = (origin[0] + (destination[0] - origin[0]) * i / steps,
                                 origin[1] + (destination[1] - origin[1]) * i / steps)
-                radius = self.roads.document["driving"]["taxi_radius"]
-                if not (left + radius <= sample_point[0] <= right - radius
-                        and top + radius <= sample_point[1] <= bottom - radius):
-                    raise RuleError("The taxi footprint must remain inside the playable district.")
                 match = self.roads.corridor_match(
                     sample_point, sample_heading, previous,
                     session.selected_exit, session.selected_junction,
+                    check_body=segment > 1e-8,
+                    allowance=self.roads.penetration(sample_cursor, sample_heading, previous) if segment > 1e-8 else 0,
                 )
                 if match is None:
                     raise RuleError("The taxi footprint must remain on a connected road.")
@@ -227,6 +226,7 @@ class Game:
                         warning = "" if self.roads.legal(previous, match.edge, history) else "restricted"
                     history = self.roads.history(history, match.edge.way)
                     previous = match.edge
+                sample_cursor = sample_point
             cursor = destination
         if session.paused and total_distance > 0.01:
             raise RuleError("Resume the game before driving.")

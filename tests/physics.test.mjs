@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY,
+  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY, BOUNDARY_DRAG,
 } from "../web/physics.mjs";
 
-function network({ stacked = false, crossing = false } = {}) {
+function network({ stacked = false, crossing = false, body = false } = {}) {
   const nodes = { a: [0, 0], b: [60, 0], c: [120, 0], d: [60, 60], x: [30, -60], y: [30, 60] };
   const edges = [
     { id: "ab", a: "a", b: "b", way: 1, kind: "residential", length: 60 },
@@ -16,12 +16,137 @@ function network({ stacked = false, crossing = false } = {}) {
   return new RoadNetwork({
     nodes, edges, bounds: [-100, -100, 200, 200],
     branch_levels: Object.fromEntries(edges.map(e => [e.id, [stacked && e.way === 3 ? "1" : "0", "no", "no"]])),
-    driving: { taxi_radius: 2.5, widths: { residential: 10, primary: 16 },
+    driving: { taxi_radius: 2.5, ...(body ? { taxi_length: 5.4, taxi_width: 2.6 } : {}),
+      widths: { residential: 10, primary: 16 },
       max_speed: 150 / 3.6, acceleration: 7, upgraded_acceleration: 9.1 },
   });
 }
 const carAt = (x = 20, y = 0) => ({ x, y, speed: 0, heading: 0, edge: "ab" });
 const freeDriving = { maxSpeed: 150 / 3.6, acceleration: 7 };
+
+test("rectangular body permits side clearance but rejects nose and corner overlaps at every heading", () => {
+  const roads = network({ body: true }), edge = roads.edges.get("ab");
+  for (const heading of [0, Math.PI / 6, Math.PI / 4, Math.PI / 2, Math.PI, -Math.PI / 4]) {
+    const support = Math.abs(Math.sin(heading)) * 2.7 + Math.abs(Math.cos(heading)) * 1.3;
+    for (const side of [-1, 1]) {
+      assert.equal(roads.bodyFits({ x: 25, y: side * (5 - support - 0.001) }, heading, edge), true);
+      assert.equal(roads.bodyFits({ x: 25, y: side * (5 - support + 0.001) }, heading, edge), false);
+    }
+  }
+  assert.equal(roads.bodyFits({ x: 25, y: 3.6 }, 0, edge), true, "use body width, not a circular radius");
+  assert.equal(roads.bodyFits({ x: 25, y: 3.6 }, Math.PI / 2, edge), false, "nose must not cross the wall");
+});
+
+test("wall contact permits steering overlap and sliding without deeper penetration", () => {
+  const roads = network({ body: true }), car = carAt(20, 3.7);
+  car.speed = 8;
+  const result = stepCar(car, { gas: true, right: true }, 1 / 60, { roads });
+  assert.ok(car.heading > 0, "wall must not cancel manual rotation");
+  assert.equal(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)), false);
+  assert.equal(result.blocked, true);
+  assert.ok(car.x > 20);
+  assert.ok(car.y <= 3.7 + 1e-5);
+  assert.ok(car.speed < 8, "contact drag must outweigh acceleration at this speed");
+  stepCar(car, { gas: true, left: true }, 1 / 60, { roads });
+  assert.ok(car.heading < 0.05, "steering back must still work while overlapping");
+  car.heading = 0;
+  for (let frame = 0; frame < 60; frame++) stepCar(car, { gas: true }, 1 / 60, { roads });
+  assert.ok(car.x > 20);
+  const before = car.x;
+  for (let frame = 0; frame < 180; frame++) {
+    stepCar(car, { brake: true }, 1 / 60, { roads });
+    assert.ok(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)));
+  }
+  assert.ok(car.x < before);
+  assert.ok(car.speed < 0 && car.speed > -4, "reverse also slows while touching the wall");
+});
+
+test("body containment uses connected junction surfaces but not disconnected flyovers or concave gaps", () => {
+  const roads = network({ body: true, crossing: true }), edge = roads.edges.get("ab");
+  for (let heading = 0; heading < Math.PI * 2; heading += 0.1) {
+    assert.ok(roads.bodyFits({ x: 60, y: 0 }, heading, edge));
+  }
+  assert.equal(roads.bodyFits({ x: 30, y: 4 }, Math.PI / 2, edge), false);
+  assert.equal(roads.bodyFits({ x: 55, y: 5 }, Math.PI / 4, edge), false);
+  assert.equal(roads.bodyFits({ x: 60, y: 1 }, Math.PI / 2, edge), true);
+});
+
+test("body-shaped movement cannot tunnel at top speed or cross district bounds", () => {
+  const roads = network({ body: true });
+  roads.bounds = [0, -10, 120, 10];
+  const car = carAt(10, 0);
+  car.speed = roads.driving.max_speed;
+  for (let frame = 0; frame < 240; frame++) {
+    stepCar(car, { gas: true }, 1 / 30, { roads });
+    assert.ok(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)));
+    assert.ok(car.x + 2.7 <= 120 + 1e-6);
+  }
+  assert.ok(car.speed < 4, "continued wall contact must reduce speed even with the accelerator held");
+});
+
+test("overlapping taxi can slide, drive inward and reverse inward but cannot penetrate deeper", () => {
+  const roads = network({ body: true }), edge = roads.edges.get("ab");
+  const old = { x: 25, y: 3.7 }, heading = Math.PI / 4;
+  const initial = roads.penetration(old, heading, edge);
+  for (const desired of [{ x: 25.2, y: 3.7 }, { x: 25.2, y: 3.5 }, { x: 24.8, y: 3.5 }]) {
+    const result = roads.constrain(old, desired, heading, edge, new Set());
+    assert.ok(Math.hypot(result.x - old.x, result.y - old.y) > 0.1);
+    assert.ok(roads.penetration(result, heading, edge) <= initial + 1e-5);
+  }
+  const outward = roads.constrain(old, { x: 25.2, y: 3.9 }, heading, edge, new Set());
+  assert.ok(outward.x > old.x, "retain tangent movement");
+  assert.ok(outward.y <= old.y + 1e-5, "remove outward movement");
+});
+
+test("boundary drag is continuous, symmetric in reverse and independent of frame rate", () => {
+  for (const speed of [-4, 10]) {
+    const speeds = [];
+    for (const dt of [1 / 60, 1 / 30]) {
+      const roads = network({ body: true }), car = carAt(25, 3.7);
+      car.speed = speed;
+      for (let frame = 0; frame < Math.round(1 / dt); frame++) {
+        stepCar(car, { gas: speed > 0, brake: speed < 0 }, dt, {
+          roads, acceleration: 0,
+        });
+      }
+      speeds.push(Math.abs(car.speed));
+    }
+    if (speed > 0) {
+      for (const value of speeds) assert.ok(Math.abs(value - speed * Math.exp(-BOUNDARY_DRAG)) < 1e-8);
+    } else {
+      for (const value of speeds) assert.ok(value < 2 && value > 0);
+    }
+  }
+});
+
+test("sustained wall sliding does not creep through the boundary or onto a disconnected crossing", () => {
+  const roads = network({ body: true, crossing: true }), car = carAt(20, 3.7);
+  car.heading = Math.PI / 4; car.speed = 8;
+  for (let frame = 0; frame < 300; frame++) {
+    stepCar(car, { gas: true }, 1 / 60, { roads });
+    assert.ok(car.y <= 3.7 + 1e-5);
+    assert.notEqual(car.edge, "xy");
+    assert.notEqual(car.edge, "~xy");
+  }
+  assert.ok(car.x > 20);
+});
+
+test("body-shaped queued turns preserve speed and fit throughout the snap", () => {
+  const roads = network({ body: true }), car = carAt(55, 1);
+  car.speed = 10;
+  let snaps = 0;
+  for (let frame = 0; frame < 90; frame++) {
+    const result = stepCar(car, { gas: true }, 1 / 60, {
+      roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
+    });
+    if (result.junctionPoint) snaps++;
+    assert.ok(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)));
+    assert.equal(car.speed, 10);
+  }
+  assert.equal(snaps, 1);
+  assert.equal(car.edge, "bd");
+  assert.equal(car.heading, Math.PI / 2);
+});
 
 test("accelerate and steer, brake to a stop, then hold for low-speed reverse", () => {
   const car = carAt();
