@@ -439,14 +439,16 @@ class GameTests(unittest.TestCase):
                      trail=[{"x": x - math.sin(heading) * 12, "y": y + math.cos(heading) * 12, "heading": heading}])
         self.assertEqual((self.session.point, self.session.edge, self.session.fuel), original)
 
-    def test_closure_prevents_movement_and_routing(self):
+    def test_occupied_closure_allows_driving_out(self):
         edge = self.roads.edges[self.session.edge]
         self.session.closed = {edge.way}
         self.cmd("pause", paused=False)
         a = self.session.point
         heading = self.roads.angle(edge)
-        with self.assertRaises(RuleError):
-            self.cmd("move", x=a[0] + math.cos(heading) * 2, y=a[1] + math.sin(heading) * 2, speed=2, heading=heading, dt=1)
+        destination = (a[0] + math.cos(heading) * 2, a[1] + math.sin(heading) * 2)
+        self.cmd("move", x=destination[0], y=destination[1], speed=2, heading=heading, dt=1)
+        self.assertEqual(self.session.point, destination)
+        self.cmd("move", x=a[0], y=a[1], speed=-2, heading=heading, dt=1)
         self.assertEqual(self.session.point, a)
 
     def test_unreachable_job_and_expired_session_are_explicit(self):

@@ -94,10 +94,11 @@ export class RoadNetwork {
     }
     return [...found.values()];
   }
-  match(point, heading, previous, selectedExit = null, selectedJunction = null, allowance = 0) {
+  match(point, heading, previous, selectedExit = null, selectedJunction = null, allowance = 0, closed = null) {
     if (!this.bodyFits(point, heading, previous, 0, allowance)) return null;
     let best = null;
     for (const edge of this.candidates(point, previous, selectedExit, selectedJunction)) {
+      if (closed?.has(edge.way)) continue;
       if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
       const projection = project(point, this.nodes[edge.a], this.nodes[edge.b]);
       if (projection.distance > this.radius(edge) + 1e-6) continue;
@@ -118,11 +119,37 @@ export class RoadNetwork {
     const allowance = this.driving.taxi_length ? this.penetration(old, heading, previous) : 0;
     const desiredFits = this.driving.taxi_length && this.bodyFits(desired, heading, previous, 0, allowance);
     let best = null, sawClosed = false;
+    const consider = (point, spacing = 0.4) => {
+      if (!inBounds(point)) return;
+      const travel = Math.hypot(point.x - old.x, point.y - old.y);
+      if (travel > Math.hypot(desired.x - old.x, desired.y - old.y) + 1e-6) return;
+      const steps = Math.max(1, Math.ceil(travel / spacing));
+      let current = previous, match = null, cursor = old;
+      let blockedWays = closed.has(previous.way) ? new Set([...closed].filter(way => way !== previous.way)) : closed;
+      for (let i = 1; i <= steps; i++) {
+        const sample = { x: old.x + (point.x - old.x) * i / steps,
+          y: old.y + (point.y - old.y) * i / steps };
+        const tolerance = this.driving.taxi_length ? this.penetration(cursor, heading, current) : 0;
+        match = this.match(sample, heading, current, selectedExit, selectedJunction, tolerance, blockedWays);
+        if (!match) {
+          const physical = this.match(sample, heading, current, selectedExit, selectedJunction, tolerance);
+          if (physical && closed.has(physical.edge.way)) sawClosed = true;
+          return;
+        }
+        if (match.edge.way !== previous.way) blockedWays = closed;
+        current = match.edge;
+        cursor = sample;
+      }
+      const error = Math.hypot(desired.x - point.x, desired.y - point.y);
+      if (!best || error < best.error - 1e-8 || (Math.abs(error - best.error) < 1e-8 && match.score < best.match.score)) {
+        best = { ...point, error, match };
+      }
+    };
     for (const edge of this.candidates(desired, previous, selectedExit, selectedJunction)) {
       // Overlapping exit corridors must not bypass the full-width junction arrival.
       if (approachingSelection && edge.id !== previous.id) continue;
       if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
-      if (closed.has(edge.way)) { sawClosed = true; continue; }
+      if (closed.has(edge.way) && edge.way !== previous.way) continue;
       const p = project(desired, this.nodes[edge.a], this.nodes[edge.b]);
       const relative = heading - this.angle(edge);
       const support = this.driving.taxi_length
@@ -132,28 +159,59 @@ export class RoadNetwork {
       const scale = p.distance > limit ? limit / p.distance : 1;
       const point = desiredFits
         ? desired : { x: p.x + (desired.x - p.x) * scale, y: p.y + (desired.y - p.y) * scale };
-      if (!inBounds(point)) continue;
-      // Never use projection to jump onto a road beyond this frame's travel distance.
-      if (Math.hypot(point.x - old.x, point.y - old.y) > Math.hypot(desired.x - old.x, desired.y - old.y) + 1e-6) continue;
-      // Match the server's sampled path, not just endpoints across a concave road corner.
-      const steps = Math.max(1, Math.ceil(Math.hypot(point.x - old.x, point.y - old.y) / 0.4));
-      let current = previous, match = null;
-      let cursor = old;
-      for (let i = 1; i <= steps; i++) {
-        const sample = { x: old.x + (point.x - old.x) * i / steps,
-          y: old.y + (point.y - old.y) * i / steps };
-        const tolerance = this.driving.taxi_length ? this.penetration(cursor, heading, current) : 0;
-        match = this.match(sample, heading, current, selectedExit, selectedJunction, tolerance);
-        if (!match || closed.has(match.edge.way)) { match = null; break; }
-        current = match.edge;
-        cursor = sample;
+      consider(point);
+    }
+    if (this.driving.taxi_length && (!best || best.error > 1e-6)) {
+      const edges = this.candidates(desired, previous);
+      const cos = Math.cos(heading), sin = Math.sin(heading);
+      const halfLength = this.driving.taxi_length / 2, halfWidth = this.driving.taxi_width / 2;
+      const point = { ...desired };
+      // Resolve footprint contacts against capsule normals, not a shrunken centreline.
+      // Validate every proposed slide with the same swept-path checks as ordinary movement.
+      for (let iteration = 0; iteration < 4; iteration++) {
+        const before = { ...point };
+        for (const x of [-halfLength, 0, halfLength]) {
+          for (const y of [-halfWidth, 0, halfWidth]) {
+            const corner = { x: point.x + x * cos - y * sin, y: point.y + x * sin + y * cos };
+            let nearest = null;
+            for (const edge of edges) {
+              const p = project(corner, this.nodes[edge.a], this.nodes[edge.b]);
+              const excess = p.distance - this.radius(edge) - allowance;
+              if (!nearest || excess < nearest.excess) nearest = { ...p, excess };
+            }
+            if (nearest && nearest.excess > 0) {
+              const correction = (nearest.excess + 1e-7) / nearest.distance;
+              point.x -= (corner.x - nearest.x) * correction;
+              point.y -= (corner.y - nearest.y) * correction;
+            }
+            point.x += Math.max(0, left - allowance - corner.x) - Math.max(0, corner.x - right - allowance);
+            point.y += Math.max(0, top - allowance - corner.y) - Math.max(0, corner.y - bottom - allowance);
+          }
+        }
+        consider(point);
+        if (best?.error < 1e-6 || Math.hypot(point.x - before.x, point.y - before.y) < 1e-8) break;
       }
-      if (!match) continue;
-      const error = Math.hypot(desired.x - point.x, desired.y - point.y);
-      if (!best || error < best.error - 1e-8 || (Math.abs(error - best.error) < 1e-8 && match.score < best.match.score)) best = { ...point, error, match };
+      if (!best || Math.hypot(best.x - old.x, best.y - old.y) < 1e-7) {
+        const dx = desired.x - old.x, dy = desired.y - old.y;
+        // At concave joins, different corners can choose conflicting capsule normals.
+        // Find a clear forward slide without adding speed or reversing the input.
+        for (const degrees of [15, 30, 45, 60, 75, 85]) {
+          const angle = degrees * Math.PI / 180;
+          const cos = Math.cos(angle), sin = Math.sin(angle);
+          for (const side of [-1, 1]) {
+            const point = {
+              x: old.x + (dx * cos - side * dy * sin) * cos,
+              y: old.y + (side * dx * sin + dy * cos) * cos,
+            };
+            if (this.bodyFits(point, heading, previous, 0, allowance)) consider(point, 0.05);
+          }
+          if (best && Math.hypot(best.x - old.x, best.y - old.y) > 1e-7) break;
+        }
+      }
     }
     if (!best) return { x: old.x, y: old.y, edge: previous.id, blocked: true, closed: sawClosed };
-    return { x: best.x, y: best.y, edge: best.match.edge.id, blocked: best.error > 1e-6, closed: false };
+    return { x: best.x, y: best.y, edge: best.match.edge.id, blocked: best.error > 1e-6,
+      closed: sawClosed && best.error > 1e-6 };
   }
   approach(car, closed = new Set()) {
     const edge = this.edges.get(car.edge);
@@ -258,7 +316,10 @@ export function stepCar(car, input, dt, {
   }
   if (constrained.blocked) {
     const travel = Math.hypot(car.x - old.x, car.y - old.y);
-    if (travel < 1e-7 && (!roads?.driving.taxi_length || constrained.closed)) car.speed = 0;
+    if (travel < 1e-7) {
+      // Retain crawl-speed steering authority without moving through the obstruction.
+      car.speed = roads?.driving.taxi_length ? Math.sign(car.speed) * Math.min(Math.abs(car.speed), 3) : 0;
+    }
   }
   return { ...constrained, contact: Boolean(contact) };
 }

@@ -1,10 +1,11 @@
-import { stepCar, RoadNetwork } from "./physics.mjs";
-import { MapView } from "./map.mjs?v=vector-arrows-1";
-import { en, zh } from "./i18n.mjs";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=corner-slide-2";
+import { MapView } from "./map.mjs?v=minimap-1";
+import { en, zh } from "./i18n.mjs?v=collision-slide-1";
 
 const $ = id => document.getElementById(id);
 let lang = "en", state = null, view = null, mapData, stops;
 let map2d = null, map3d = null, changingView = false, viewError = null;
+let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
@@ -211,6 +212,7 @@ function updateViewUI() {
   $("view-mode").textContent = changingView ? "..." : active ? "2D" : "3D";
   $("view-mode").setAttribute("aria-label", t(active ? "view2d" : "view3d"));
   $("view-mode").setAttribute("aria-pressed", String(active));
+  $("minimap").setAttribute("aria-label", t("minimap"));
   $("view-status").hidden = !active && !changingView;
   $("view-status").textContent = t(changingView ? "loading3d" : "preview3d");
   $("view-error").hidden = !viewError;
@@ -224,6 +226,15 @@ function activateView(next) {
   $("map").hidden = view !== map2d;
   $("map-3d").hidden = view !== map3d;
   $("game").classList.toggle("view-3d", view === map3d);
+  $("minimap-panel").hidden = view !== map3d;
+  if (view === map3d) {
+    if (!minimap) {
+      minimap = new MapView($("minimap"), mapData, stops, { compact: true });
+      minimap.zoom = 0.9;
+    }
+    minimap.resize();
+    lastMinimapFrame = -Infinity;
+  }
   if (map3d) {
     map3d.label.hidden = view !== map3d;
     map3d.roadLabel.hidden = view !== map3d;
@@ -238,7 +249,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=async-detail-1");
+      const { Map3DView } = await import("./map3d.mjs?v=minimap-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
     }
     map3d.cameraReady = false;
@@ -286,8 +297,15 @@ function frame(timestamp) {
       $("notice").textContent = t("wait");
     }
   }
-  if (view && state) view.render(car, state, lang, roads.preview(car, new Set(state.closed)),
-    $("junction").open ? previewExit : null);
+  if (view && state) {
+    const approach = roads.preview(car, new Set(state.closed));
+    const preview = $("junction").open ? previewExit : null;
+    view.render(car, state, lang, approach, preview);
+    if (view === map3d && minimap && timestamp - lastMinimapFrame >= 1000 / 60 - 0.5) {
+      minimap.render(car, state, lang, approach, preview);
+      lastMinimapFrame = timestamp;
+    }
+  }
   $("speed").textContent = Math.round(Math.abs(car.speed) * 3.6);
   $("drive-mode").textContent = t(car.speed < -0.05 ? "reverse" : "manual");
   requestAnimationFrame(frame);
@@ -366,6 +384,7 @@ window.addEventListener("keydown", event => {
   }
   if (event.key === "Escape" && !event.repeat) {
     event.preventDefault();
+    if ($("pause-dialog").open) { resume(); return; }
     if ($("junction").open) return;
     if (dialogs.some(id => $(id).open)) return;
     if (!paused) pauseTo("pause-dialog");

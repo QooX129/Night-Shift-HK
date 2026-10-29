@@ -2,10 +2,118 @@ import { test, expect } from "@playwright/test";
 
 test.use({ trace: "off" });
 
+test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=minimap-1");
+    const render = MapView.prototype.render;
+    MapView.prototype.render = function (...args) {
+      const result = render.apply(this, args);
+      if (this.compact) {
+        window.minimapSample = {
+          car: { ...args[0] }, camera: { ...this.camera }, width: this.width,
+          height: this.height, ratio: this.ratio, overview: this.overview,
+        };
+        window.minimapFrames = (window.minimapFrames || 0) + 1;
+      }
+      return result;
+    };
+  });
+  await expect(page.locator("#minimap-panel")).toBeHidden();
+  await page.locator("#start").click();
+  await page.locator("#view-mode").click();
+  await expect(page.locator("#minimap-panel")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.minimapFrames || 0)).toBeGreaterThan(1);
+  const checkMap = async () => {
+    const result = await page.evaluate(() => {
+      const canvas = document.getElementById("minimap");
+      const { width, height, ratio, car, camera, overview } = window.minimapSample;
+      const center = canvas.getContext("2d").getImageData(
+        Math.floor(width * ratio / 2), Math.floor(height * ratio / 2), 1, 1).data;
+      const rect = canvas.getBoundingClientRect();
+      const overlaps = selector => {
+        const other = document.querySelector(selector);
+        if (getComputedStyle(other).display === "none") return false;
+        const b = other.getBoundingClientRect();
+        return rect.left < b.right && rect.right > b.left && rect.top < b.bottom && rect.bottom > b.top;
+      };
+      return { width, height, ratio, car, camera, overview, center: [...center],
+        buffer: [canvas.width, canvas.height], viewport: [innerWidth, innerHeight],
+        rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
+        overlaps: [".dispatch", ".dashboard", ".touch-controls"].map(overlaps) };
+    });
+    expect(result.camera).toEqual({ x: result.car.x, y: result.car.y });
+    expect(result.width).toBeLessThanOrEqual(result.viewport[0] > 800 ? 200 : 140);
+    expect(result.height).toBeLessThanOrEqual(result.viewport[0] > 800 ? 140 : 100);
+    expect(result.overview).toBe(false);
+    expect(result.buffer).toEqual([Math.ceil(result.width * result.ratio), Math.ceil(result.height * result.ratio)]);
+    expect(result.center[0]).toBeGreaterThan(100);
+    expect(result.overlaps).toEqual([false, false, false]);
+    expect(result.rect.left).toBeGreaterThanOrEqual(0);
+    expect(result.rect.bottom).toBeLessThanOrEqual(result.viewport[1]);
+    return result;
+  };
+  const before = await checkMap();
+  await page.keyboard.down("w");
+  await expect.poll(() => page.evaluate(start => {
+    const { car } = window.minimapSample;
+    return Math.hypot(car.x - start.x, car.y - start.y);
+  }, before.car)).toBeGreaterThan(0.5);
+  await page.keyboard.up("w");
+  await checkMap();
+  await page.locator("#overview").click();
+  await checkMap();
+  await page.setViewportSize({ width: before.viewport[0] + 20, height: before.viewport[1] + 20 });
+  await expect.poll(() => page.evaluate(() => window.minimapFrames)).toBeGreaterThan(3);
+  await checkMap();
+  await page.screenshot({ path: testInfo.outputPath("3d-minimap.png") });
+  await page.locator("#view-mode").click();
+  await expect(page.locator("#minimap-panel")).toBeHidden();
+  const frames = await page.evaluate(() => window.minimapFrames);
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => window.minimapFrames)).toBe(frames);
+});
+
+test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
+    const simulate = hz => {
+      const view = Object.create(Map3DView.prototype);
+      view.updateCameraHeading(0, 0);
+      view.cameraReady = true;
+      let maxStep = 0;
+      for (let i = 0; i < hz * 4; i++) {
+        const before = view.cameraHeading;
+        view.updateCameraHeading(Math.PI / 2, 1 / hz);
+        maxStep = Math.max(maxStep, Math.abs(view.cameraHeading - before));
+      }
+      return { heading: view.cameraHeading, speed: maxStep * hz };
+    };
+    const view = Object.create(Map3DView.prototype);
+    view.updateCameraHeading(Math.PI - 0.02, 0);
+    view.cameraReady = true;
+    view.updateCameraHeading(-Math.PI + 0.02, 1 / 60);
+    const wrapped = view.cameraHeading;
+    view.cameraReady = false;
+    view.updateCameraHeading(-1, 1 / 60);
+    return { slow: simulate(30), fast: simulate(120), wrapped, reset: view.cameraHeading };
+  });
+  for (const sample of [result.slow, result.fast]) {
+    expect(sample.speed).toBeLessThanOrEqual(0.900001);
+    expect(sample.heading).toBeCloseTo(Math.PI / 2, 2);
+  }
+  expect(result.slow.heading).toBeCloseTo(result.fast.heading, 3);
+  expect(result.wrapped).toBeGreaterThan(Math.PI - 0.02);
+  expect(result.wrapped).toBeLessThan(Math.PI + 0.02);
+  expect(result.reset).toBe(-1);
+});
+
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
+    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -51,7 +159,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
+    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -106,8 +214,11 @@ test("3D district renders locally and toggles without resetting the shift or cha
     clipping.difference = (...args) => { outlines = difference(...args); return outlines; };
     const results = [];
     try {
-      for (const [x, y] of [[64, 512], [0, 448], [128, 576]]) {
+      for (const [x, y] of [[64, 512], [0, 448], [128, 576], [-256, 192]]) {
         view.updateBoundaries(x, y);
+        const half = view.detailSize / 2;
+        outlines = clipping.intersection(outlines, [[[x - half, y - half], [x + half, y - half],
+          [x + half, y + half], [x - half, y + half], [x - half, y - half]]]);
         const ringArea = ring => Math.abs(ring.slice(1).reduce((sum, point, i) =>
           sum + ring[i][0] * point[1] - point[0] * ring[i][1], 0) / 2);
         const expected = outlines.reduce((sum, [outer, ...holes]) =>
@@ -118,7 +229,15 @@ test("3D district renders locally and toggles without resetting the shift or cha
           actual += Math.abs((vertices.getX(i + 1) - vertices.getX(i)) * (vertices.getZ(i + 2) - vertices.getZ(i))
             - (vertices.getZ(i + 1) - vertices.getZ(i)) * (vertices.getX(i + 2) - vertices.getX(i))) / 2;
         }
-        results.push({ expected, actual });
+        const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+        for (let i = 0; i < vertices.count; i++) {
+          bounds.minX = Math.min(bounds.minX, vertices.getX(i));
+          bounds.maxX = Math.max(bounds.maxX, vertices.getX(i));
+          bounds.minY = Math.min(bounds.minY, vertices.getZ(i));
+          bounds.maxY = Math.max(bounds.maxY, vertices.getZ(i));
+        }
+        results.push({ expected, actual, contained: bounds.minX >= x - half - 0.001
+          && bounds.maxX <= x + half + 0.001 && bounds.minY >= y - half - 0.001 && bounds.maxY <= y + half + 0.001 });
       }
     } finally {
       clipping.difference = difference;
@@ -126,9 +245,10 @@ test("3D district renders locally and toggles without resetting the shift or cha
     }
     return results;
   });
-  for (const { expected, actual } of boundaryAreas) {
+  for (const { expected, actual, contained } of boundaryAreas) {
     expect(expected).toBeGreaterThan(0);
     expect(Math.abs(actual - expected)).toBeLessThan(expected * 0.0001);
+    expect(contained).toBe(true);
   }
   const markerDepth = await page.evaluate(() => {
     const view = window.threeView;
@@ -190,10 +310,13 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.locator("#zoom-in").click();
   await page.locator("#overview").click();
   await expect.poll(() => page.evaluate(() => window.threeView.overview)).toBe(true);
+  await expect.poll(() => page.evaluate(() =>
+    window.threeView.ground.material.map === window.threeView.overviewTexture)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.threeView.groundDetail.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.directionLines.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.lens.position.y)).toBeGreaterThan(500);
   await page.locator("#overview").click();
+  await expect.poll(() => page.evaluate(() => window.threeView.ground.material.map === window.threeView.chaseTexture)).toBe(true);
   const originalSize = page.viewportSize();
   await page.setViewportSize({ width: originalSize.width - 30, height: originalSize.height - 30 });
   await expect.poll(() => page.evaluate(() => window.threeView.lens.aspect))
@@ -228,7 +351,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
+    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -247,6 +370,23 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       view.updateGroundDetail({ x: 0, y: 0 });
       view.taxi.visible = false;
       const { backdrop } = view.detailMap;
+      const cutOutline = view.lineGeometry([[
+        [[-20, -20], [20, -20], [20, 20], [-20, 20], [-20, -20]],
+        [[-19, -19], [-19, 19], [19, 19], [19, -19], [-19, -19]],
+      ]]);
+      const cutPositions = cutOutline.getAttribute("position"), cutCoverage = cutOutline.getAttribute("boundaryCoord");
+      let internalFades = 0;
+      for (let i = 0; i < cutPositions.count; i += 3) {
+        for (let component = 0; component < 3; component++) {
+          const a = i + (component + 1) % 3, b = i + (component + 2) % 3;
+          if (cutCoverage.array[a * 3 + component] !== 0 || cutCoverage.array[b * 3 + component] !== 0) continue;
+          const x = (cutPositions.getX(a) + cutPositions.getX(b)) / 2;
+          const y = (cutPositions.getZ(a) + cutPositions.getZ(b)) / 2;
+          if (![19, 20].some(edge => Math.abs(Math.abs(x) - edge) < 0.001
+              || Math.abs(Math.abs(y) - edge) < 0.001)) internalFades++;
+        }
+      }
+      cutOutline.dispose();
       view.lens.position.set(0, 140, 0);
       view.lens.lookAt(0, 0, 0);
       view.drawScene();
@@ -313,7 +453,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       await new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
       view.updateGroundDetail({ x: -80, y: -80 });
       return {
-        edges, openings, continuous, guidePixels, joinsMatch, roundedCaps, guideInNativePass, nativeResolution, occluded, cached, shifted, hidden, oldDetailVisible,
+        edges, openings, continuous, guidePixels, joinsMatch, roundedCaps, guideInNativePass, nativeResolution, occluded, cached, shifted, hidden, oldDetailVisible, internalFades,
         antialias: Boolean(view.boundaryOutline.geometry.getAttribute("boundaryCoord")),
         pixelRatio: view.renderer.getPixelRatio(),
         vectorVertices: view.boundaryOutline.geometry.getAttribute("position").count,
@@ -335,6 +475,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   expect(result.joinsMatch && result.guideInNativePass).toBe(true);
   expect(result.roundedCaps).toBe(true);
   expect(result.oldDetailVisible).toBe(true);
+  expect(result.internalFades).toBe(0);
   expect(result.occluded[2]).toBeGreaterThan(result.occluded[0] + 30);
   expect(result.nativeResolution).toBe(true);
   expect(result.antialias).toBe(true);

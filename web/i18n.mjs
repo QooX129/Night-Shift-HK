@@ -1,4 +1,5 @@
 export const zh = {
+  minimap:"即時俯瞰駕駛小地圖",
   view3d:"切換至 3D 視角", view2d:"切換至 2D 地圖", loading3d:"正在建立 3D 街區…",
   preview3d:"3D 預覽 · 平面駕駛模擬", failed3d:"無法啟用 3D，已保留 2D 地圖。需要支援 WebGL 2 的瀏覽器。",
   lost3d:"3D 圖像連線中斷，已返回 2D。可再按 3D 重試。",
@@ -22,7 +23,7 @@ export const zh = {
   manual:"手動駕駛", reverse:"倒車", restricted:"呢個轉彎受限制。GPS 只建議合法路線。", trips:"程", available:"有新訂單，準備好就接單。", pickupStatus:"前往上車點。喺綠色標記停低接客。",
   onboard:"乘客已上車。跟黃色路線去目的地，或者行自己條路。", complete:"行程完成！車資已入銀包。",
   offroad:"你已駛離道路。小心返去，或者呼叫救援。", wrongway:"逆線行車。GPS 只會建議合法路線。",
-  empty:"冇油喇。暫停後去車房呼叫救援。", closed:"前面封路。已停車，請揀另一條路。",
+  empty:"冇油喇。暫停後去車房呼叫救援。", closed:"前面封路。請倒車或轉向另一條路。",
   noRoute:"封路令目的地暫時無法到達。可以取消並搵下一張單。",
   boundary:"已到路邊。沿路轉向，或按住煞車慢速倒車。", straight:"直行", left:"左轉", right:"右轉", uturn:"掉頭", suggested:"GPS 建議",
   accepted:"師傅，唔該去標記嗰邊接我！", offer:"的士台有張新單。準備好就接啦。",
@@ -33,6 +34,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  minimap:"Live top-down driving minimap",
   view3d:"Switch to 3D view", view2d:"Switch to 2D map", loading3d:"Building the 3D district...",
   preview3d:"3D PREVIEW · FLAT DRIVING PHYSICS", failed3d:"Could not start 3D; the 2D map is still available. A WebGL 2 browser is required.",
   lost3d:"3D graphics context lost. Returned to 2D; press 3D to retry.",
@@ -59,7 +61,7 @@ export const en = {
   available:"A new order is waiting. Accept when you're ready.", pickupStatus:"Head to the green marker. Stop at the roadside to collect your passenger.",
   onboard:"Your passenger is aboard. Follow the yellow route, or find your own way.", complete:"Trip complete. Your fare is in your wallet.",
   offroad:"Off the road. Find a safe way back, or call recovery.", wrongway:"Wrong-way driving. GPS only suggests legal routes.",
-  empty:"Out of fuel. Pause and call recovery from the garage.", closed:"Road closed ahead. Taxi stopped; choose another way.",
+  empty:"Out of fuel. Pause and call recovery from the garage.", closed:"Road closed ahead. Reverse or steer onto another road.",
   noRoute:"Closures have cut off this destination. Cancel and find another order.",
   boundary:"At the road edge. Steer along it, or hold brake to reverse slowly.", straight:"Straight on", left:"Turn left", right:"Turn right", uturn:"U-turn", suggested:"GPS suggestion",
   accepted:"Thanks, driver! I'll meet you at the marked pickup.", offer:"Dispatch has a new order. Take it when you're ready.",

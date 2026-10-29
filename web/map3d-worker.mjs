@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=async-detail-1";
-import { MapView } from "./map.mjs?v=vector-arrows-1";
+import { Map3DView } from "./map3d.mjs?v=minimap-1";
+import { MapView } from "./map.mjs?v=minimap-1";
 
 let view;
 self.onmessage = ({ data }) => {

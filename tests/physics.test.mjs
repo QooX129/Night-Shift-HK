@@ -343,6 +343,95 @@ test("dead-end reverse remains in the road footprint and reverses out", () => {
   assert.ok(car.speed < 0 && car.speed >= -4);
 });
 
+test("rounded endpoint contact slides along its tangent instead of catching the taxi", () => {
+  const roads = network({ body: true }), edge = roads.edges.get("bc");
+  for (const angle of [0.4, 0.7, 1, 1.3]) {
+    for (const side of [-1, 1]) {
+      const old = { x: 120 + 5 * Math.cos(angle) - 2.7, y: side * (5 * Math.sin(angle) - 1.3) };
+      assert.ok(roads.bodyFits(old, 0, edge));
+      const result = roads.constrain(old, { x: old.x + 0.2, y: old.y }, 0, edge, new Set());
+      assert.ok(result.x > old.x + 0.005, "retain forward tangent movement around the cap");
+      assert.ok(side * (result.y - old.y) < 0, "slide inward around the rounded boundary");
+      assert.ok(roads.bodyFits(result, 0, roads.edges.get(result.edge)));
+      assert.ok(Math.hypot(result.x - old.x, result.y - old.y) <= 0.200001);
+    }
+  }
+});
+
+test("tight junction corners retain valid sliding movement in forward and reverse", () => {
+  const base = network({ body: true });
+  const edges = [...base.edges.values()].filter(edge => edge.way !== 2);
+  const roads = new RoadNetwork({
+    nodes: base.nodes, edges, driving: base.driving, bounds: base.bounds,
+  });
+  for (const [x, y, heading] of [[55.5, 3.5, 0.9], [56.5, 2.5, 2], [57, 3, 2.5], [57.5, 3.5, 2.5]]) {
+    for (const reverse of [false, true]) {
+      const direction = heading, bodyHeading = reverse ? heading + Math.PI : heading;
+      const old = { x, y }, previous = roads.edges.get("ab");
+      assert.ok(roads.bodyFits(old, bodyHeading, previous));
+      const desired = { x: x + 0.3 * Math.cos(direction), y: y + 0.3 * Math.sin(direction) };
+      const result = roads.constrain(old, desired, bodyHeading, previous, new Set());
+      const dx = result.x - x, dy = result.y - y;
+      assert.ok(Math.hypot(dx, dy) > 0.01, `stuck at ${x},${y},${bodyHeading}`);
+      assert.ok(dx * (desired.x - x) + dy * (desired.y - y) > 0, "do not push opposite to the driver's input");
+      assert.ok(Math.hypot(dx, dy) <= 0.300001);
+      let current = previous;
+      for (let i = 1; i <= 8; i++) {
+        const point = { x: x + dx * i / 8, y: y + dy * i / 8 };
+        assert.ok(roads.bodyFits(point, bodyHeading, current), "slide must not cut the concave corner");
+        const match = roads.match(point, bodyHeading, current);
+        assert.ok(match);
+        current = match.edge;
+      }
+    }
+  }
+});
+
+test("a nearby closure does not kill steering at a boundary and reversing remains available", () => {
+  const roads = network({ body: true }), car = carAt(59.99, 3.7);
+  car.edge = "ab"; car.speed = 8; car.heading = Math.PI / 4;
+  const closed = new Set([2, 3]);
+  stepCar(car, { gas: true, right: true }, 1 / 60, { roads, closed });
+  assert.ok(car.speed > 0, "collision must retain steering authority");
+  const heading = car.heading, start = { ...car };
+  stepCar(car, { gas: true, left: true }, 1 / 60, { roads, closed });
+  assert.ok(car.heading < heading);
+  car.heading = 0;
+  for (let i = 0; i < 180; i++) stepCar(car, { brake: true }, 1 / 60, { roads, closed });
+  assert.ok(car.x < start.x - 1);
+  assert.equal(roads.edges.get(car.edge).way, 1);
+});
+
+test("head-on closure contact blocks entry without disabling steering or reverse", () => {
+  const roads = network({ body: true }), car = carAt(65);
+  car.speed = 8;
+  const closed = new Set([2, 3]);
+  const result = stepCar(car, { gas: true }, 1 / 60, { roads, closed });
+  assert.ok(result.closed && result.blocked);
+  assert.equal(car.x, 65, "contact must stay in the open corridor");
+  assert.ok(car.speed > 0 && car.speed <= 3);
+  stepCar(car, { gas: true, right: true }, 1 / 60, { roads, closed });
+  assert.ok(car.heading > 0);
+  car.heading = 0;
+  for (let i = 0; i < 180; i++) stepCar(car, { brake: true }, 1 / 60, { roads, closed });
+  assert.ok(car.x < 63);
+  assert.equal(roads.edges.get(car.edge).way, 1);
+});
+
+test("closures block entry but a taxi already on a newly closed way can drive out", () => {
+  const roads = network({ body: true }), car = carAt(20);
+  const closed = new Set([1]);
+  for (let i = 0; i < 30; i++) stepCar(car, { brake: true }, 1 / 60, { roads, closed });
+  assert.ok(car.x < 19.8, "reverse out of an occupied closure");
+  car.x = 59; car.speed = 8;
+  for (let i = 0; i < 120; i++) stepCar(car, { gas: true }, 1 / 60, { roads, closed });
+  assert.equal(roads.edges.get(car.edge).way, 2);
+  const stopped = { ...car };
+  for (let i = 0; i < 480; i++) stepCar(car, { brake: true }, 1 / 60, { roads, closed });
+  assert.ok(car.x < stopped.x);
+  assert.equal(roads.edges.get(car.edge).way, 2, "cannot re-enter after leaving");
+});
+
 test("traffic, fuel, closed roads, and world bounds constrain both forward and reverse", () => {
   const roads = network(), car = carAt();
   car.speed = roads.driving.max_speed;
@@ -351,9 +440,9 @@ test("traffic, fuel, closed roads, and world bounds constrain both forward and r
   car.speed = 0;
   for (let i = 0; i < 60; i++) stepCar(car, { brake: true }, 1 / 60, { fuel: 0, roads });
   assert.equal(Math.abs(car.speed), 0);
-  const x = car.x;
-  stepCar(car, { gas: true }, 1 / 60, { roads, closed: new Set([1]) });
-  assert.equal(car.x, x); assert.equal(Math.abs(car.speed), 0);
+  car.x = 59.99; car.speed = 8;
+  stepCar(car, { gas: true }, 1 / 60, { roads, closed: new Set([2, 3]) });
+  assert.equal(roads.edges.get(car.edge).way, 1);
   car.x = 21; roads.bounds = [0, -10, 24, 10]; car.speed = 18;
   for (let i = 0; i < 120; i++) stepCar(car, { gas: true }, 1 / 60, { roads });
   assert.ok(car.x + 2.5 <= 24 + 1e-6);

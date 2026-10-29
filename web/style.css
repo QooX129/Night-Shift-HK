@@ -103,6 +103,43 @@ strong,
     white-space: nowrap
 }
 
+.minimap {
+    position: absolute;
+    left: 30px;
+    bottom: 32px;
+    width: 200px;
+    height: 140px;
+    border-radius: 12px;
+    overflow: hidden;
+    pointer-events: none
+}
+
+#minimap {
+    display: block;
+    width: 100%;
+    height: 100%
+}
+
+.minimap.panel {
+    border: 2px solid var(--yellow);
+    box-shadow: 0 0 0 3px #101a22e6, 0 6px 20px #0009
+}
+
+@media (min-width: 801px) {
+    .view-3d .dispatch {
+        max-height: calc(100dvh - 340px);
+        overflow-y: auto
+    }
+
+    .view-3d .dashboard {
+        left: 330px;
+        right: 30px;
+        min-width: 0;
+        transform: none;
+        gap: 18px
+    }
+}
+
 .road-label {
     position: absolute;
     top: 82px;
@@ -129,6 +166,13 @@ strong,
 }
 
 @media (max-width: 800px) {
+    .minimap {
+        left: 16px;
+        bottom: 170px;
+        width: 140px;
+        height: 100px
+    }
+
     .view-status,
     .view-error {
         top: auto;
@@ -865,6 +909,9 @@ dialog p {
 }
 
 @media(max-width:800px) and (pointer:coarse) {
+    .minimap {
+        bottom: 245px
+    }
     .dashboard {
         bottom: 141px
     }

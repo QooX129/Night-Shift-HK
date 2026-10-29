@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=vector-arrows-1";
+import { MapView } from "./map.mjs?v=minimap-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 
 export class Map3DView {
@@ -47,7 +47,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=minimap-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique, size: this.detailSize });
       this.detailWorker.onmessage = ({ data }) => {
         this.detailPending = false;
@@ -96,11 +96,24 @@ export class Map3DView {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.resources.push(texture);
+    this.overviewTexture = texture;
+    map.backdrop = document.createElement("canvas");
+    const chaseContext = map.backdrop.getContext("2d");
+    chaseContext.fillText = () => {};
+    chaseContext.strokeText = () => {};
+    map.drawRoadBoundaries = () => {};
+    map.drawRoadDirections = () => {};
+    map.buildBackdrop(this.data.bounds, scale);
+    this.chaseTexture = new THREE.CanvasTexture(map.backdrop);
+    this.chaseTexture.colorSpace = THREE.SRGBColorSpace;
+    this.chaseTexture.anisotropy = texture.anisotropy;
+    this.resources.push(this.chaseTexture);
     const geometry = new THREE.PlaneGeometry(right - left, bottom - top);
     geometry.rotateX(-Math.PI / 2);
     const ground = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture }));
     ground.position.set((left + right) / 2, 0, (top + bottom) / 2);
     ground.name = "district-roads";
+    this.ground = ground;
     this.scene.add(ground);
     this.groundMap = map;
     this.detailMap = Object.create(map);
@@ -235,11 +248,17 @@ export class Map3DView {
       }
       unions.push(polygons.length ? polygonClipping.union(...polygons) : []);
     }
-    const outlines = unions[0].length ? polygonClipping.difference(unions[0], unions[1]) : [];
+    const perimeter = unions[0].length ? polygonClipping.difference(unions[0], unions[1]) : [];
+    const bounds = [[[x - half, y - half], [x + half, y - half], [x + half, y + half],
+      [x - half, y + half], [x - half, y - half]]];
+    const outlines = perimeter.length ? polygonClipping.intersection(perimeter, bounds) : [];
     this.boundaryOutline.geometry.dispose();
     this.boundaryOutline.geometry = this.lineGeometry(outlines);
   }
   lineGeometry(outlines) {
+    const hasHoles = outlines.some(polygon => polygon.length > 1);
+    const contourSegments = hasHoles ? outlines.flatMap(polygon => polygon.flatMap(ring =>
+      ring.slice(1).map((point, i) => [ring[i], point]))) : [];
     const pending = [...outlines], shapes = [];
     // Narrow, concave holes can confuse hole-bridging triangulation. Cut through
     // each hole first, leaving simple polygons with the exact same perimeter.
@@ -281,9 +300,20 @@ export class Map3DView {
       }
     }
     const coordinates = [];
+    const isContourEdge = (a, b) => {
+      if (edgeCounts.get(key(a, b)) !== 1) return false;
+      if (!hasHoles) return true;
+      const x = (positions.getX(a) + positions.getX(b)) / 2;
+      const y = -(positions.getY(a) + positions.getY(b)) / 2;
+      return contourSegments.some(([from, to]) => {
+        const dx = to[0] - from[0], dy = to[1] - from[1], length = dx * dx + dy * dy;
+        const t = length ? Math.max(0, Math.min(1, ((x - from[0]) * dx + (y - from[1]) * dy) / length)) : 0;
+        return Math.hypot(x - from[0] - t * dx, y - from[1] - t * dy) < 0.0002;
+      });
+    };
     for (let i = 0; i < indices.length; i += 3) {
       const boundary = [0, 1, 2].map(j =>
-        edgeCounts.get(key(indices[i + (j + 1) % 3], indices[i + (j + 2) % 3])) === 1);
+        isContourEdge(indices[i + (j + 1) % 3], indices[i + (j + 2) % 3]));
       for (let vertex = 0; vertex < 3; vertex++) {
         for (let component = 0; component < 3; component++) {
           coordinates.push(!boundary[component] || vertex === component ? 1 : 0);
@@ -481,11 +511,24 @@ export class Map3DView {
     if (state.route) this.ribbon(state.route.map(id => this.edges.get(id)),
       state.phase === "pickup" ? "#24ca72" : "#f3c047", 0.8, state.phase === "pickup" ? 0.25 : 0.22);
   }
+  updateCameraHeading(heading, dt) {
+    if (!this.cameraReady) {
+      this.cameraHeading = heading;
+      return;
+    }
+    const difference = Math.atan2(Math.sin(heading - this.cameraHeading), Math.cos(heading - this.cameraHeading));
+    const change = difference * (1 - Math.exp(-2 * dt));
+    const limit = 0.9 * dt;
+    this.cameraHeading += Math.max(-limit, Math.min(limit, change));
+  }
   render(car, state, lang, approach, previewExit = null) {
+    const now = performance.now(), dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
+    this.updateCameraHeading(car.heading, dt);
+    this.ground.material.map = this.overview ? this.overviewTexture : this.chaseTexture;
     this.updateGroundDetail(car);
     this.boundaryOutline.visible = !this.overview;
     this.directionLines.visible = !this.overview;
-    const forward = new THREE.Vector3(Math.cos(car.heading), 0, Math.sin(car.heading));
+    const forward = new THREE.Vector3(Math.cos(this.cameraHeading), 0, Math.sin(this.cameraHeading));
     const position = new THREE.Vector3(car.x, 0, car.y);
     this.taxi.position.copy(position);
     this.taxi.rotation.y = -car.heading;
@@ -503,7 +546,6 @@ export class Map3DView {
     } else {
       this.scene.fog.near = 80; this.scene.fog.far = 220;
     }
-    const now = performance.now(), dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
     if (this.lastRender && !this.overview) {
       this.frameTimes.push(dt);
       if (this.frameTimes.length === 12) {
@@ -516,9 +558,9 @@ export class Map3DView {
       }
     }
     this.lastRender = now;
-    this.lens.position.lerp(eye, this.cameraReady ? 1 - Math.exp(-7 * dt) : 1);
+    this.lens.position.lerp(eye, this.cameraReady ? 1 - Math.exp(-5 * dt) : 1);
     this.lookAt ??= target.clone();
-    this.lookAt.lerp(target, this.cameraReady ? 1 - Math.exp(-10 * dt) : 1);
+    this.lookAt.lerp(target, this.cameraReady ? 1 - Math.exp(-4 * dt) : 1);
     this.lens.lookAt(this.lookAt);
     this.lens.setViewOffset(innerWidth, innerHeight, innerWidth > 800 ? -innerWidth * 0.13 : 0,
       innerHeight * 0.04, innerWidth, innerHeight);

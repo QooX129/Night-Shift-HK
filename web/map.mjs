@@ -1,6 +1,7 @@
 export class MapView {
-  constructor(canvas, data, stops) {
+  constructor(canvas, data, stops, { compact = false } = {}) {
     this.canvas = canvas;
+    this.compact = compact;
     this.ctx = canvas.getContext("2d");
     this.data = data;
     this.edges = new Map(data.edges.map(e => [e.id, e]));
@@ -19,7 +20,8 @@ export class MapView {
     window.addEventListener("resize", () => this.resize());
   }
   resize() {
-    this.width = innerWidth; this.height = innerHeight;
+    this.width = this.compact ? this.canvas.clientWidth : innerWidth;
+    this.height = this.compact ? this.canvas.clientHeight : innerHeight;
     this.ratio = devicePixelRatio || 1;
     this.canvas.width = Math.ceil(this.width * this.ratio);
     this.canvas.height = Math.ceil(this.height * this.ratio);
@@ -133,7 +135,12 @@ export class MapView {
     const target = this.overview ? { x: (left + right) / 2, y: (top + bottom) / 2 } : car;
     this.camera.x += (target.x - this.camera.x) * 0.12;
     this.camera.y += (target.y - this.camera.y) * 0.12;
-    const cx = w > 800 ? w * 0.64 : w * 0.58, cy = this.overview ? h * 0.5 : h * 0.61;
+    const cx = this.compact ? w / 2 : w > 800 ? w * 0.64 : w * 0.58;
+    const cy = this.compact ? h / 2 : this.overview ? h * 0.5 : h * 0.61;
+    if (this.compact) {
+      this.camera.x = target.x;
+      this.camera.y = target.y;
+    }
     c.setTransform(this.ratio, 0, 0, this.ratio, 0, 0);
     c.fillStyle = "#15262c"; c.fillRect(0, 0, w, h);
     c.translate(cx, cy); c.scale(zoom, zoom); c.translate(-this.camera.x, -this.camera.y);
@@ -223,7 +230,8 @@ export class MapView {
     c.fillStyle = "#ffffbd"; c.fillRect(10 * s, -5 * s, 2 * s, 2 * s); c.fillRect(10 * s, 3 * s, 2 * s, 2 * s);
     c.restore();
     c.setTransform(this.ratio, 0, 0, this.ratio, 0, 0);
-    const nx = w - 35, ny = h - (matchMedia("(pointer:coarse)").matches ? 240 : 210);
+    const nx = this.compact ? w - 15 : w - 35;
+    const ny = this.compact ? 30 : h - (matchMedia("(pointer:coarse)").matches ? 240 : 210);
     c.fillStyle = "#c2d0bf"; c.font = "10px system-ui"; c.textAlign = "center"; c.fillText("N", nx, ny - 15);
     c.beginPath(); c.moveTo(nx, ny - 7); c.lineTo(nx - 4, ny + 7); c.lineTo(nx + 4, ny + 7); c.closePath(); c.fill();
   }

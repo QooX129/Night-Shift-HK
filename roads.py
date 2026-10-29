@@ -189,12 +189,14 @@ class RoadMap:
     def corridor_match(
         self, point: Point, heading: float, previous: Edge,
         selected_exit: str | None = None, selected_junction: str | None = None,
-        *, check_body: bool = True, allowance: float = 0,
+        *, check_body: bool = True, allowance: float = 0, closed: set[int] | None = None,
     ) -> Match | None:
         if check_body and not self.body_fits(point, heading, previous, allowance=allowance):
             return None
         matches = []
         for edge in self.corridor_edges(point, previous, selected_exit, selected_junction):
+            if closed and edge.way in closed:
+                continue
             if selected_junction is not None and edge.a == selected_junction and edge.id != selected_exit:
                 continue
             nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])

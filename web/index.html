@@ -5,12 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=minimap-border-1">
 </head>
 <body>
   <main id="game">
     <canvas id="map" aria-label="Driving map of Mong Kok and Yau Ma Tei"></canvas>
     <canvas id="map-3d" aria-label="3D driving view of Mong Kok and Yau Ma Tei" hidden></canvas>
+    <aside id="minimap-panel" class="minimap panel" hidden>
+      <canvas id="minimap" aria-label="Live top-down driving minimap"></canvas>
+    </aside>
     <header class="topbar">
       <a class="brand" href="/" aria-label="Night Shift HK home"><span class="brand-icon">的</span><span>NIGHT SHIFT <b>HK</b><small data-i18n="district">MONG KOK · YAU MA TEI</small></span></a>
       <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
@@ -90,6 +93,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=async-detail-1"></script>
+  <script type="module" src="/app.mjs?v=corner-slide-2"></script>
 </body>
 </html>

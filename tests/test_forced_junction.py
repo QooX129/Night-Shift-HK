@@ -42,6 +42,41 @@ class ForcedJunctionTests(unittest.TestCase):
         return Session("test", point, 0, "ab", (1,), speed=10, paused=False,
                        selected_exit="bd", selected_junction="b")
 
+    def test_closure_blocks_entry_but_allows_escape_and_blocks_reentry(self):
+        session = self.session((59, 0))
+        session.selected_exit = session.selected_junction = None
+        session.closed = {2}
+        with self.assertRaisesRegex(RuleError, "Road closed"):
+            self.game.update_position(session, dict(x=68, y=0, heading=0, speed=3, dt=1))
+        self.assertEqual(session.point, (59, 0))
+        session.closed = {1}
+        self.game.update_position(session, dict(x=58, y=0, heading=0, speed=-2, dt=1))
+        self.game.update_position(session, dict(x=68, y=0, heading=0, speed=4, dt=1))
+        self.assertEqual(session.edge, "bc")
+        with self.assertRaisesRegex(RuleError, "Road closed"):
+            self.game.update_position(session, dict(x=52, y=0, heading=0, speed=-3, dt=1))
+        self.assertEqual(session.point, (68, 0))
+
+    def test_closure_cannot_be_reentered_within_one_movement_trail(self):
+        session = self.session((59, 0))
+        session.selected_exit = session.selected_junction = None
+        session.closed = {1}
+        with self.assertRaisesRegex(RuleError, "Road closed"):
+            self.game.update_position(session, dict(
+                x=52, y=0, heading=0, speed=-3, dt=1,
+                trail=[dict(x=68, y=0, heading=0)],
+            ))
+        self.assertEqual(session.point, (59, 0))
+
+    def test_closed_exit_overlap_does_not_block_reversing_on_open_road(self):
+        session = self.session((59.99, 3.7))
+        session.selected_exit = session.selected_junction = None
+        session.closed = {2, 3}
+        self.assertEqual(self.roads.corridor_match(session.point, 0, self.roads.edges["ab"]).edge.way, 3)
+        self.game.update_position(session, dict(x=58, y=3.7, heading=0, speed=-3, dt=1))
+        self.assertEqual(session.point, (58, 3.7))
+        self.assertEqual(session.edge, "ab")
+
     def test_rectangular_body_clearance_matches_its_heading_and_corners(self):
         edge = self.roads.edges["ab"]
         for heading in [0, math.pi / 6, math.pi / 4, math.pi / 2, math.pi, -math.pi / 4]:
@@ -251,3 +286,51 @@ console.log(JSON.stringify(cases));
                 self.assertEqual(case_snaps, 1, "boundary approaches must execute the queued turn exactly once")
         self.assertGreater(contacts, 0, "the regression must exercise actual wall contact")
         self.assertGreater(snaps, 0, "the regression must submit a junction snap trail")
+
+    def test_client_concave_corner_slides_are_accepted_by_server(self):
+        node = shutil.which("node")
+        if not node:
+            installed = sorted((Path.home() / ".nvm/versions/node").glob("*/bin/node"))
+            node = str(installed[-1]) if installed else None
+        if not node:
+            self.skipTest("Node.js is required for client/server physics integration")
+        document = {**self.roads.document,
+                    "edges": [edge for edge in self.roads.document["edges"] if edge["way"] != 2]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "map.json"
+            path.write_text(json.dumps(document))
+            self.roads = RoadMap(path)
+        self.game.roads = self.roads
+        script = """
+import { RoadNetwork } from './web/physics.mjs';
+let input = '';
+for await (const chunk of process.stdin) input += chunk;
+const roads = new RoadNetwork(JSON.parse(input));
+const results = [];
+for (const [x, y, direction] of [[55.5, 3.5, .9], [56.5, 2.5, 2], [57, 3, 2.5], [57.5, 3.5, 2.5]]) {
+  for (const reverse of [false, true]) {
+    const heading = direction + (reverse ? Math.PI : 0);
+    const result = roads.constrain({ x, y },
+      { x: x + .3 * Math.cos(direction), y: y + .3 * Math.sin(direction) },
+      heading, roads.edges.get('ab'), new Set());
+    results.push({ start: [x, y], heading, reverse, result });
+  }
+}
+console.log(JSON.stringify(results));
+"""
+        output = subprocess.run(
+            [node, "--input-type=module", "-e", script], cwd=ROOT,
+            input=json.dumps(self.roads.document), text=True, capture_output=True, check=True,
+        )
+        for case in json.loads(output.stdout):
+            with self.subTest(case=case):
+                session = self.session(tuple(case["start"]))
+                session.selected_exit = session.selected_junction = None
+                session.heading = case["heading"]
+                result = case["result"]
+                self.assertGreater(math.dist(session.point, (result["x"], result["y"])), 0.01)
+                self.game.update_position(session, dict(
+                    x=result["x"], y=result["y"], heading=case["heading"],
+                    speed=-3 if case["reverse"] else 3, dt=0.1,
+                ))
+                self.assertEqual(session.point, (result["x"], result["y"]))

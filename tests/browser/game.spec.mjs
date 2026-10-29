@@ -25,6 +25,10 @@ test("losing focus clears controls without opening pause and explicit pause stil
   await page.locator("#resume").click();
   await page.keyboard.press("Escape");
   await expect(page.locator("#pause-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-dialog")).not.toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-dialog")).toBeVisible();
 });
 
 test("start, manual driving, pause, language, and garage", async ({ page }) => {

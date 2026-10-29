@@ -37,8 +37,8 @@ To stop the server, press **Ctrl+C** in the terminal.
 
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
   reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
-- **Space:** handbrake; it slows the taxi without engaging reverse. **Esc:** open
-  the pause menu. Losing focus or changing browser tabs clears held controls
+- **Space:** handbrake; it slows the taxi without engaging reverse. **Esc:** toggle
+  the pause menu; closing it resumes the shift. Losing focus or changing browser tabs clears held controls
   without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
 - Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
@@ -87,7 +87,12 @@ To stop the server, press **Ctrl+C** in the terminal.
   A single light-red outline marks the physical road edges at 80% opacity,
   using 1 m strokes without tinting the road interior.
   Contact with a road edge removes outward movement and allows sliding along
-  the edge. Reverse if facing a dead end or a boundary.
+  the edge, including around rounded endpoints and tight corners. Swept body
+  checks still prevent cutting through concave corners or disconnected roads.
+  If conflicting corner contacts reject the normal slide, the collider checks
+  nearby forward slide directions, reducing travel rather than adding speed.
+  Head-on contact limits attempted speed to 3 m/s rather than disabling steering;
+  brake/reverse or steer away from the obstruction.
   The outline follows the physical road width (`road width / 2` from the centre),
   including narrow roads and joined junction perimeters, without a decorative
   outer road outline.
@@ -99,6 +104,9 @@ To stop the server, press **Ctrl+C** in the terminal.
   clutter. Arrows reflect the packaged graph, not live road signage.
 - Orange roads have simulated congestion; red roads are closed. A new simulated
   closure is selected approximately every 100 seconds of active game time.
+  Closures block entry, not the controls: reversing and steering away remain
+  available. If a closure appears on the taxi's current way, it may drive out,
+  but cannot re-enter once it has left.
 - The **blue** marker is the taxi rest stop. Stop there to refuel or buy upgrades.
   Fuel efficiency costs $100; the engine tune costs $160. Upgrades last one shift.
   The engine tune improves forward acceleration by 30%, not top speed.
@@ -111,6 +119,10 @@ To stop the server, press **Ctrl+C** in the terminal.
 - **3D / 2D:** switch between the experimental chase-camera view and the original
   top-down map without restarting your shift. Zoom changes chase distance in 3D;
   overview shows the whole district. The initial view remains 2D.
+  In 3D, a north-up minimap in the bottom-left follows the taxi and shows the
+  same routes, junction guidance, and stop markers as the 2D map. It updates at
+  up to 60 Hz, limited by the browser's animation frame rate.
+  The compact window is 200 × 140 CSS pixels on desktop and 140 × 100 on mobile.
 
 There is **no saving**. Reloading starts a new shift. A server restart also clears
 sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
@@ -149,6 +161,8 @@ beacons, and a bilingual current-road label. Nearby building blocks fade when
 they obscure the taxi. Location rings and beacons respect scene depth, so they
 do not draw over the taxi. On phones the dispatch panel scrolls to leave room for
 the camera. Switch back to **2D** at any time for the detailed map.
+The chase camera filters steering changes and limits its heading-follow speed
+to 0.9 radians/second, easing junction turns without changing taxi steering.
 Reload an already-open game after renderer updates; ES modules stay loaded for
 the lifetime of the page. The current app and 3D entry points use versioned URLs
 to bypass older cached code, including in the VS Code browser.
@@ -188,6 +202,10 @@ this pass, preserving the same legal directions and left-side offsets as 2D.
 After the initial view loads, nearby boundary and arrow geometry is computed in
 a module worker. The previous detail stays visible until its replacement is
 ready, avoiding main-thread polygon-triangulation stalls while driving.
+Chase mode omits the low-resolution texture copies of road lines; the district
+overview retains them. Local vector boundaries are clipped to their cache area
+so incomplete neighboring roads cannot create extra perimeter lines outside it.
+Anti-aliasing applies only to original polygon contours, not internal hole cuts.
 
 ## Tests
 

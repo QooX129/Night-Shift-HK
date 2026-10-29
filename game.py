@@ -191,6 +191,7 @@ class Game:
         if session.fuel <= 0 and distance > 0.5:
             raise RuleError("Out of fuel. Call recovery.")
         previous = self.roads.edges[session.edge]
+        escaping_closure = previous.way if previous.way in session.closed else None
         history = session.history
         warning = session.warning
         cursor = old
@@ -216,11 +217,18 @@ class Game:
                     session.selected_exit, session.selected_junction,
                     check_body=segment > 1e-8,
                     allowance=self.roads.penetration(sample_cursor, sample_heading, previous) if segment > 1e-8 else 0,
+                    closed=session.closed - {escaping_closure},
                 )
                 if match is None:
+                    physical = self.roads.corridor_match(
+                        sample_point, sample_heading, previous,
+                        session.selected_exit, session.selected_junction, check_body=False,
+                    )
+                    if physical and physical.edge.way in session.closed:
+                        raise RuleError("Road closed. Reverse or steer onto another road.")
                     raise RuleError("The taxi footprint must remain on a connected road.")
-                if match.edge.way in session.closed and segment > 0.01:
-                    raise RuleError("Road closed. Stop and choose another road, or call recovery.")
+                if match.edge.way != escaping_closure:
+                    escaping_closure = None
                 if match.edge.id != previous.id:
                     if previous.b == match.edge.a and previous.a != match.edge.b:
                         warning = "" if self.roads.legal(previous, match.edge, history) else "restricted"
