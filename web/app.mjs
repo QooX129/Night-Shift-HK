@@ -1,5 +1,5 @@
 import { stepCar, RoadNetwork } from "./physics.mjs";
-import { MapView } from "./map.mjs?v=guide-priority-1";
+import { MapView } from "./map.mjs?v=vector-arrows-1";
 import { en, zh } from "./i18n.mjs";
 
 const $ = id => document.getElementById(id);
@@ -238,7 +238,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=boundary-holes-1");
+      const { Map3DView } = await import("./map3d.mjs?v=async-detail-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
     }
     map3d.cameraReady = false;
@@ -302,6 +302,12 @@ $("map-3d").addEventListener("webglcontextlost", event => {
     map3d.dispose(); map3d = null;
   }
   viewError = { key: "lost3d", detail: "" };
+  updateViewUI();
+});
+$("map-3d").addEventListener("renderererror", event => {
+  if (view === map3d) activateView(map2d);
+  map3d?.dispose(); map3d = null;
+  viewError = { key: "failed3d", detail: event.detail };
   updateViewUI();
 });
 $("start").addEventListener("click", resume);

@@ -5,7 +5,7 @@ test.use({ trace: "off" });
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
+    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -23,6 +23,7 @@ test("3D road guides have camera-independent selected, pickup, yellow, normal pr
       snapshots.push(view.overlays.children.map(mesh => ({
         color: `#${mesh.material.color.getHexString()}`, order: mesh.renderOrder,
         height: mesh.geometry.getAttribute("position").count ? mesh.geometry.getAttribute("position").getY(0) : 0,
+        smoothed: Boolean(mesh.geometry.getAttribute("boundaryCoord")),
       })));
     }
     for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
@@ -36,6 +37,7 @@ test("3D road guides have camera-independent selected, pickup, yellow, normal pr
   for (const snapshot of results) {
     for (const item of snapshot.filter(item => item.height)) {
       expect(item.height).toBeCloseTo(item.order / 100);
+      expect(item.smoothed).toBe(true);
     }
   }
 });
@@ -49,7 +51,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
+    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -88,6 +90,15 @@ test("3D district renders locally and toggles without resetting the shift or cha
   expect(result.faded).toBeGreaterThan(0);
   expect(result.cameraHeight).toBeGreaterThan(10);
   expect(result.ground).toBe(true);
+  const arrows = await page.evaluate(() => {
+    const view = window.threeView;
+    return { nativePass: view.directionLines.parent === view.boundaryScene,
+      smoothed: Boolean(view.directionLines.geometry.getAttribute("boundaryCoord")),
+      vertices: view.directionLines.geometry.getAttribute("position").count,
+      priority: view.directionLines.renderOrder < view.forwardRibbon.renderOrder };
+  });
+  expect(arrows.nativePass && arrows.smoothed && arrows.priority).toBe(true);
+  expect(arrows.vertices).toBeGreaterThan(0);
   const boundaryAreas = await page.evaluate(async () => {
     const clipping = (await import("/vendor/polygon-clipping/polygon-clipping.mjs")).default;
     const view = window.threeView, difference = clipping.difference;
@@ -180,6 +191,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.locator("#overview").click();
   await expect.poll(() => page.evaluate(() => window.threeView.overview)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.threeView.groundDetail.visible)).toBe(false);
+  await expect.poll(() => page.evaluate(() => window.threeView.directionLines.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.lens.position.y)).toBeGreaterThan(500);
   await page.locator("#overview").click();
   const originalSize = page.viewportSize();
@@ -216,7 +228,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
+    const { Map3DView } = await import("/map3d.mjs?v=async-detail-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -256,6 +268,25 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       view.drawScene();
       c.drawImage(canvas, 0, 0);
       const continuous = Array.from({ length: 30 }, (_, i) => pixel(-25 + i * 0.5, -5));
+      const guide = view.ribbon([data.edges[0], data.edges[2]], "#24ca72", 1.4, 0.25);
+      view.drawScene();
+      c.drawImage(canvas, 0, 0);
+      const guidePixels = [
+        ...Array.from({ length: 21 }, (_, i) => pixel(-10 + i * 0.5, 0)),
+        ...Array.from({ length: 20 }, (_, i) => pixel(0, 0.5 + i * 0.5)),
+      ];
+      const vertices = guide.geometry.getAttribute("position");
+      let joinsMatch = true;
+      for (let i = 0; i < vertices.count; i++) {
+        const x = vertices.getX(i), z = vertices.getZ(i);
+        const distance = Math.min(Math.hypot(x - Math.max(-100, Math.min(0, x)), z),
+          Math.hypot(x, z - Math.max(0, Math.min(100, z))));
+        if (distance > 0.701) joinsMatch = false;
+      }
+      const bounds = new THREE.Box3().setFromObject(guide);
+      const roundedCaps = bounds.min.x < -100.69 && bounds.max.z > 100.69;
+      const guideInNativePass = guide.parent.parent === view.boundaryScene;
+      guide.visible = false;
       const nativeResolution = canvas.width > view.sceneTarget.width;
       const blocker = new THREE.Mesh(new THREE.BoxGeometry(6, 8, 6),
         new THREE.MeshBasicMaterial({ color: "#003399" }));
@@ -264,20 +295,25 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       view.drawScene();
       c.drawImage(canvas, 0, 0);
       const occluded = pixel(-12, -5);
-      const bounds = view.detailMap.backdropBounds;
+      const cachedBounds = view.detailMap.backdropBounds;
       const texture = view.groundDetail.material.map, mesh = view.groundDetail;
       const resources = view.resources.length;
       view.updateGroundDetail({ x: 10, y: 10 });
-      const cached = view.detailMap.backdropBounds === bounds;
+      const cached = view.detailMap.backdropBounds === cachedBounds;
       view.updateGroundDetail({ x: 80, y: 0 });
-      const shifted = view.groundDetail.position.x === 64 && view.detailMap.backdropBounds !== bounds;
+      const oldDetailVisible = view.groundDetail.position.x === 0 && view.detailPending;
+      await new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      view.updateGroundDetail({ x: 80, y: 0 });
+      const shifted = view.groundDetail.position.x === 64 && view.detailMap.backdropBounds !== cachedBounds;
       view.overview = true;
       view.updateGroundDetail({ x: 200, y: 0 });
       const hidden = !view.groundDetail.visible;
       view.overview = false;
       view.updateGroundDetail({ x: -80, y: -80 });
+      await new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      view.updateGroundDetail({ x: -80, y: -80 });
       return {
-        edges, openings, continuous, nativeResolution, occluded, cached, shifted, hidden,
+        edges, openings, continuous, guidePixels, joinsMatch, roundedCaps, guideInNativePass, nativeResolution, occluded, cached, shifted, hidden, oldDetailVisible,
         antialias: Boolean(view.boundaryOutline.geometry.getAttribute("boundaryCoord")),
         pixelRatio: view.renderer.getPixelRatio(),
         vectorVertices: view.boundaryOutline.geometry.getAttribute("position").count,
@@ -295,6 +331,10 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   for (const point of result.edges) expect(point[0], JSON.stringify(result)).toBeGreaterThan(point[1] + 30);
   for (const point of result.openings) expect(point[0], JSON.stringify(result)).toBeLessThan(point[1]);
   for (const point of result.continuous) expect(point[0], JSON.stringify(result)).toBeGreaterThan(point[1] + 30);
+  for (const point of result.guidePixels) expect(point[1]).toBeGreaterThan(point[0] + 30);
+  expect(result.joinsMatch && result.guideInNativePass).toBe(true);
+  expect(result.roundedCaps).toBe(true);
+  expect(result.oldDetailVisible).toBe(true);
   expect(result.occluded[2]).toBeGreaterThan(result.occluded[0] + 30);
   expect(result.nativeResolution).toBe(true);
   expect(result.antialias).toBe(true);

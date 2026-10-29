@@ -178,6 +178,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
       translate(x, y) { arrows.push({ x, y }); },
       rotate(angle) { arrows.at(-1).angle = angle; } };
     MapView.prototype.drawRoadDirections.call({
+      directionArrows: MapView.prototype.directionArrows,
       data: { edges, nodes: { a: [0, 0], b: [100, 0], c: [0, 30], d: [100, 30], e: [0, 60], f: [10, 60] },
         driving: { widths: { residential: 10 } } },
     }, context);

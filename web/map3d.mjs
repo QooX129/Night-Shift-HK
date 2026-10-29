@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs";
+import { MapView } from "./map.mjs?v=vector-arrows-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 
 export class Map3DView {
@@ -44,9 +44,19 @@ export class Map3DView {
       this.buildCity();
       this.buildTaxi();
       this.overlays = new THREE.Group();
-      this.scene.add(this.overlays);
+      this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs", import.meta.url), { type: "module" });
+      this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique, size: this.detailSize });
+      this.detailWorker.onmessage = ({ data }) => {
+        this.detailPending = false;
+        this.readyDetail = data;
+      };
+      this.detailWorker.onerror = event => {
+        console.error("3D detail worker failed", event.message);
+        this.canvas.dispatchEvent(new CustomEvent("renderererror", { detail: event.message }));
+      };
     } catch (error) {
       this.dispose();
       throw error;
@@ -95,6 +105,7 @@ export class Map3DView {
     this.groundMap = map;
     this.detailMap = Object.create(map);
     this.detailMap.drawRoadBoundaries = () => {};
+    this.detailMap.drawRoadDirections = () => {};
     this.detailMap.backdrop = document.createElement("canvas");
     this.detailMap.backdropBounds = null;
     const detailContext = this.detailMap.backdrop.getContext("2d");
@@ -116,21 +127,68 @@ export class Map3DView {
   updateGroundDetail(car) {
     this.groundDetail.visible = !this.overview;
     if (this.overview) return;
+    if (this.readyDetail) {
+      const { x, y, buffers } = this.readyDetail;
+      this.readyDetail = null;
+      for (const [index, mesh] of [this.boundaryOutline, this.directionLines].entries()) {
+        const geometry = new THREE.BufferGeometry();
+        for (const [name, array] of Object.entries(buffers[index])) {
+          geometry.setAttribute(name, new THREE.BufferAttribute(array, 3));
+        }
+        mesh.geometry.dispose();
+        mesh.geometry = geometry;
+      }
+      this.refreshGroundDetail(x, y);
+    }
     // Reuse one local texture, refreshing only after crossing a 64 m cache cell.
     const x = Math.round(car.x / 64) * 64, y = Math.round(car.y / 64) * 64;
     if (this.groundDetail.position.x === x && this.groundDetail.position.z === y
         && this.detailMap.backdropBounds) return;
+    if (this.detailWorker && this.detailMap.backdropBounds) {
+      if (!this.detailPending) {
+        this.detailPending = true;
+        this.detailWorker.postMessage({ type: "update", x, y });
+      }
+      return;
+    }
+    this.refreshGroundDetail(x, y);
+    if (this.boundaryOutline) this.updateBoundaries(x, y);
+    if (this.directionLines) this.updateDirections(x, y);
+  }
+  refreshGroundDetail(x, y) {
     const half = this.detailSize / 2;
     this.detailMap.buildBackdrop([x - half, y - half, x + half, y + half], this.detailScale);
     this.groundDetail.position.set(x, 0.02, y);
     this.groundDetail.material.map.needsUpdate = true;
-    if (this.boundaryOutline) this.updateBoundaries(x, y);
   }
   buildBoundaries() {
-    this.boundaryOutline = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
-      color: "#f15e5e", transparent: true, opacity: 0.8, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
-    }));
-    this.boundaryOutline.material.onBeforeCompile = shader => {
+    this.boundaryOutline = new THREE.Mesh(new THREE.BufferGeometry(), this.smoothLineMaterial("#f15e5e", 0.8));
+    this.boundaryOutline.position.y = 0.04;
+    this.boundaryOutline.name = "road-boundaries";
+    this.boundaryOutline.renderOrder = 3;
+    this.boundaryScene.add(this.boundaryOutline);
+    this.directionLines = new THREE.Mesh(new THREE.BufferGeometry(), this.smoothLineMaterial("#c2d0bf", 1));
+    this.directionLines.name = "road-direction-arrows";
+    this.directionLines.renderOrder = 6;
+    this.boundaryScene.add(this.directionLines);
+  }
+  updateDirections(x, y) {
+    const segments = [], half = this.detailSize / 2;
+    for (const arrow of this.groundMap.directionArrows()) {
+      if (Math.abs(arrow.x - x) > half - 4 || Math.abs(arrow.y - y) > half - 4) continue;
+      const point = (a, b) => [arrow.x + Math.cos(arrow.angle) * a - Math.sin(arrow.angle) * b,
+        arrow.y + Math.sin(arrow.angle) * a + Math.cos(arrow.angle) * b];
+      segments.push([point(-3, 0), point(3, 0)], [point(0, -2), point(3, 0)], [point(3, 0), point(0, 2)]);
+    }
+    const geometry = this.roundLineGeometry(segments, 0.9, 0.06);
+    this.directionLines.geometry.dispose();
+    this.directionLines.geometry = geometry;
+  }
+  smoothLineMaterial(color, opacity = 0.85) {
+    const material = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+    });
+    material.onBeforeCompile = shader => {
       shader.uniforms.sceneDepth = { value: this.sceneTarget.depthTexture };
       shader.uniforms.outputSize = { value: this.outputSize };
       shader.uniforms.sceneSize = { value: this.sceneSize };
@@ -145,10 +203,7 @@ export class Map3DView {
           diffuseColor.a *= min(coverage.x, min(coverage.y, coverage.z));
           #include <opaque_fragment>`);
     };
-    this.boundaryOutline.position.y = 0.04;
-    this.boundaryOutline.name = "road-boundaries";
-    this.boundaryOutline.renderOrder = 3;
-    this.boundaryScene.add(this.boundaryOutline);
+    return material;
   }
   updateBoundaries(x, y) {
     const half = this.detailSize / 2;
@@ -181,6 +236,10 @@ export class Map3DView {
       unions.push(polygons.length ? polygonClipping.union(...polygons) : []);
     }
     const outlines = unions[0].length ? polygonClipping.difference(unions[0], unions[1]) : [];
+    this.boundaryOutline.geometry.dispose();
+    this.boundaryOutline.geometry = this.lineGeometry(outlines);
+  }
+  lineGeometry(outlines) {
     const pending = [...outlines], shapes = [];
     // Narrow, concave holes can confuse hole-bridging triangulation. Cut through
     // each hole first, leaving simple polygons with the exact same perimeter.
@@ -235,8 +294,7 @@ export class Map3DView {
     indexed.dispose();
     geometry.setAttribute("boundaryCoord", new THREE.Float32BufferAttribute(coordinates, 3));
     geometry.rotateX(-Math.PI / 2);
-    this.boundaryOutline.geometry.dispose();
-    this.boundaryOutline.geometry = geometry;
+    return geometry;
   }
   buildCity() {
     const facade = document.createElement("canvas");
@@ -362,25 +420,40 @@ export class Map3DView {
     this.canvas.parentElement.append(this.roadLabel);
   }
   ribbon(edges, color, width, height, start = null) {
-    const positions = [];
+    const geometry = this.ribbonGeometry(edges, width, height, start);
+    const mesh = new THREE.Mesh(geometry, this.smoothLineMaterial(color));
+    mesh.renderOrder = Math.round(height * 100);
+    this.overlays.add(mesh);
+    return mesh;
+  }
+  ribbonGeometry(edges, width, height, start = null) {
+    const segments = [];
     for (let i = 0; i < edges.length; i++) {
       const edge = edges[i];
       if (!edge) continue;
       const a = i === 0 && start ? [start.x, start.y] : this.data.nodes[edge.a], b = this.data.nodes[edge.b];
+      segments.push([a, b]);
+    }
+    return this.roundLineGeometry(segments, width, height);
+  }
+  roundLineGeometry(segments, width, height) {
+    const polygons = [];
+    for (const [a, b] of segments) {
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (!length) continue;
-      const x = -(b[1] - a[1]) / length * width / 2, z = (b[0] - a[0]) / length * width / 2;
-      const p = [[a[0] + x, height, a[1] + z], [a[0] - x, height, a[1] - z],
-        [b[0] + x, height, b[1] + z], [b[0] - x, height, b[1] - z]];
-      for (const index of [0, 2, 1, 1, 2, 3]) positions.push(...p[index]);
+      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]), points = [];
+      for (const [centre, theta] of [[b, angle - Math.PI / 2], [a, angle + Math.PI / 2]]) {
+        for (let j = 0; j <= 16; j++) {
+          points.push([centre[0] + width / 2 * Math.cos(theta + j * Math.PI / 16),
+            centre[1] + width / 2 * Math.sin(theta + j * Math.PI / 16)]);
+        }
+      }
+      points.push(points[0]);
+      polygons.push([points]);
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide,
-      transparent: true, opacity: 0.85, depthWrite: false }));
-    mesh.renderOrder = Math.round(height * 100);
-    this.overlays.add(mesh);
-    return mesh;
+    const geometry = this.lineGeometry(polygons.length ? polygonClipping.union(...polygons) : []);
+    geometry.translate(0, height, 0);
+    return geometry;
   }
   updateOverlays(state, approach, previewExit) {
     const key = JSON.stringify([state.closed, state.traffic, state.route, state.phase,
@@ -391,6 +464,7 @@ export class Map3DView {
       child.geometry.dispose(); child.material.dispose(); this.overlays.remove(child);
     }
     this.forwardRibbon = null;
+    this.forwardStart = null;
     const closed = new Set(state.closed);
     this.ribbon([...this.edges.values()].filter(e => closed.has(e.way)), "#ed8879", 3, 0.12);
     this.ribbon([...this.edges.values()].filter(e => !closed.has(e.way) && state.traffic[e.way]), "#bd955c", 1, 0.14);
@@ -410,6 +484,7 @@ export class Map3DView {
   render(car, state, lang, approach, previewExit = null) {
     this.updateGroundDetail(car);
     this.boundaryOutline.visible = !this.overview;
+    this.directionLines.visible = !this.overview;
     const forward = new THREE.Vector3(Math.cos(car.heading), 0, Math.sin(car.heading));
     const position = new THREE.Vector3(car.x, 0, car.y);
     this.taxi.position.copy(position);
@@ -464,15 +539,12 @@ export class Map3DView {
     if (state) {
       this.updateOverlays(state, approach, previewExit);
       if (this.forwardRibbon && approach?.start) {
-        const edge = approach.edges[0], a = this.data.nodes[edge.a], end = this.data.nodes[edge.b], start = approach.start;
-        const length = Math.hypot(end[0] - a[0], end[1] - a[1]);
-        const vertices = this.forwardRibbon.geometry.getAttribute("position");
-        if (length > 1e-6 && vertices.count >= 6) {
-          const x = -(end[1] - a[1]) / length * 0.7, z = (end[0] - a[0]) / length * 0.7;
-          vertices.setXYZ(0, start.x + x, 0.16, start.y + z);
-          vertices.setXYZ(2, start.x - x, 0.16, start.y - z);
-          vertices.setXYZ(3, start.x - x, 0.16, start.y - z);
-          vertices.needsUpdate = true;
+        const start = approach.start;
+        if (!this.forwardStart || start.x !== this.forwardStart.x || start.y !== this.forwardStart.y) {
+          const geometry = this.ribbonGeometry(approach.edges, 1.4, 0.16, start);
+          this.forwardRibbon.geometry.dispose();
+          this.forwardRibbon.geometry = geometry;
+          this.forwardStart = { x: start.x, y: start.y };
         }
       }
       let activeLabel = null;
@@ -512,6 +584,7 @@ export class Map3DView {
     this.renderer.autoClear = true;
   }
   dispose() {
+    this.detailWorker?.terminate();
     window.removeEventListener("resize", this.onResize);
     this.label?.remove();
     this.roadLabel?.remove();

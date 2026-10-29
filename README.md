@@ -179,6 +179,15 @@ of city quality. Derivative-based edge anti-aliasing smooths the boundary silhou
 without blurring it or drawing seams across its triangles. The 2D renderer retains
 its native high-DPI resolution. Chromium reference tests require at least 24 FPS
 for 3D; actual hardware/browser performance varies.
+Driving guidelines use the same screen-resolution, depth-aware anti-aliasing
+pass, with round end caps and round joins. Overlapping segments are merged so
+bends do not leave cracks or darker overlapping patches;
+the selected/pickup/yellow/normal drawing priority remains unchanged.
+Nearby road-direction arrows also use rounded, anti-aliased vector strokes in
+this pass, preserving the same legal directions and left-side offsets as 2D.
+After the initial view loads, nearby boundary and arrow geometry is computed in
+a module worker. The previous detail stays visible until its replacement is
+ready, avoiding main-thread polygon-triangulation stalls while driving.
 
 ## Tests
 

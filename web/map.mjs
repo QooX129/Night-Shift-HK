@@ -98,10 +98,9 @@ export class MapView {
     context.drawImage(mask, 0, 0);
     context.restore();
   }
-  drawRoadDirections(c) {
+  *directionArrows() {
     const legal = this.data.edges.filter(edge => !edge.wrongway);
     const directions = new Set(legal.map(edge => `${edge.way}:${edge.a}:${edge.b}`));
-    c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = 0.9;
     for (const edge of legal) {
       if (edge.length < 16) continue;
       const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
@@ -111,14 +110,18 @@ export class MapView {
       const count = Math.max(1, Math.floor(edge.length / 55));
       for (let i = 0; i < count; i++) {
         const t = (i + 0.5) / count;
-        c.save();
-        c.translate(a[0] + (b[0] - a[0]) * t + Math.sin(angle) * offset,
-          a[1] + (b[1] - a[1]) * t - Math.cos(angle) * offset);
-        c.rotate(angle);
-        c.beginPath(); c.moveTo(-3, 0); c.lineTo(3, 0);
-        c.moveTo(0, -2); c.lineTo(3, 0); c.lineTo(0, 2); c.stroke();
-        c.restore();
+        yield { x: a[0] + (b[0] - a[0]) * t + Math.sin(angle) * offset,
+          y: a[1] + (b[1] - a[1]) * t - Math.cos(angle) * offset, angle };
       }
+    }
+  }
+  drawRoadDirections(c) {
+    c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = 0.9;
+    for (const { x, y, angle } of this.directionArrows()) {
+      c.save(); c.translate(x, y); c.rotate(angle);
+      c.beginPath(); c.moveTo(-3, 0); c.lineTo(3, 0);
+      c.moveTo(0, -2); c.lineTo(3, 0); c.lineTo(0, 2); c.stroke();
+      c.restore();
     }
     c.restore();
   }
