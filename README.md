@@ -79,6 +79,11 @@ To stop the server, press **Ctrl+C** in the terminal.
   back onto the road, but movement deeper into the wall remains blocked.
   Junction selection also remains available during existing boundary overlap:
   queuing an exit does not move or rotate the taxi.
+  The selector appears as a top-centre HUD with one card per road and its
+  keyboard shortcut underneath. The HUD uses 70% opacity, with road cards ordered
+  by relative turn angle from left to right. Larger groups scroll horizontally;
+  ×N means tap the side key N times while holding the main key.
+  Arrow keys mirror WASD.
   In the junction selector, hold **W / ↑** for straight, **A / ←** for left,
   **D / →** for right, or **S / ↓** for a U-turn to preview an exit; release
   all direction keys to confirm the latest preview. Single-road directions follow

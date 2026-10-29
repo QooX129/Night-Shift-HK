@@ -1,7 +1,7 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=corner-slide-2";
 import { MapView } from "./map.mjs?v=minimap-1";
 import { en, zh } from "./i18n.mjs?v=junction-grace-1";
-import { JunctionInput } from "./junction-input.mjs?v=junction-grace-1";
+import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 
 const $ = id => document.getElementById(id);
 let lang = "en", state = null, view = null, mapData, stops;
@@ -145,9 +145,11 @@ function renderExits() {
   $("exits").replaceChildren();
   const index = state.route?.indexOf(state.edge) ?? -1;
   const suggested = index >= 0 ? state.route[index + 1] : null;
-  for (const option of state.options) {
-    const degrees = option.angle * 180 / Math.PI;
-    const direction = Math.abs(degrees) > 150 ? "uturn" : Math.abs(degrees) < 35 ? "straight" : degrees < 0 ? "left" : "right";
+  const options = state.options.map(option => ({ ...option, direction: junctionDirection(option.angle) }))
+    .sort((a, b) => a.angle - b.angle);
+  const shortcuts = junctionShortcuts(options);
+  for (const option of options) {
+    const { direction } = option;
     const button = document.createElement("button");
     button.className = `exit-option ${option.edge === suggested ? "recommended" : ""}`;
     button.dataset.edge = option.edge;
@@ -161,6 +163,10 @@ function renderExits() {
     small.textContent = option.edge === suggested ? t("suggested") : lang === "zh" ? option.name : option.zh;
     if (option.restricted) small.textContent += ` · ${t("restricted")}`;
     text.append(small); button.append(arrow, text);
+    const shortcut = document.createElement("kbd");
+    shortcut.className = "exit-shortcut";
+    shortcut.textContent = shortcuts.get(option.edge);
+    button.append(shortcut);
     for (const event of ["pointerenter", "focus"]) {
       button.addEventListener(event, () => { if (!junctionInput.keys.size) setExitPreview(option.edge); });
     }

@@ -15,6 +15,19 @@ test("junction direction keys preview while held, cancel on blur, and select on 
   await page.keyboard.down("w");
   await expect(page.locator("#junction")).toBeVisible({ timeout: 20000 });
   await page.keyboard.up("w");
+  const hud = await page.locator("#junction").boundingBox();
+  const viewport = page.viewportSize();
+  expect(Math.abs(hud.x + hud.width / 2 - viewport.width / 2)).toBeLessThan(2);
+  expect(hud.y).toBeLessThan(100);
+  expect(hud.x).toBeGreaterThanOrEqual(0);
+  expect(hud.x + hud.width).toBeLessThanOrEqual(viewport.width);
+  await expect(page.locator("#junction")).toHaveCSS("opacity", "0.7");
+  const angles = await page.locator("#exits .exit-option").evaluateAll(buttons =>
+    buttons.map(button => Number(button.dataset.angle)));
+  expect(angles).toEqual([...angles].sort((a, b) => a - b));
+  for (const shortcut of await page.locator("#exits .exit-shortcut").allTextContents()) {
+    expect(shortcut).toMatch(/^[WASD]( \+ [WASD]( ×\d+)?)?$/);
+  }
   expect(selections).toEqual([]);
   const option = page.locator("#exits .exit-option").first();
   const direction = await option.getAttribute("data-direction");

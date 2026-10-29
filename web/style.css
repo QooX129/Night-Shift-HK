@@ -918,6 +918,7 @@ dialog p {
     .minimap {
         bottom: 245px
     }
+
     .dashboard {
         bottom: 141px
     }
@@ -1048,12 +1049,15 @@ dialog p {
 }
 
 #junction {
+    opacity: 0.95;
     position: fixed;
-    inset: auto max(16px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-bottom)) auto;
+    inset: max(80px, env(safe-area-inset-top)) auto auto 50%;
+    transform: translateX(-50%);
     margin: 0;
-    width: min(350px, calc(100vw - 32px));
-    max-height: min(55dvh, 600px);
-    padding: 18px;
+    width: max-content;
+    max-width: calc(100vw - 32px);
+    max-height: 45dvh;
+    padding: 12px;
     border-radius: 14px;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -1066,20 +1070,46 @@ dialog p {
 }
 
 #junction h2 {
-    font-size: 21px;
-    margin: 10px 0
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%)
 }
 
 #junction p {
-    font-size: 11px;
-    line-height: 1.5;
-    margin: 8px 0
+    display: none
+}
+
+#exits {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    margin-top: 10px;
+    padding: 2px
 }
 
 #junction .exit-option {
-    padding: 9px 12px;
-    gap: 9px;
-    font-size: 12px
+    flex: 0 0 150px;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 150px;
+    margin: 0;
+    padding: 12px 8px;
+    gap: 8px;
+    font-size: 12px;
+    text-align: center;
+    overflow-wrap: anywhere
+}
+
+.exit-shortcut {
+    margin-top: auto;
+    padding: 4px 8px;
+    border: 1px solid #91a4aa80;
+    border-radius: 5px;
+    background: #101a22;
+    color: var(--yellow);
+    font: 600 12px ui-monospace, monospace
 }
 
 #junction .exit-option .arrow {
@@ -1088,12 +1118,15 @@ dialog p {
 
 @media(max-width:800px) {
     #junction {
-        width: min(300px, calc(100vw - 32px));
-        max-height: 45dvh;
-        padding: 14px
+        top: max(64px, env(safe-area-inset-top));
+        max-width: calc(100vw - 16px);
+        padding: 8px
     }
 
-    #junction h2 {
-        font-size: 19px
+    #junction .exit-option {
+        flex-basis: 104px;
+        width: 104px;
+        font-size: 10px;
+        padding: 8px 5px
     }
 }

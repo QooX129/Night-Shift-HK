@@ -1,12 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { JunctionInput } from "../web/junction-input.mjs";
+import { JunctionInput, junctionShortcuts, junctionDirection } from "../web/junction-input.mjs";
 
 const fan = (direction = "straight", center = 0, count = 3) =>
   Array.from({ length: count }, (_, i) => ({
     edge: `exit-${i}`, direction, angle: center + (i - (count - 1) / 2) * 0.1,
   }));
 
+test("HUD shortcuts use real selection rules for every road, including large fans", () => {
+  for (const options of [fan(), fan("straight", 0, 7), [
+    { edge: "ferry", angle: -0.7612558769673607 },
+    { edge: "waterloo-left", angle: -0.36676369551951105 },
+    { edge: "waterloo-right", angle: 0.22857796116330523 },
+  ].map(option => ({ ...option, direction: junctionDirection(option.angle) }))]) {
+    const shortcuts = junctionShortcuts(options);
+    assert.equal(shortcuts.size, options.length);
+    for (const option of options) {
+      const label = shortcuts.get(option.edge);
+      const [main, side] = label.split(" + ");
+      const actions = { W: "gas", A: "left", D: "right", S: "brake" };
+      const input = new JunctionInput({ releaseGrace: 0 });
+      input.press("main", actions[main], options);
+      if (side) {
+        const [key, count = "1"] = side.split(" ×");
+        for (let i = 0; i < Number(count); i++) {
+          input.press("side", actions[key], options);
+          if (i < Number(count) - 1) input.release("side");
+        }
+      }
+      assert.equal(input.preview, option.edge, label);
+    }
+  }
+});
 test("sub-road release grace confirms either release order within 150 ms", () => {
   for (const first of ["w", "a"]) {
     const input = new JunctionInput(), options = fan();

@@ -5,6 +5,33 @@ const directions = {
   brake: { group: "uturn", angle: Math.PI, sides: ["right", "left"] },
 };
 
+export function junctionDirection(angle) {
+  const degrees = angle * 180 / Math.PI;
+  return Math.abs(degrees) > 150 ? "uturn" : Math.abs(degrees) < 35 ? "straight" : degrees < 0 ? "left" : "right";
+}
+
+export function junctionShortcuts(options) {
+  const shortcuts = new Map(), keys = { gas: "W", left: "A", right: "D", brake: "S" };
+  const record = (edge, label, cost) => {
+    if (edge && (!shortcuts.has(edge) || cost < shortcuts.get(edge).cost)) shortcuts.set(edge, { label, cost });
+  };
+  for (const [main, direction] of Object.entries(directions)) {
+    const input = new JunctionInput({ releaseGrace: 0 });
+    record(input.press("main", main, options), keys[main], 1);
+    for (const side of direction.sides) {
+      input.reset();
+      input.press("main", main, options);
+      const count = input.options.length > 3 ? input.options.length : 1;
+      for (let tap = 1; tap <= count; tap++) {
+        record(input.press("side", side, options),
+          `${keys[main]} + ${keys[side]}${tap > 1 ? ` ×${tap}` : ""}`, 1 + tap);
+        input.release("side");
+      }
+    }
+  }
+  return new Map([...shortcuts].map(([edge, shortcut]) => [edge, shortcut.label]));
+}
+
 export class JunctionInput {
   constructor({ releaseGrace = 150 } = {}) {
     this.releaseGrace = releaseGrace;

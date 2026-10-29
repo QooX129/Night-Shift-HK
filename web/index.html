@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=junction-keys-1">
+  <link rel="stylesheet" href="/style.css?v=junction-hud-alpha-1">
 </head>
 <body>
   <main id="game">
@@ -65,9 +65,9 @@
     <p class="muted" data-i18n="introsave">Progress lasts for this page session only. Reloading starts a new shift.</p>
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
   </dialog>
-  <dialog id="junction">
+  <dialog id="junction" aria-labelledby="junction-title">
     <div class="dialog-eyebrow" data-i18n="junction">JUNCTION CHOICE · TIME PAUSED</div>
-    <h2 data-i18n="choose">Which road, driver?</h2>
+    <h2 id="junction-title" data-i18n="choose">Which road, driver?</h2>
     <p class="muted" data-i18n="turnhelp">The GPS-recommended exit is highlighted in gold. After selection, steering sensitivity and assist increase until you enter that road.</p>
     <p class="muted" data-i18n="junctionkeys">Single-road directions follow the latest key. Sub-roads lock their main direction. Release all keys within 150 ms to confirm the combination; hold longer to switch to the remaining direction.</p>
     <div id="exits"></div>
@@ -94,6 +94,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=junction-grace-1"></script>
+  <script type="module" src="/app.mjs?v=junction-hud-alpha-1"></script>
 </body>
 </html>
