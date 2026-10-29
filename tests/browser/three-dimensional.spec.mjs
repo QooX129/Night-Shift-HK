@@ -2,6 +2,44 @@ import { test, expect } from "@playwright/test";
 
 test.use({ trace: "off" });
 
+test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
+  await page.goto("/");
+  const results = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const edge = { id: "in", a: "a", b: "b", way: 1 };
+    const exit = { id: "exit", a: "b", b: "c", way: 2 };
+    const normal = { id: "normal", a: "b", b: "d", way: 3 };
+    const view = Object.create(Map3DView.prototype);
+    view.data = { nodes: { a: [0, 0], b: [20, 0], c: [40, 0], d: [20, 20] } };
+    view.edges = new Map([edge, exit, normal].map(e => [e.id, e]));
+    view.overlays = new THREE.Group();
+    const approach = { edges: [edge], incoming: "in",
+      exits: [exit, normal].map(e => ({ edge: e, path: { edges: [e] } })) };
+    const state = { closed: [], traffic: {}, route: ["in", "exit"], phase: "pickup", selected_exit: null };
+    const snapshots = [];
+    for (const [phase, selected, preview] of [["pickup", null, null], ["onboard", "exit", null], ["pickup", null, "exit"]]) {
+      view.updateOverlays({ ...state, phase, selected_exit: selected }, approach, preview);
+      snapshots.push(view.overlays.children.map(mesh => ({
+        color: `#${mesh.material.color.getHexString()}`, order: mesh.renderOrder,
+        height: mesh.geometry.getAttribute("position").count ? mesh.geometry.getAttribute("position").getY(0) : 0,
+      })));
+    }
+    for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
+    return snapshots;
+  });
+  const order = (snapshot, color) => Math.max(...snapshot.filter(item => item.color === color).map(item => item.order));
+  expect(order(results[0], "#24ca72")).toBeGreaterThan(order(results[0], "#f5c65a"));
+  expect(order(results[0], "#f5c65a")).toBeGreaterThan(order(results[0], "#92d7b6"));
+  expect(order(results[1], "#55e9ff")).toBeGreaterThan(order(results[1], "#f3c047"));
+  expect(order(results[2], "#55e9ff")).toBeGreaterThan(order(results[2], "#24ca72"));
+  for (const snapshot of results) {
+    for (const item of snapshot.filter(item => item.height)) {
+      expect(item.height).toBeCloseTo(item.order / 100);
+    }
+  }
+});
+
 test("3D district renders locally and toggles without resetting the shift or changing physics", async ({ page }, testInfo) => {
   const errors = [], external = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -11,11 +49,12 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs");
+    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
       window.threeCar = { ...args[0] };
+      if (window.threeHeadingOffset) args[0] = { ...args[0], heading: args[0].heading + window.threeHeadingOffset };
       return render.apply(this, args);
     };
   });
@@ -49,7 +88,90 @@ test("3D district renders locally and toggles without resetting the shift or cha
   expect(result.faded).toBeGreaterThan(0);
   expect(result.cameraHeight).toBeGreaterThan(10);
   expect(result.ground).toBe(true);
+  const boundaryAreas = await page.evaluate(async () => {
+    const clipping = (await import("/vendor/polygon-clipping/polygon-clipping.mjs")).default;
+    const view = window.threeView, difference = clipping.difference;
+    let outlines;
+    clipping.difference = (...args) => { outlines = difference(...args); return outlines; };
+    const results = [];
+    try {
+      for (const [x, y] of [[64, 512], [0, 448], [128, 576]]) {
+        view.updateBoundaries(x, y);
+        const ringArea = ring => Math.abs(ring.slice(1).reduce((sum, point, i) =>
+          sum + ring[i][0] * point[1] - point[0] * ring[i][1], 0) / 2);
+        const expected = outlines.reduce((sum, [outer, ...holes]) =>
+          sum + ringArea(outer) - holes.reduce((total, hole) => total + ringArea(hole), 0), 0);
+        const vertices = view.boundaryOutline.geometry.getAttribute("position");
+        let actual = 0;
+        for (let i = 0; i < vertices.count; i += 3) {
+          actual += Math.abs((vertices.getX(i + 1) - vertices.getX(i)) * (vertices.getZ(i + 2) - vertices.getZ(i))
+            - (vertices.getZ(i + 1) - vertices.getZ(i)) * (vertices.getX(i + 2) - vertices.getX(i))) / 2;
+        }
+        results.push({ expected, actual });
+      }
+    } finally {
+      clipping.difference = difference;
+      view.updateBoundaries(view.groundDetail.position.x, view.groundDetail.position.z);
+    }
+    return results;
+  });
+  for (const { expected, actual } of boundaryAreas) {
+    expect(expected).toBeGreaterThan(0);
+    expect(Math.abs(actual - expected)).toBeLessThan(expected * 0.0001);
+  }
+  const markerDepth = await page.evaluate(() => {
+    const view = window.threeView;
+    const visibleMarkers = view.markers.filter(item => item.marker.visible);
+    const capture = document.createElement("canvas");
+    capture.width = view.canvas.width; capture.height = view.canvas.height;
+    const context = capture.getContext("2d");
+    const sample = () => {
+      view.drawScene();
+      context.drawImage(view.canvas, 0, 0);
+      return context.getImageData(0, 0, capture.width, capture.height).data;
+    };
+    const withMarkers = sample();
+    visibleMarkers.forEach(item => { item.marker.visible = false; });
+    const withoutMarkers = sample();
+    visibleMarkers.forEach(item => { item.marker.visible = true; });
+    view.drawScene();
+    let roofDifferences = 0, markerPixels = 0;
+    for (let x = -4; x <= 4; x++) {
+      for (let z = -4; z <= 4; z++) {
+        const point = view.taxi.position.clone().set(
+          x / 4 * view.data.driving.taxi_length * 0.2, 2.07,
+          z / 4 * view.data.driving.taxi_width * 0.3);
+        view.taxi.localToWorld(point);
+        point.project(view.lens);
+        const px = Math.floor((point.x + 1) * capture.width / 2);
+        const py = Math.floor((1 - point.y) * capture.height / 2);
+        const index = (py * capture.width + px) * 4;
+        if ([0, 1, 2].some(channel => withMarkers[index + channel] !== withoutMarkers[index + channel])) roofDifferences++;
+      }
+    }
+    for (let i = 0; i < withMarkers.length; i += 4) {
+      if (withMarkers[i] !== withoutMarkers[i]) markerPixels++;
+    }
+    return { roofDifferences, markerPixels, depthTest: view.markers.every(item =>
+      item.ring.material.depthTest && item.beacon.material.depthTest) };
+  });
+  expect(markerDepth.depthTest).toBe(true);
+  expect(markerDepth.markerPixels).toBeGreaterThan(0);
+  expect(markerDepth.roofDifferences).toBe(0);
+  const detail = await page.evaluate(() => ({
+    scale: window.threeView.detailMap.backdropScale,
+    overviewScale: window.threeView.groundMap.backdropScale,
+    visible: window.threeView.groundDetail.visible,
+  }));
+  expect(detail.scale).toBeGreaterThanOrEqual(5);
+  expect(detail.scale / detail.overviewScale).toBeGreaterThan(3);
+  expect(detail.visible).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("3d-chase.png") });
+  await page.evaluate(() => { window.threeHeadingOffset = 0.4; });
+  await expect.poll(() => page.evaluate(() =>
+    window.threeView.lens.position.x - window.threeCar.x)).toBeLessThan(-8);
+  await page.screenshot({ path: testInfo.outputPath("3d-diagonal-boundaries.png") });
+  await page.evaluate(() => { window.threeHeadingOffset = 0; });
 
   await page.locator("#language").click();
   await expect(page.locator("#view-status")).toContainText("3D 預覽");
@@ -57,6 +179,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.locator("#zoom-in").click();
   await page.locator("#overview").click();
   await expect.poll(() => page.evaluate(() => window.threeView.overview)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.threeView.groundDetail.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.lens.position.y)).toBeGreaterThan(500);
   await page.locator("#overview").click();
   const originalSize = page.viewportSize();
@@ -87,6 +210,98 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await expect(page.locator(".road-label")).toHaveCount(0);
   expect(external).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("3D boundary detail preserves physical edges and refreshes without accumulating textures", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=boundary-holes-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const data = {
+      nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
+      edges: [["a", "b"], ["b", "c"], ["b", "d"]].map(([a, b], i) => ({
+        id: `${i}`, a, b, way: i, kind: "residential", length: 100,
+        name: "Local road", layer: "0",
+      })),
+      backdrop: [], bounds: [-500, -500, 500, 500],
+      driving: { taxi_radius: 3, taxi_length: 5.4, taxi_width: 2.6, widths: { residential: 10 } },
+    };
+    const canvas = document.createElement("canvas");
+    canvas.hidden = true;
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    try {
+      view.updateGroundDetail({ x: 0, y: 0 });
+      view.taxi.visible = false;
+      const { backdrop } = view.detailMap;
+      view.lens.position.set(0, 140, 0);
+      view.lens.lookAt(0, 0, 0);
+      view.drawScene();
+      const capture = document.createElement("canvas");
+      capture.width = canvas.width; capture.height = canvas.height;
+      const c = capture.getContext("2d");
+      c.drawImage(canvas, 0, 0);
+      const pixel = (x, y) => {
+        const point = view.groundDetail.position.clone().set(x, 0.04, y).project(view.lens);
+        return [...c.getImageData(Math.round((point.x + 1) * capture.width / 2),
+          Math.round((1 - point.y) * capture.height / 2), 1, 1).data];
+      };
+      const edges = [pixel(-12, -5), pixel(5, 12)];
+      const openings = [pixel(1, 1), pixel(0, 3), pixel(-12, 0), pixel(-12, -7)];
+      view.quality = 0.55;
+      view.resize();
+      view.lens.position.set(15, 70, 50);
+      view.lens.lookAt(0, 0, 0);
+      view.drawScene();
+      c.drawImage(canvas, 0, 0);
+      const continuous = Array.from({ length: 30 }, (_, i) => pixel(-25 + i * 0.5, -5));
+      const nativeResolution = canvas.width > view.sceneTarget.width;
+      const blocker = new THREE.Mesh(new THREE.BoxGeometry(6, 8, 6),
+        new THREE.MeshBasicMaterial({ color: "#003399" }));
+      blocker.position.set(-12, 4, -5);
+      view.scene.add(blocker);
+      view.drawScene();
+      c.drawImage(canvas, 0, 0);
+      const occluded = pixel(-12, -5);
+      const bounds = view.detailMap.backdropBounds;
+      const texture = view.groundDetail.material.map, mesh = view.groundDetail;
+      const resources = view.resources.length;
+      view.updateGroundDetail({ x: 10, y: 10 });
+      const cached = view.detailMap.backdropBounds === bounds;
+      view.updateGroundDetail({ x: 80, y: 0 });
+      const shifted = view.groundDetail.position.x === 64 && view.detailMap.backdropBounds !== bounds;
+      view.overview = true;
+      view.updateGroundDetail({ x: 200, y: 0 });
+      const hidden = !view.groundDetail.visible;
+      view.overview = false;
+      view.updateGroundDetail({ x: -80, y: -80 });
+      return {
+        edges, openings, continuous, nativeResolution, occluded, cached, shifted, hidden,
+        antialias: Boolean(view.boundaryOutline.geometry.getAttribute("boundaryCoord")),
+        pixelRatio: view.renderer.getPixelRatio(),
+        vectorVertices: view.boundaryOutline.geometry.getAttribute("position").count,
+        restored: view.groundDetail.visible && view.groundDetail.position.x === -64,
+        reused: view.groundDetail === mesh && view.groundDetail.material.map === texture
+          && view.resources.length === resources,
+        textureWidth: backdrop.width, limit: view.renderer.capabilities.maxTextureSize,
+      };
+    } finally {
+      view.dispose();
+      view.renderer.forceContextLoss();
+      canvas.remove();
+    }
+  });
+  for (const point of result.edges) expect(point[0], JSON.stringify(result)).toBeGreaterThan(point[1] + 30);
+  for (const point of result.openings) expect(point[0], JSON.stringify(result)).toBeLessThan(point[1]);
+  for (const point of result.continuous) expect(point[0], JSON.stringify(result)).toBeGreaterThan(point[1] + 30);
+  expect(result.occluded[2]).toBeGreaterThan(result.occluded[0] + 30);
+  expect(result.nativeResolution).toBe(true);
+  expect(result.antialias).toBe(true);
+  expect(result.pixelRatio).toBeGreaterThanOrEqual(1);
+  expect(result.vectorVertices).toBeGreaterThan(100);
+  expect(result.textureWidth).toBeLessThanOrEqual(result.limit);
+  expect(result.cached && result.shifted && result.hidden && result.restored && result.reused).toBe(true);
 });
 
 test.describe("3D animation", () => {

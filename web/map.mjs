@@ -173,9 +173,15 @@ export class MapView {
         this.highlightExit(c, approach.edges[0], "#92d7b6", zoom, approach);
         const index = state.route?.indexOf(approach.incoming) ?? -1;
         const suggested = index >= 0 ? state.route[index + 1] : null;
-        for (const { edge, path } of approach.exits) {
+        for (const { edge, path } of [...approach.exits].sort((a, b) =>
+          Number(a.edge.id === suggested) - Number(b.edge.id === suggested))) {
           this.highlightExit(c, edge, edge.id === suggested ? "#f5c65a" : "#b5e3d780", zoom, path);
         }
+      }
+      if (state.route) {
+        c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
+        for (const id of state.route) this.roadPath(c, this.edges.get(id));
+        c.stroke(); c.lineWidth = 2.5 / zoom; c.strokeStyle = state.phase === "pickup" ? "#92d7b6" : "#f5c65a"; c.stroke();
       }
       if (state.selected_exit && state.selected_junction && car.edge === state.edge) {
         const node = this.data.nodes[state.selected_junction];
@@ -187,11 +193,6 @@ export class MapView {
       }
       const preview = approach?.exits.find(exit => exit.edge.id === previewExit);
       if (preview) this.highlightExit(c, preview.edge, "#55e9ff", zoom, preview.path);
-      if (state.route) {
-        c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
-        for (const id of state.route) this.roadPath(c, this.edges.get(id));
-        c.stroke(); c.lineWidth = 2.5 / zoom; c.strokeStyle = state.phase === "pickup" ? "#92d7b6" : "#f5c65a"; c.stroke();
-      }
       for (const stop of this.stops) {
         const active = state.phase === "pickup" ? stop.id === state.pickup : state.phase === "onboard" ? stop.id === state.destination : false;
         if (!active && stop.id !== "depot") continue;

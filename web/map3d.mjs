@@ -1,5 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
 import { MapView } from "./map.mjs";
+import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 
 export class Map3DView {
   constructor(canvas, data, stops) {
@@ -26,8 +27,20 @@ export class Map3DView {
     sun.position.set(-100, 180, -60);
     this.scene.add(sun);
     this.resources = [];
+    this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, { depthTexture: new THREE.DepthTexture(1, 1) });
+    const outputMaterial = new THREE.MeshBasicMaterial({ map: this.sceneTarget.texture, depthTest: false, depthWrite: false });
+    this.outputSize = new THREE.Vector2();
+    this.sceneSize = new THREE.Vector2();
+    const output = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outputMaterial);
+    this.outputScene = new THREE.Scene();
+    this.outputScene.add(output);
+    this.outputCamera = new THREE.Camera();
+    this.boundaryScene = new THREE.Scene();
+    this.boundaryScene.fog = this.scene.fog;
+    this.resources.push(this.sceneTarget, output.geometry, outputMaterial);
     try {
       this.buildGround();
+      this.buildBoundaries();
       this.buildCity();
       this.buildTaxi();
       this.overlays = new THREE.Group();
@@ -44,8 +57,11 @@ export class Map3DView {
     this.resize();
   }
   resize() {
-    this.renderer.setPixelRatio(this.quality);
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
     this.renderer.setSize(innerWidth, innerHeight, false);
+    this.renderer.getDrawingBufferSize(this.outputSize);
+    this.sceneTarget.setSize(Math.ceil(innerWidth * this.quality), Math.ceil(innerHeight * this.quality));
+    this.sceneSize.set(this.sceneTarget.width, this.sceneTarget.height);
     this.lens.aspect = innerWidth / innerHeight;
     this.lens.updateProjectionMatrix();
   }
@@ -76,6 +92,151 @@ export class Map3DView {
     ground.position.set((left + right) / 2, 0, (top + bottom) / 2);
     ground.name = "district-roads";
     this.scene.add(ground);
+    this.groundMap = map;
+    this.detailMap = Object.create(map);
+    this.detailMap.drawRoadBoundaries = () => {};
+    this.detailMap.backdrop = document.createElement("canvas");
+    this.detailMap.backdropBounds = null;
+    const detailContext = this.detailMap.backdrop.getContext("2d");
+    detailContext.fillText = () => {};
+    detailContext.strokeText = () => {};
+    this.detailSize = 384;
+    this.detailScale = Math.min(8, this.renderer.capabilities.maxTextureSize / this.detailSize);
+    const detailTexture = new THREE.CanvasTexture(this.detailMap.backdrop);
+    detailTexture.colorSpace = THREE.SRGBColorSpace;
+    detailTexture.anisotropy = texture.anisotropy;
+    this.resources.push(detailTexture);
+    const detailGeometry = new THREE.PlaneGeometry(this.detailSize, this.detailSize);
+    detailGeometry.rotateX(-Math.PI / 2);
+    this.groundDetail = new THREE.Mesh(detailGeometry, new THREE.MeshBasicMaterial({ map: detailTexture }));
+    this.groundDetail.name = "district-roads-detail";
+    this.groundDetail.visible = false;
+    this.scene.add(this.groundDetail);
+  }
+  updateGroundDetail(car) {
+    this.groundDetail.visible = !this.overview;
+    if (this.overview) return;
+    // Reuse one local texture, refreshing only after crossing a 64 m cache cell.
+    const x = Math.round(car.x / 64) * 64, y = Math.round(car.y / 64) * 64;
+    if (this.groundDetail.position.x === x && this.groundDetail.position.z === y
+        && this.detailMap.backdropBounds) return;
+    const half = this.detailSize / 2;
+    this.detailMap.buildBackdrop([x - half, y - half, x + half, y + half], this.detailScale);
+    this.groundDetail.position.set(x, 0.02, y);
+    this.groundDetail.material.map.needsUpdate = true;
+    if (this.boundaryOutline) this.updateBoundaries(x, y);
+  }
+  buildBoundaries() {
+    this.boundaryOutline = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
+      color: "#f15e5e", transparent: true, opacity: 0.8, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+    }));
+    this.boundaryOutline.material.onBeforeCompile = shader => {
+      shader.uniforms.sceneDepth = { value: this.sceneTarget.depthTexture };
+      shader.uniforms.outputSize = { value: this.outputSize };
+      shader.uniforms.sceneSize = { value: this.sceneSize };
+      shader.vertexShader = `attribute vec3 boundaryCoord;\nvarying vec3 vBoundaryCoord;\n${shader.vertexShader}`
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvBoundaryCoord = boundaryCoord;");
+      shader.fragmentShader = `uniform sampler2D sceneDepth;\nuniform vec2 outputSize;\nuniform vec2 sceneSize;\nvarying vec3 vBoundaryCoord;\n${shader.fragmentShader}`
+        .replace("#include <clipping_planes_fragment>", `#include <clipping_planes_fragment>
+          float depthTolerance = max(0.000002, fwidth(gl_FragCoord.z) * max(outputSize.x / sceneSize.x, outputSize.y / sceneSize.y) * 1.5);
+          if (gl_FragCoord.z > texture2D(sceneDepth, gl_FragCoord.xy / outputSize).r + depthTolerance) discard;`)
+        .replace("#include <opaque_fragment>", `
+          vec3 coverage = smoothstep(vec3(0.0), max(fwidth(vBoundaryCoord), vec3(0.00001)), vBoundaryCoord);
+          diffuseColor.a *= min(coverage.x, min(coverage.y, coverage.z));
+          #include <opaque_fragment>`);
+    };
+    this.boundaryOutline.position.y = 0.04;
+    this.boundaryOutline.name = "road-boundaries";
+    this.boundaryOutline.renderOrder = 3;
+    this.boundaryScene.add(this.boundaryOutline);
+  }
+  updateBoundaries(x, y) {
+    const half = this.detailSize / 2;
+    const edges = this.groundMap.unique.filter(edge => {
+      const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
+      const margin = (this.data.driving.widths[edge.kind] ?? 10) / 2 + 1;
+      return Math.max(a[0], b[0]) + margin >= x - half && Math.min(a[0], b[0]) - margin <= x + half
+        && Math.max(a[1], b[1]) + margin >= y - half && Math.min(a[1], b[1]) - margin <= y + half;
+    });
+    const unions = [];
+    for (const inset of [0.5, -0.5]) {
+      const polygons = [];
+      for (const edge of edges) {
+        const width = this.data.driving.widths[edge.kind] ?? 10;
+        const radius = Math.max(0, width / 2 - (this.data.driving.taxi_length ? 0 : this.data.driving.taxi_radius));
+        const r = Math.max(0, radius + inset);
+        if (!r) continue;
+        const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
+        const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        const points = [];
+        for (const [centre, start] of [[b, angle - Math.PI / 2], [a, angle + Math.PI / 2]]) {
+          for (let i = 0; i <= 16; i++) {
+            const theta = start + i * Math.PI / 16;
+            points.push([centre[0] + r * Math.cos(theta), centre[1] + r * Math.sin(theta)]);
+          }
+        }
+        points.push(points[0]);
+        polygons.push([points]);
+      }
+      unions.push(polygons.length ? polygonClipping.union(...polygons) : []);
+    }
+    const outlines = unions[0].length ? polygonClipping.difference(unions[0], unions[1]) : [];
+    const pending = [...outlines], shapes = [];
+    // Narrow, concave holes can confuse hole-bridging triangulation. Cut through
+    // each hole first, leaving simple polygons with the exact same perimeter.
+    while (pending.length) {
+      const polygon = pending.pop();
+      if (polygon.length === 1) {
+        shapes.push(new THREE.Shape(polygon[0].map(([px, py]) => new THREE.Vector2(px, -py))));
+        continue;
+      }
+      const xs = polygon[1].map(point => point[0]);
+      const split = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const points = polygon[0];
+      const left = Math.min(...points.map(point => point[0])) - 1;
+      const right = Math.max(...points.map(point => point[0])) + 1;
+      const top = Math.min(...points.map(point => point[1])) - 1;
+      const bottom = Math.max(...points.map(point => point[1])) + 1;
+      for (const [a, b] of [[left, split], [split, right]]) {
+        pending.push(...polygonClipping.intersection(polygon,
+          [[[a, top], [b, top], [b, bottom], [a, bottom], [a, top]]]));
+      }
+    }
+    const indexed = new THREE.ShapeGeometry(shapes);
+    const indices = indexed.index.array, edgeCounts = new Map();
+    const positions = indexed.getAttribute("position");
+    const vertices = new Map();
+    const vertexIds = Array.from({ length: positions.count }, (_, i) => {
+      const point = `${positions.getX(i)}:${positions.getY(i)}`;
+      if (!vertices.has(point)) vertices.set(point, vertices.size);
+      return vertices.get(point);
+    });
+    const key = (a, b) => {
+      a = vertexIds[a]; b = vertexIds[b];
+      return a < b ? `${a}:${b}` : `${b}:${a}`;
+    };
+    for (let i = 0; i < indices.length; i += 3) {
+      for (let j = 0; j < 3; j++) {
+        const edge = key(indices[i + j], indices[i + (j + 1) % 3]);
+        edgeCounts.set(edge, (edgeCounts.get(edge) ?? 0) + 1);
+      }
+    }
+    const coordinates = [];
+    for (let i = 0; i < indices.length; i += 3) {
+      const boundary = [0, 1, 2].map(j =>
+        edgeCounts.get(key(indices[i + (j + 1) % 3], indices[i + (j + 2) % 3])) === 1);
+      for (let vertex = 0; vertex < 3; vertex++) {
+        for (let component = 0; component < 3; component++) {
+          coordinates.push(!boundary[component] || vertex === component ? 1 : 0);
+        }
+      }
+    }
+    const geometry = indexed.toNonIndexed();
+    indexed.dispose();
+    geometry.setAttribute("boundaryCoord", new THREE.Float32BufferAttribute(coordinates, 3));
+    geometry.rotateX(-Math.PI / 2);
+    this.boundaryOutline.geometry.dispose();
+    this.boundaryOutline.geometry = geometry;
   }
   buildCity() {
     const facade = document.createElement("canvas");
@@ -180,10 +341,10 @@ export class Map3DView {
       const color = stop.id === "depot" ? "#85bada" : "#92d7b6";
       const marker = new THREE.Group();
       const ring = new THREE.Mesh(new THREE.TorusGeometry(3, 0.3, 8, 32),
-        new THREE.MeshBasicMaterial({ color, depthTest: false }));
+        new THREE.MeshBasicMaterial({ color }));
       ring.rotation.x = Math.PI / 2; ring.position.y = 0.4; ring.renderOrder = 20;
       const beacon = new THREE.Mesh(new THREE.ConeGeometry(1.2, 2.2, 6),
-        new THREE.MeshBasicMaterial({ color, depthTest: false }));
+        new THREE.MeshBasicMaterial({ color }));
       beacon.rotation.z = Math.PI; beacon.position.y = 5; beacon.renderOrder = 20;
       marker.add(ring, beacon);
       marker.position.set(stop.point[0], 0, stop.point[1]);
@@ -217,6 +378,7 @@ export class Map3DView {
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide,
       transparent: true, opacity: 0.85, depthWrite: false }));
+    mesh.renderOrder = Math.round(height * 100);
     this.overlays.add(mesh);
     return mesh;
   }
@@ -237,14 +399,17 @@ export class Map3DView {
       const index = state.route?.indexOf(approach.incoming) ?? -1;
       for (const { edge, path } of approach.exits) {
         const selected = edge.id === previewExit || edge.id === state.selected_exit;
-        this.ribbon(path.edges, selected ? "#55e9ff" : edge.id === state.route?.[index + 1] ? "#f5c65a" : "#92d7b6",
-          selected ? 2 : 1, 0.2);
+        const suggested = index >= 0 && edge.id === state.route?.[index + 1];
+        this.ribbon(path.edges, selected ? "#55e9ff" : suggested ? "#f5c65a" : "#92d7b6",
+          selected ? 2 : 1, selected ? 0.3 : suggested ? 0.22 : 0.18);
       }
     }
     if (state.route) this.ribbon(state.route.map(id => this.edges.get(id)),
-      state.phase === "pickup" ? "#92d7b6" : "#f5c65a", 0.8, 0.25);
+      state.phase === "pickup" ? "#24ca72" : "#f3c047", 0.8, state.phase === "pickup" ? 0.25 : 0.22);
   }
   render(car, state, lang, approach, previewExit = null) {
+    this.updateGroundDetail(car);
+    this.boundaryOutline.visible = !this.overview;
     const forward = new THREE.Vector3(Math.cos(car.heading), 0, Math.sin(car.heading));
     const position = new THREE.Vector3(car.x, 0, car.y);
     this.taxi.position.copy(position);
@@ -334,7 +499,17 @@ export class Map3DView {
     }
     this.roadLabel.textContent = this.edges.get(car.edge)?.[lang === "zh" ? "zh" : "name"] ?? "";
     this.roadLabel.hidden = this.overview || !this.roadLabel.textContent;
+    this.drawScene();
+  }
+  drawScene() {
+    // Keep boundary edges at screen resolution even when the city pass scales down.
+    this.renderer.setRenderTarget(this.sceneTarget);
     this.renderer.render(this.scene, this.lens);
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.outputScene, this.outputCamera);
+    this.renderer.autoClear = false;
+    this.renderer.render(this.boundaryScene, this.lens);
+    this.renderer.autoClear = true;
   }
   dispose() {
     window.removeEventListener("resize", this.onResize);
@@ -342,6 +517,10 @@ export class Map3DView {
     this.roadLabel?.remove();
     const geometries = new Set(), materials = new Set();
     this.scene.traverse(object => {
+      if (object.geometry) geometries.add(object.geometry);
+      if (object.material) materials.add(object.material);
+    });
+    this.boundaryScene.traverse(object => {
       if (object.geometry) geometries.add(object.geometry);
       if (object.material) materials.add(object.material);
     });

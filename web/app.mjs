@@ -1,5 +1,5 @@
 import { stepCar, RoadNetwork } from "./physics.mjs";
-import { MapView } from "./map.mjs";
+import { MapView } from "./map.mjs?v=guide-priority-1";
 import { en, zh } from "./i18n.mjs";
 
 const $ = id => document.getElementById(id);
@@ -238,7 +238,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs");
+      const { Map3DView } = await import("./map3d.mjs?v=boundary-holes-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
     }
     map3d.cameraReady = false;
@@ -378,8 +378,8 @@ for (const button of document.querySelectorAll("[data-control]")) {
     controls[button.dataset.control] = false; button.classList.remove("pressed");
   });
 }
-document.addEventListener("visibilitychange", () => { if (document.hidden && !paused) pauseTo("pause-dialog"); });
-window.addEventListener("blur", () => { resetControls(); if (!paused) pauseTo("pause-dialog"); });
+document.addEventListener("visibilitychange", () => { if (document.hidden) resetControls(); });
+window.addEventListener("blur", resetControls);
 
 openDialog("welcome");
 requestAnimationFrame(frame);

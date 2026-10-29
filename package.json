@@ -8,6 +8,7 @@
     "test:browser": "playwright test"
   },
   "dependencies": {
+    "polygon-clipping": "0.15.7",
     "three": "0.180.0"
   },
   "devDependencies": {

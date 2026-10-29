@@ -342,7 +342,7 @@ class Game:
         incoming = self.roads.edges.get(incoming_id)
         if incoming is None or incoming.id != session.edge:
             raise RuleError("The intersection no longer matches your road.")
-        match = self.roads.corridor_match(session.point, session.heading, incoming)
+        match = self.roads.corridor_match(session.point, session.heading, incoming, check_body=False)
         _, _, fraction = project(session.point, self.roads.nodes[incoming.a], self.roads.nodes[incoming.b])
         if (
             not session.paused or not match

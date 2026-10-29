@@ -1,5 +1,32 @@
 import { test, expect } from "@playwright/test";
 
+test("losing focus clears controls without opening pause and explicit pause still works", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+  await page.locator("#job-action").click();
+  await expect(page.locator("#status")).toContainText("green marker");
+  await page.keyboard.down("w");
+  await expect(page.locator("#speed")).not.toHaveText("0");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  const speed = Number(await page.locator("#speed").textContent());
+  await expect.poll(async () => Number(await page.locator("#speed").textContent())).toBeLessThan(speed);
+  await expect(page.locator("#pause-dialog")).not.toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    delete document.hidden;
+  });
+  await expect(page.locator("#pause-dialog")).not.toBeVisible();
+  await page.keyboard.up("w");
+  await page.locator("#pause").click();
+  await expect(page.locator("#pause-dialog")).toBeVisible();
+  await page.locator("#resume").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pause-dialog")).toBeVisible();
+});
+
 test("start, manual driving, pause, language, and garage", async ({ page }) => {
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));

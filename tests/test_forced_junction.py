@@ -121,6 +121,35 @@ class ForcedJunctionTests(unittest.TestCase):
         self.assertEqual(session.warning, "restricted")
         self.assertEqual(session.history, self.roads.history((1,), 3))
 
+    def test_selection_accepts_existing_rotation_overlap_at_boundary(self):
+        session = self.session((25, 3.7))
+        session.heading = math.pi / 4
+        session.paused = True
+        incoming = self.roads.edges["ab"]
+        self.assertFalse(self.roads.body_fits(session.point, session.heading, incoming))
+        self.assertIsNone(self.roads.corridor_match(session.point, session.heading, incoming))
+        old = session.point, session.heading, session.speed, session.edge
+        self.game.select_road(session, "ab", "bd")
+        self.assertEqual((session.point, session.heading, session.speed, session.edge), old)
+        self.assertEqual(session.selected_exit, "bd")
+        self.assertFalse(session.paused)
+        self.game.update_position(session, dict(
+            x=26, y=3.7, heading=session.heading, speed=2, dt=0.5,
+        ))
+        self.assertEqual(session.point, (26, 3.7))
+        with self.assertRaisesRegex(RuleError, "connected road"):
+            self.game.update_position(session, dict(
+                x=26, y=3.9, heading=session.heading, speed=2, dt=0.5,
+            ))
+
+    def test_selection_rejects_centre_outside_corridor_even_with_rotation_overlap(self):
+        session = self.session((25, 5.1))
+        session.heading = math.pi / 4
+        session.paused = True
+        with self.assertRaisesRegex(RuleError, "Stop on the approach"):
+            self.game.select_road(session, "ab", "bd")
+        self.assertTrue(session.paused)
+
     def test_invalid_selection_does_not_move_the_taxi(self):
         for exit_id, closed in [("missing", set()), ("bd", {3})]:
             with self.subTest(exit=exit_id):

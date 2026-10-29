@@ -38,13 +38,15 @@ To stop the server, press **Ctrl+C** in the terminal.
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
   reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
 - **Space:** handbrake; it slows the taxi without engaging reverse. **Esc:** open
-  the pause menu. Changing browser tabs also pauses the game.
+  the pause menu. Losing focus or changing browser tabs clears held controls
+  without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
 - Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
   Stop at the **yellow** destination marker to complete the trip and receive earnings.
 - The route is a suggestion; you may choose another legal route.
-  The yellow passenger-destination guide renders above forward, exit, and cyan
-  selected-road highlights so it remains visible where they overlap.
+  Overlapping road guides render in this priority, highest first: cyan selected
+  or previewed exit, green pickup route, yellow destination/recommended route,
+  then normal forward/exit guidance. This applies in both 2D and 3D.
 - Steering remains under your control. Ordinary junctions highlight the connected exits
   without opening a popup; the GPS-recommended exit is brighter. Junctions with
   more than two available exits and connected stacked-road forks pause to offer
@@ -75,6 +77,8 @@ To stop the server, press **Ctrl+C** in the terminal.
   Manual steering is not cancelled by wall contact: rotation may overlap
   the boundary. An overlapping taxi can slide along the wall or drive/reverse
   back onto the road, but movement deeper into the wall remains blocked.
+  Junction selection also remains available during existing boundary overlap:
+  queuing an exit does not move or rotate the taxi.
   Boundary contact applies continuous speed-dependent drag in both forward and
   reverse, including while accelerating. Tune `BOUNDARY_DRAG` in
   `web/physics.mjs` (2 per second, exponential speed decay). Queued junction
@@ -142,19 +146,37 @@ are deterministic artistic approximations, not measured Hong Kong architecture.
 The view includes a red-and-silver procedural taxi, extruded OSM building
 footprints, road directions, route/exit highlights, pickup/drop-off/rest-stop
 beacons, and a bilingual current-road label. Nearby building blocks fade when
-they obscure the taxi. On phones the dispatch panel scrolls to leave room for
+they obscure the taxi. Location rings and beacons respect scene depth, so they
+do not draw over the taxi. On phones the dispatch panel scrolls to leave room for
 the camera. Switch back to **2D** at any time for the detailed map.
+Reload an already-open game after renderer updates; ES modules stay loaded for
+the lifetime of the page. The current app and 3D entry points use versioned URLs
+to bypass older cached code, including in the VS Code browser.
+Nearby roads use a cached local texture at 8 pixels
+per metre (subject to the GPU texture-size limit), rather than enlarging the
+district overview texture. The cache follows the taxi without changing collision
+geometry; overview keeps the lighter district-wide texture.
+Red collider outlines are drawn separately as anti-aliased vector geometry,
+not enlarged texture pixels. Polygon unions retain the joined road perimeter
+without drawing lines across junction openings.
+Narrow holes are split before triangulation to avoid spurious filled triangles
+across building blocks; shared cut edges remain invisible.
 
 Three.js 0.180.0 is packaged locally in `web/vendor/three/`, including its MIT
 licence. There are no CDN, model, font, or texture downloads while playing.
+The locally packaged MIT-licensed `polygon-clipping` helper joins the road
+outline geometry without overlapping lines.
 `npm install` / `npm ci` runs `tools/vendor-three.mjs` to refresh these generated
 files from the locked dependency. Commit the generated files when updating Three.js;
 Python-only startup and the existing Docker image need no Node.js runtime.
 
 3D requires WebGL 2. Initialization failures and context loss are reported on
 screen and leave the 2D view usable. Buildings are batched into small blocks,
-distant blocks are culled, and render resolution is lowered on slow devices
-(minimum 55% of CSS resolution) to favour responsiveness. The 2D renderer retains
+distant blocks are culled, and the city pass can fall to 55% of CSS resolution
+on slow devices. Red boundaries use a separate depth-tested pass at screen
+resolution (up to 1.5 times CSS resolution on high-DPI screens), independent
+of city quality. Derivative-based edge anti-aliasing smooths the boundary silhouette
+without blurring it or drawing seams across its triangles. The 2D renderer retains
 its native high-DPI resolution. Chromium reference tests require at least 24 FPS
 for 3D; actual hardware/browser performance varies.
 
