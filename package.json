@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "prepare": "node tools/vendor-three.mjs",
-    "test": "node --test tests/physics.test.mjs",
+    "test": "node --test tests/physics.test.mjs tests/junction-input.test.mjs",
     "test:browser": "playwright test"
   },
   "dependencies": {

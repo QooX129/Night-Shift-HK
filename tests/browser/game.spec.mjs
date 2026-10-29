@@ -1,5 +1,101 @@
 import { test, expect } from "@playwright/test";
 
+test("junction direction keys preview while held, cancel on blur, and select on release", async ({ page }) => {
+  const selections = [];
+  page.on("request", request => {
+    if (request.url().includes("/commands")) {
+      const command = request.postDataJSON()?.command;
+      if (command?.action === "select_road") selections.push(command);
+    }
+  });
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+  await page.keyboard.down("w");
+  await expect(page.locator("#junction")).toBeVisible({ timeout: 20000 });
+  await page.keyboard.up("w");
+  expect(selections).toEqual([]);
+  const option = page.locator("#exits .exit-option").first();
+  const direction = await option.getAttribute("data-direction");
+  const edge = await option.getAttribute("data-edge");
+  const key = { straight: "ArrowUp", left: "ArrowLeft", right: "ArrowRight", uturn: "ArrowDown" }[direction];
+  await page.keyboard.down(key);
+  await expect(option).toHaveClass(/previewed/);
+  await page.waitForTimeout(150);
+  expect(selections).toEqual([]);
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(option).not.toHaveClass(/previewed/);
+  await page.keyboard.up(key);
+  expect(selections).toEqual([]);
+  await expect(page.locator("#junction")).toBeVisible();
+  await page.keyboard.down(key);
+  await expect(option).toHaveClass(/previewed/);
+  await page.keyboard.up(key);
+  await expect.poll(() => selections.length).toBe(1);
+  expect(selections[0].exit).toBe(edge);
+  await expect(page.locator("#junction")).not.toBeVisible();
+  await expect(page.locator("#error-dialog")).not.toBeVisible();
+});
+
+test("Waterloo sub-road mode stays locked until its main key is released", async ({ page }) => {
+  const selections = [];
+  page.on("request", request => {
+    if (request.url().includes("/commands")) {
+      const command = request.postDataJSON()?.command;
+      if (command?.action === "select_road") selections.push(command);
+    }
+  });
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+  await page.keyboard.down("w");
+  await expect(page.locator("#junction")).toBeVisible({ timeout: 20000 });
+  await page.keyboard.up("w");
+  // Reproduce the reported Waterloo/Ferry angles on three real, connected exits.
+  await page.locator("#exits .exit-option").evaluateAll(buttons => {
+    if (buttons.length !== 3) throw new Error("Expected three real junction exits");
+    buttons.forEach((button, i) => {
+      button.dataset.direction = i === 0 ? "left" : "straight";
+      button.dataset.angle = String([-0.7612558769673607, -0.36676369551951105, 0.22857796116330523][i]);
+    });
+  });
+  const buttons = page.locator("#exits .exit-option");
+  await page.keyboard.down("a");
+  await expect(buttons.nth(0)).toHaveClass(/previewed/);
+  await page.keyboard.down("w");
+  await expect(buttons.nth(2)).toHaveClass(/previewed/);
+  await page.keyboard.up("a");
+  await page.keyboard.down("a");
+  await expect(buttons.nth(1)).toHaveClass(/previewed/);
+  await page.keyboard.up("a");
+  await expect(buttons.nth(2)).toHaveClass(/previewed/);
+  expect(selections).toEqual([]);
+  await page.keyboard.down("a");
+  await expect(buttons.nth(1)).toHaveClass(/previewed/);
+  await page.keyboard.up("w");
+  await expect(buttons.nth(1)).toHaveClass(/previewed/);
+  await page.waitForTimeout(200);
+  await expect(buttons.nth(0)).toHaveClass(/previewed/);
+  expect(selections).toEqual([]);
+  await page.keyboard.down("w");
+  await page.keyboard.up("a");
+  await page.keyboard.down("a");
+  await expect(buttons.nth(1)).toHaveClass(/previewed/);
+  const edge = await buttons.nth(1).getAttribute("data-edge");
+  // Dispatch both releases in one browser turn to stay within the real grace window.
+  await page.evaluate(() => {
+    for (const key of ["w", "a"]) window.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+  });
+  await page.keyboard.up("w");
+  await page.keyboard.up("a");
+  await expect.poll(() => selections.length).toBe(1);
+  expect(selections[0].exit).toBe(edge);
+  await expect(page.locator("#junction")).not.toBeVisible();
+  await expect(page.locator("#error-dialog")).not.toBeVisible();
+});
+
 test("losing focus clears controls without opening pause and explicit pause still works", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();

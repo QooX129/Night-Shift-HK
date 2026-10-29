@@ -1,4 +1,5 @@
 export const zh = {
+  junctionkeys:"單一路口方向以最後按鍵為準。有分支時會鎖定主方向，側鍵只揀該方向分支。150 毫秒內放開全部按鍵會確認組合；繼續按住則切換至剩餘方向。W+A / W / W+D：前左 / 中間 / 前右。分支較多時可輕按側鍵切換。方向鍵亦適用。",
   minimap:"即時俯瞰駕駛小地圖",
   view3d:"切換至 3D 視角", view2d:"切換至 2D 地圖", loading3d:"正在建立 3D 街區…",
   preview3d:"3D 預覽 · 平面駕駛模擬", failed3d:"無法啟用 3D，已保留 2D 地圖。需要支援 WebGL 2 的瀏覽器。",
@@ -34,6 +35,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  junctionkeys:"Single-road directions follow the latest key. Sub-roads lock their main direction. Release all keys within 150 ms to confirm the combination; hold longer to switch to the remaining direction. W+A / W / W+D: forward-left / middle / forward-right. Tap side keys for larger groups. Arrow keys also work.",
   minimap:"Live top-down driving minimap",
   view3d:"Switch to 3D view", view2d:"Switch to 2D map", loading3d:"Building the 3D district...",
   preview3d:"3D PREVIEW · FLAT DRIVING PHYSICS", failed3d:"Could not start 3D; the 2D map is still available. A WebGL 2 browser is required.",

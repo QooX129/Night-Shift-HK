@@ -1,6 +1,7 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=corner-slide-2";
 import { MapView } from "./map.mjs?v=minimap-1";
-import { en, zh } from "./i18n.mjs?v=collision-slide-1";
+import { en, zh } from "./i18n.mjs?v=junction-grace-1";
+import { JunctionInput } from "./junction-input.mjs?v=junction-grace-1";
 
 const $ = id => document.getElementById(id);
 let lang = "en", state = null, view = null, mapData, stops;
@@ -10,13 +11,23 @@ let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 let previewExit = null;
+const junctionInput = new JunctionInput();
 const controls = { gas: false, brake: false, handbrake: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
 const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog"];
 
 function resetControls() {
+  junctionInput.reset();
+  if ($("junction").open) setExitPreview(null);
   for (const key of Object.keys(controls)) controls[key] = false;
   document.querySelectorAll("[data-control]").forEach(b => b.classList.remove("pressed"));
+}
+function setExitPreview(edge) {
+  previewExit = edge;
+  for (const button of $("exits").children) {
+    const active = button.dataset.edge === edge;
+    button.classList.toggle("previewed", active);
+  }
 }
 function openDialog(id) {
   for (const other of dialogs) if (other !== id) $(other).close();
@@ -129,6 +140,7 @@ async function promptJunction() {
   });
 }
 function renderExits() {
+  junctionInput.reset();
   previewExit = null;
   $("exits").replaceChildren();
   const index = state.route?.indexOf(state.edge) ?? -1;
@@ -138,6 +150,9 @@ function renderExits() {
     const direction = Math.abs(degrees) > 150 ? "uturn" : Math.abs(degrees) < 35 ? "straight" : degrees < 0 ? "left" : "right";
     const button = document.createElement("button");
     button.className = `exit-option ${option.edge === suggested ? "recommended" : ""}`;
+    button.dataset.edge = option.edge;
+    button.dataset.direction = direction;
+    button.dataset.angle = String(option.angle);
     const arrow = document.createElement("span"); arrow.className = "arrow";
     arrow.textContent = { left: "↰", right: "↱", straight: "↑", uturn: "↶" }[direction];
     const text = document.createElement("span");
@@ -147,11 +162,11 @@ function renderExits() {
     if (option.restricted) small.textContent += ` · ${t("restricted")}`;
     text.append(small); button.append(arrow, text);
     for (const event of ["pointerenter", "focus"]) {
-      button.addEventListener(event, () => { previewExit = option.edge; });
+      button.addEventListener(event, () => { if (!junctionInput.keys.size) setExitPreview(option.edge); });
     }
     for (const event of ["pointerleave", "blur"]) {
       button.addEventListener(event, () => {
-        if (previewExit === option.edge) previewExit = null;
+        if (!junctionInput.keys.size && previewExit === option.edge) setExitPreview(null);
       });
     }
     button.addEventListener("click", () => perform(async () => {
@@ -260,6 +275,10 @@ async function toggleView() {
   } finally { changingView = false; updateViewUI(); }
 }
 function frame(timestamp) {
+  if ($("junction").open && junctionInput.releaseDeadline !== null) {
+    junctionInput.advance(timestamp);
+    setExitPreview(junctionInput.preview);
+  }
   const delta = Math.min((timestamp - (lastFrame || timestamp)) / 1000, 0.1); lastFrame = timestamp;
   if (state && !paused && (!moving || elapsed < 1.2)) {
     stepBank += delta;
@@ -377,6 +396,15 @@ const bindings = {
 };
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
+  if ($("junction").open && bindings[key]) {
+    event.preventDefault();
+    if (busy || event.repeat) return;
+    const options = [...$("exits").children].map(button => ({
+      edge: button.dataset.edge, direction: button.dataset.direction, angle: Number(button.dataset.angle),
+    }));
+    setExitPreview(junctionInput.press(key, bindings[key], options));
+    return;
+  }
   if (bindings[key] && !paused) { controls[bindings[key]] = true; event.preventDefault(); }
   if (event.code === "Space" && !paused) {
     controls.handbrake = true;
@@ -391,6 +419,14 @@ window.addEventListener("keydown", event => {
   }
 });
 window.addEventListener("keyup", event => {
+  const key = event.key.toLowerCase();
+  if ($("junction").open && bindings[key]) {
+    event.preventDefault();
+    const selected = junctionInput.release(key);
+    setExitPreview(junctionInput.preview);
+    const button = [...$("exits").children].find(button => button.dataset.edge === selected);
+    if (button && !busy) button.click();
+  }
   if (bindings[event.key.toLowerCase()]) controls[bindings[event.key.toLowerCase()]] = false;
   if (event.code === "Space") controls.handbrake = false;
 });

@@ -79,6 +79,30 @@ To stop the server, press **Ctrl+C** in the terminal.
   back onto the road, but movement deeper into the wall remains blocked.
   Junction selection also remains available during existing boundary overlap:
   queuing an exit does not move or rotate the taxi.
+  In the junction selector, hold **W / ↑** for straight, **A / ←** for left,
+  **D / →** for right, or **S / ↓** for a U-turn to preview an exit; release
+  all direction keys to confirm the latest preview. Single-road directions follow
+  the latest key pressed. Selecting a direction with multiple exits locks into
+  its sub-road group while its main key remains held.
+  For a forward fan, **W+A / W / W+D** choose left / middle / right.
+  Other fans rotate this mapping: **A+S / A / A+W** for left,
+  **D+W / D / D+S** for right, **S+D / S / S+A** for U-turns.
+  When the main direction has multiple exits, side keys select its leftmost or
+  rightmost sub-road without switching groups. For example, W+A selects
+  the left Waterloo branch rather than the sharper Ferry Street turn.
+  With two exits, the main key chooses the closest angle; a side key chooses
+  that side. With more than three, tap side keys while holding the main key to
+  cycle through every exit (wrapping at the ends), after the first tap selects
+  that side's outermost exit. Key auto-repeat does not cycle.
+  Release a side key first to update the preview from the remaining keys.
+  Release the main key while a side key remains held to leave the sub-road group
+  and switch to the remaining direction. At the Waterloo/Ferry fork, W then A
+  previews the left Waterloo branch; releasing W while A remains switches to Ferry.
+  Sub-road key releases have a 150 ms grace period: release all keys within that
+  window to confirm the combined preview; hold a remaining key longer to switch.
+  Within sub-road mode, opposite directions or both side keys cancel the preview. Directions with no
+  matching exit do nothing. Losing focus cancels keyboard confirmation; mouse
+  hover and click remain available.
   Boundary contact applies continuous speed-dependent drag in both forward and
   reverse, including while accelerating. Tune `BOUNDARY_DRAG` in
   `web/physics.mjs` (2 per second, exponential speed decay). Queued junction
