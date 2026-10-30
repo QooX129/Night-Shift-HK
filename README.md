@@ -151,7 +151,9 @@ To stop the server, press **Ctrl+C** in the terminal.
   In 3D, a north-up minimap in the bottom-left follows the taxi and shows the
   same routes, junction guidance, and stop markers as the 2D map. It updates at
   up to 60 Hz, limited by the browser's animation frame rate.
-  The compact window is 200 × 140 CSS pixels on desktop and 140 × 100 on mobile.
+  The compact window is 240 × 168 CSS pixels on desktop and 168 × 120 on mobile.
+  Its canvas and cached map render at a minimum 2× pixel density, retaining
+  native density on higher-DPI screens without enlarging a low-resolution image.
 
 There is **no saving**. Reloading starts a new shift. A server restart also clears
 sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
@@ -220,17 +222,25 @@ on slow devices. Red boundaries use a separate depth-tested pass at screen
 resolution (up to 1.5 times CSS resolution on high-DPI screens), independent
 of city quality. Derivative-based edge anti-aliasing smooths the boundary silhouette
 without blurring it or drawing seams across its triangles. The 2D renderer retains
-its native high-DPI resolution. Chromium reference tests require at least 24 FPS
-for 3D; actual hardware/browser performance varies.
+its native high-DPI resolution. Free-steering Chromium reference tests cover both
+2D and 3D, requiring 55 FPS on desktop and 30 FPS in phone emulation; actual
+hardware/browser performance varies.
 Driving guidelines use the same screen-resolution, depth-aware anti-aliasing
 pass, with round end caps and round joins. Overlapping segments are merged so
 bends do not leave cracks or darker overlapping patches;
 the selected/pickup/yellow/normal drawing priority remains unchanged.
 Nearby road-direction arrows also use rounded, anti-aliased vector strokes in
 this pass, preserving the same legal directions and left-side offsets as 2D.
-After the initial view loads, nearby boundary and arrow geometry is computed in
-a module worker. The previous detail stays visible until its replacement is
-ready, avoiding main-thread polygon-triangulation stalls while driving.
+After the initial view loads, nearby boundary/arrow geometry and the high-resolution
+road texture are computed together in a module worker using a CPU-backed 2D
+canvas. Completed RGBA pixels are transferred without copying and uploaded to
+one reused DataTexture, keeping the same resolution, filtering, and orientation.
+This avoids the ImageBitmap/canvas-to-WebGL synchronization that can freeze
+the Windows GPU pipeline even when main-thread JavaScript timings look fast.
+The previous detail stays visible until its replacement is ready, avoiding
+main-thread polygon-triangulation and texture-redrawing stalls at 64 m cache changes.
+Browsers without worker-side OffscreenCanvas 2D retain the main-thread texture
+refresh and log a compatibility warning; geometry still runs in the worker.
 Chase mode omits the low-resolution texture copies of road lines; the district
 overview retains them. Local vector boundaries are clipped to their cache area
 so incomplete neighboring roads cannot create extra perimeter lines outside it.
@@ -268,6 +278,14 @@ Playwright starts and stops its own server on port 8765. Tests use desktop and
 phone-shaped Chromium viewports; emulation does **not** certify real phone or
 Safari performance. Screenshots and failed-test traces are written to
 `test-results` and are not part of the app.
+On Windows, tests select ANGLE's Direct3D 11 backend so headless Chromium uses
+the GPU rather than measuring SwiftShader software rasterization. For normal
+Chrome/Edge play, enable graphics acceleration in the browser settings and check
+`chrome://gpu` or `edge://gpu` if 3D remains slow. A WebGL 2 context alone does
+not guarantee hardware acceleration. Performance tests also check frame-time
+tails and cache-refresh work, not only average FPS. A 20-second drive crosses
+multiple cache cells and asserts a maximum frame gap below 250 ms, including
+the actual texture upload/render rather than only the refresh function call.
 
 ### Verified local build
 

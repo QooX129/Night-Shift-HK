@@ -6,14 +6,14 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=minimap-1");
+    const { MapView } = await import("/map.mjs?v=minimap-2");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
       if (this.compact) {
         window.minimapSample = {
           car: { ...args[0] }, camera: { ...this.camera }, width: this.width,
-          height: this.height, ratio: this.ratio, overview: this.overview,
+          height: this.height, ratio: this.ratio, overview: this.overview, backdropScale: this.backdropScale, zoom: this.zoom,
         };
         window.minimapFrames = (window.minimapFrames || 0) + 1;
       }
@@ -28,7 +28,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   const checkMap = async () => {
     const result = await page.evaluate(() => {
       const canvas = document.getElementById("minimap");
-      const { width, height, ratio, car, camera, overview } = window.minimapSample;
+      const { width, height, ratio, car, camera, overview, backdropScale, zoom } = window.minimapSample;
       const center = canvas.getContext("2d").getImageData(
         Math.floor(width * ratio / 2), Math.floor(height * ratio / 2), 1, 1).data;
       const rect = canvas.getBoundingClientRect();
@@ -38,14 +38,16 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
         const b = other.getBoundingClientRect();
         return rect.left < b.right && rect.right > b.left && rect.top < b.bottom && rect.bottom > b.top;
       };
-      return { width, height, ratio, car, camera, overview, center: [...center],
+      return { width, height, ratio, car, camera, overview, backdropScale, zoom, dpr: devicePixelRatio, center: [...center],
         buffer: [canvas.width, canvas.height], viewport: [innerWidth, innerHeight],
         rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
         overlaps: [".dispatch", ".dashboard", ".touch-controls"].map(overlaps) };
     });
     expect(result.camera).toEqual({ x: result.car.x, y: result.car.y });
-    expect(result.width).toBeLessThanOrEqual(result.viewport[0] > 800 ? 200 : 140);
-    expect(result.height).toBeLessThanOrEqual(result.viewport[0] > 800 ? 140 : 100);
+    expect(result.width).toBe((result.viewport[0] > 800 ? 240 : 168) - 4);
+    expect(result.height).toBe((result.viewport[0] > 800 ? 168 : 120) - 4);
+    expect(result.ratio).toBe(Math.max(2, result.dpr));
+    expect(result.backdropScale).toBe(result.zoom * result.ratio);
     expect(result.overview).toBe(false);
     expect(result.buffer).toEqual([Math.ceil(result.width * result.ratio), Math.ceil(result.height * result.ratio)]);
     expect(result.center[0]).toBeGreaterThan(100);
@@ -78,7 +80,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
+    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -113,7 +115,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
+    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -159,7 +161,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
+    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -351,7 +353,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=minimap-1");
+    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -435,15 +437,41 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       view.drawScene();
       c.drawImage(canvas, 0, 0);
       const occluded = pixel(-12, -5);
+      const roadSamples = () => [[-30, 0], [40, 0], [0, 40], [20, 40]].map(([x, y]) => pixel(x, y));
+      const beforeRefresh = roadSamples();
+      const pixelTexture = view.groundDetail.material.map;
+      const canvasTexture = new THREE.CanvasTexture(backdrop);
+      canvasTexture.colorSpace = pixelTexture.colorSpace;
+      canvasTexture.anisotropy = pixelTexture.anisotropy;
+      view.groundDetail.material.map = canvasTexture;
+      view.drawScene();
+      c.drawImage(canvas, 0, 0);
+      const legacyPixels = roadSamples();
+      view.groundDetail.material.map = pixelTexture;
+      canvasTexture.dispose();
+      const textureCount = view.renderer.info.memory.textures;
       const cachedBounds = view.detailMap.backdropBounds;
       const texture = view.groundDetail.material.map, mesh = view.groundDetail;
       const resources = view.resources.length;
+      let mainThreadRedraws = 0;
+      const buildBackdrop = view.detailMap.buildBackdrop;
+      view.detailMap.buildBackdrop = function (...args) {
+        mainThreadRedraws++;
+        return buildBackdrop.apply(this, args);
+      };
       view.updateGroundDetail({ x: 10, y: 10 });
       const cached = view.detailMap.backdropBounds === cachedBounds;
       view.updateGroundDetail({ x: 80, y: 0 });
       const oldDetailVisible = view.groundDetail.position.x === 0 && view.detailPending;
       await new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      const image = view.readyDetail.image;
       view.updateGroundDetail({ x: 80, y: 0 });
+      const transferredPixels = texture.isDataTexture && texture.image === image
+        && image.data.byteLength === image.width * image.height * 4;
+      view.drawScene();
+      c.drawImage(canvas, 0, 0);
+      const afterRefresh = roadSamples();
+      const textureCountStable = view.renderer.info.memory.textures === textureCount;
       const shifted = view.groundDetail.position.x === 64 && view.detailMap.backdropBounds !== cachedBounds;
       view.overview = true;
       view.updateGroundDetail({ x: 200, y: 0 });
@@ -453,7 +481,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       await new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
       view.updateGroundDetail({ x: -80, y: -80 });
       return {
-        edges, openings, continuous, guidePixels, joinsMatch, roundedCaps, guideInNativePass, nativeResolution, occluded, cached, shifted, hidden, oldDetailVisible, internalFades,
+        edges, openings, continuous, guidePixels, joinsMatch, roundedCaps, guideInNativePass, nativeResolution, occluded, cached, shifted, hidden, oldDetailVisible, internalFades, mainThreadRedraws, transferredPixels, beforeRefresh, afterRefresh, legacyPixels, textureCountStable,
         antialias: Boolean(view.boundaryOutline.geometry.getAttribute("boundaryCoord")),
         pixelRatio: view.renderer.getPixelRatio(),
         vectorVertices: view.boundaryOutline.geometry.getAttribute("position").count,
@@ -475,6 +503,11 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   expect(result.joinsMatch && result.guideInNativePass).toBe(true);
   expect(result.roundedCaps).toBe(true);
   expect(result.oldDetailVisible).toBe(true);
+  expect(result.mainThreadRedraws).toBe(0);
+  expect(result.transferredPixels).toBe(true);
+  expect(result.afterRefresh).toEqual(result.beforeRefresh);
+  expect(result.beforeRefresh).toEqual(result.legacyPixels);
+  expect(result.textureCountStable).toBe(true);
   expect(result.internalFades).toBe(0);
   expect(result.occluded[2]).toBeGreaterThan(result.occluded[0] + 30);
   expect(result.nativeResolution).toBe(true);

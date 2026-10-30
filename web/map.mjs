@@ -22,7 +22,7 @@ export class MapView {
   resize() {
     this.width = this.compact ? this.canvas.clientWidth : innerWidth;
     this.height = this.compact ? this.canvas.clientHeight : innerHeight;
-    this.ratio = devicePixelRatio || 1;
+    this.ratio = this.compact ? Math.max(2, devicePixelRatio || 1) : devicePixelRatio || 1;
     this.canvas.width = Math.ceil(this.width * this.ratio);
     this.canvas.height = Math.ceil(this.height * this.ratio);
   }
@@ -128,7 +128,8 @@ export class MapView {
     c.restore();
   }
   render(car, state, lang, approach, previewExit = null) {
-    if (this.ratio !== (devicePixelRatio || 1)) this.resize();
+    const ratio = this.compact ? Math.max(2, devicePixelRatio || 1) : devicePixelRatio || 1;
+    if (this.ratio !== ratio) this.resize();
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
     const zoom = this.overview ? Math.min((w - (w > 800 ? 370 : 25)) / (right - left), (h - 180) / (bottom - top)) : this.zoom;

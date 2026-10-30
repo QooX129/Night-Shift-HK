@@ -107,8 +107,8 @@ strong,
     position: absolute;
     left: 30px;
     bottom: 32px;
-    width: 200px;
-    height: 140px;
+    width: 240px;
+    height: 168px;
     border-radius: 12px;
     overflow: hidden;
     pointer-events: none
@@ -169,8 +169,8 @@ strong,
     .minimap {
         left: 16px;
         bottom: 170px;
-        width: 140px;
-        height: 100px
+        width: 168px;
+        height: 120px
     }
 
     .view-status,

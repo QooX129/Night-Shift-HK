@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=minimap-1";
+import { MapView } from "./map.mjs?v=minimap-2";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 
 export class Map3DView {
@@ -47,8 +47,9 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=minimap-1", import.meta.url), { type: "module" });
-      this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique, size: this.detailSize });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=pixel-texture-1", import.meta.url), { type: "module" });
+      this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique,
+        size: this.detailSize, scale: this.detailScale });
       this.detailWorker.onmessage = ({ data }) => {
         this.detailPending = false;
         this.readyDetail = data;
@@ -121,12 +122,16 @@ export class Map3DView {
     this.detailMap.drawRoadDirections = () => {};
     this.detailMap.backdrop = document.createElement("canvas");
     this.detailMap.backdropBounds = null;
-    const detailContext = this.detailMap.backdrop.getContext("2d");
+    const detailContext = this.detailMap.backdrop.getContext("2d", { willReadFrequently: true });
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
     this.detailSize = 384;
     this.detailScale = Math.min(8, this.renderer.capabilities.maxTextureSize / this.detailSize);
-    const detailTexture = new THREE.CanvasTexture(this.detailMap.backdrop);
+    const detailTexture = new THREE.DataTexture();
+    detailTexture.flipY = true;
+    detailTexture.generateMipmaps = true;
+    detailTexture.magFilter = THREE.LinearFilter;
+    detailTexture.minFilter = THREE.LinearMipmapLinearFilter;
     detailTexture.colorSpace = THREE.SRGBColorSpace;
     detailTexture.anisotropy = texture.anisotropy;
     this.resources.push(detailTexture);
@@ -141,7 +146,7 @@ export class Map3DView {
     this.groundDetail.visible = !this.overview;
     if (this.overview) return;
     if (this.readyDetail) {
-      const { x, y, buffers } = this.readyDetail;
+      const { x, y, buffers, image } = this.readyDetail;
       this.readyDetail = null;
       for (const [index, mesh] of [this.boundaryOutline, this.directionLines].entries()) {
         const geometry = new THREE.BufferGeometry();
@@ -151,7 +156,7 @@ export class Map3DView {
         mesh.geometry.dispose();
         mesh.geometry = geometry;
       }
-      this.refreshGroundDetail(x, y);
+      this.refreshGroundDetail(x, y, image);
     }
     // Reuse one local texture, refreshing only after crossing a 64 m cache cell.
     const x = Math.round(car.x / 64) * 64, y = Math.round(car.y / 64) * 64;
@@ -168,10 +173,20 @@ export class Map3DView {
     if (this.boundaryOutline) this.updateBoundaries(x, y);
     if (this.directionLines) this.updateDirections(x, y);
   }
-  refreshGroundDetail(x, y) {
+  refreshGroundDetail(x, y, image = null) {
     const half = this.detailSize / 2;
-    this.detailMap.buildBackdrop([x - half, y - half, x + half, y + half], this.detailScale);
+    const bounds = [x - half, y - half, x + half, y + half];
+    if (image) {
+      this.detailMap.backdropBounds = bounds;
+      this.detailMap.backdropScale = this.detailScale;
+    } else {
+      this.detailMap.buildBackdrop(bounds, this.detailScale);
+      const canvas = this.detailMap.backdrop;
+      image = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+    }
     this.groundDetail.position.set(x, 0.02, y);
+    // Typed pixels avoid the GPU canvas/bitmap synchronization that stalls ANGLE.
+    this.groundDetail.material.map.image = image;
     this.groundDetail.material.map.needsUpdate = true;
   }
   buildBoundaries() {
