@@ -14,6 +14,12 @@ export class Map3DView {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(1);
     this.quality = 1;
+    this.graphicsMode = "auto";
+    this.minimumQuality = 0.55;
+    this.cameraSmoothness = 0.6;
+    this.cameraRotationSpeed = 0.9;
+    this.chaseDistanceScale = 1;
+    this.reducedMotion = false;
     this.frameTimes = [];
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -47,7 +53,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=pixel-texture-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=settings-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale });
       this.detailWorker.onmessage = ({ data }) => {
@@ -66,6 +72,24 @@ export class Map3DView {
     this.onResize = () => this.resize();
     window.addEventListener("resize", this.onResize);
     this.resize();
+  }
+  applyPreferences(preferences) {
+    const presets = {
+      auto: [1, 0.55],
+      quality: [1, 0.85],
+      performance: [0.75, 0.5],
+    };
+    const [quality, minimum] = presets[preferences.graphics] || presets.auto;
+    const resizeNeeded = preferences.graphics !== this.graphicsMode;
+    this.quality = resizeNeeded ? quality : Math.max(minimum, this.quality);
+    this.graphicsMode = preferences.graphics;
+    this.minimumQuality = minimum;
+    this.cameraSmoothness = preferences.cameraSmoothness / 100;
+    this.cameraRotationSpeed = preferences.cameraRotationSpeed / 100;
+    this.chaseDistanceScale = preferences.chaseDistance / 100;
+    this.reducedMotion = preferences.reducedMotion;
+    this.frameTimes = [];
+    if (resizeNeeded) this.resize();
   }
   resize() {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
@@ -527,13 +551,15 @@ export class Map3DView {
       state.phase === "pickup" ? "#24ca72" : "#f3c047", 0.8, state.phase === "pickup" ? 0.25 : 0.22);
   }
   updateCameraHeading(heading, dt) {
-    if (!this.cameraReady) {
+    const smoothness = this.cameraSmoothness ?? 0.6;
+    const rotationSpeed = this.cameraRotationSpeed ?? 0.9;
+    if (!this.cameraReady || this.reducedMotion || smoothness === 0) {
       this.cameraHeading = heading;
       return;
     }
     const difference = Math.atan2(Math.sin(heading - this.cameraHeading), Math.cos(heading - this.cameraHeading));
-    const change = difference * (1 - Math.exp(-2 * dt));
-    const limit = 0.9 * dt;
+    const change = difference * (1 - Math.exp(-(3.5 - smoothness * 2.5) * dt));
+    const limit = rotationSpeed * dt;
     this.cameraHeading += Math.max(-limit, Math.min(limit, change));
   }
   render(car, state, lang, approach, previewExit = null) {
@@ -547,7 +573,7 @@ export class Map3DView {
     const position = new THREE.Vector3(car.x, 0, car.y);
     this.taxi.position.copy(position);
     this.taxi.rotation.y = -car.heading;
-    const distance = Math.min(150, 48 * 1.65 / this.zoom);
+    const distance = Math.min(150, 48 * 1.65 / this.zoom) * this.chaseDistanceScale;
     const target = position.clone().addScaledVector(forward, 10);
     target.y = 1;
     const eye = position.clone().addScaledVector(forward, -distance * 0.9);
@@ -565,17 +591,20 @@ export class Map3DView {
       this.frameTimes.push(dt);
       if (this.frameTimes.length === 12) {
         const average = this.frameTimes.reduce((sum, value) => sum + value, 0) / this.frameTimes.length;
-        if (average > 1 / 28 && this.quality > 0.55) {
-          this.quality = Math.max(0.55, this.quality * Math.sqrt((1 / 36) / average));
+        if (average > 1 / 28 && this.quality > this.minimumQuality) {
+          this.quality = Math.max(this.minimumQuality, this.quality * Math.sqrt((1 / 36) / average));
           this.resize();
         }
         this.frameTimes = [];
       }
     }
     this.lastRender = now;
-    this.lens.position.lerp(eye, this.cameraReady ? 1 - Math.exp(-5 * dt) : 1);
+    const positionEase = 1 - Math.exp(-(8 - this.cameraSmoothness * 5) * dt);
+    const targetEase = 1 - Math.exp(-(6.5 - this.cameraSmoothness * 4.17) * dt);
     this.lookAt ??= target.clone();
-    this.lookAt.lerp(target, this.cameraReady ? 1 - Math.exp(-4 * dt) : 1);
+    const smoothCamera = this.cameraReady && !this.reducedMotion && this.cameraSmoothness > 0;
+    this.lens.position.lerp(eye, smoothCamera ? positionEase : 1);
+    this.lookAt.lerp(target, smoothCamera ? targetEase : 1);
     this.lens.lookAt(this.lookAt);
     this.lens.setViewOffset(innerWidth, innerHeight, innerWidth > 800 ? -innerWidth * 0.13 : 0,
       innerHeight * 0.04, innerWidth, innerHeight);

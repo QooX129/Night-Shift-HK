@@ -80,7 +80,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
+    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -115,7 +115,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
+    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -161,7 +161,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
+    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -353,7 +353,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=pixel-texture-1");
+    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },

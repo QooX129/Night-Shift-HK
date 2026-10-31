@@ -1,4 +1,4 @@
-import { Map3DView } from "./map3d.mjs?v=pixel-texture-1";
+import { Map3DView } from "./map3d.mjs?v=settings-1";
 import { MapView } from "./map.mjs?v=minimap-2";
 
 let view;

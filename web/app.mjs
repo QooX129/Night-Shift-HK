@@ -1,20 +1,26 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=corner-slide-2";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=settings-1";
 import { MapView } from "./map.mjs?v=minimap-2";
-import { en, zh } from "./i18n.mjs?v=junction-grace-1";
+import { en, zh } from "./i18n.mjs?v=junction-toggle-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
+import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
 
 const $ = id => document.getElementById(id);
-let lang = "en", state = null, view = null, mapData, stops;
+const loadedPreferences = loadSettings();
+let preferences = loadedPreferences.settings;
+let lang = preferences.language, state = null, view = null, mapData, stops;
 let map2d = null, map3d = null, changingView = false, viewError = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 let previewExit = null;
-const junctionInput = new JunctionInput();
+let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
+  : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
+let settingsOrigin = "welcome", settingsCategory = "display", preferredViewRequest = null;
+const junctionInput = new JunctionInput({ releaseGrace: preferences.junctionGrace });
 const controls = { gas: false, brake: false, handbrake: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
-const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog"];
+const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
 
 function resetControls() {
   junctionInput.reset();
@@ -33,6 +39,7 @@ function openDialog(id) {
   for (const other of dialogs) if (other !== id) $(other).close();
   if (!$(id).open) $(id).showModal();
   resetControls();
+  updateSettingsMessage();
 }
 function applyState(next, resetPosition = false) {
   if (mapData && next.version !== mapData.version) throw new Error("Map version changed. Reload to start a new shift.");
@@ -113,6 +120,7 @@ async function resume() {
   await perform(async () => {
     await send("pause", { paused: false });
     dialogs.forEach(id => $(id).close());
+    updateSettingsMessage();
     paused = false; lastFrame = performance.now(); stepBank = 0; resetControls();
   });
 }
@@ -121,6 +129,7 @@ function localMatch() {
   return { edge: roads.edges.get(car.edge) };
 }
 function nearJunction() {
+  if (!preferences.junctionSelector) return false;
   const approach = roads.approach(car, new Set(state.closed));
   return approach && (approach.stacked || approach.options.length > 2)
     && junctionLatch !== approach.node;
@@ -185,11 +194,120 @@ function renderExits() {
     $("exits").append(button);
   }
 }
+function updateSettingsMessage() {
+  const message = settingsMessage ? t(settingsMessage) : "";
+  const isError = Boolean(settingsMessage && settingsMessage !== "resetDone");
+  const inside = $("settings-message");
+  const welcome = $("welcome-settings-message");
+  inside.hidden = !message;
+  inside.textContent = message;
+  inside.setAttribute("role", isError ? "alert" : "status");
+  inside.setAttribute("aria-live", isError ? "assertive" : "polite");
+  welcome.hidden = !message || !$("welcome").open || $("settings-dialog").open;
+  welcome.textContent = message;
+  welcome.setAttribute("role", isError ? "alert" : "status");
+  welcome.setAttribute("aria-live", isError ? "assertive" : "polite");
+  const notice = $("settings-notice");
+  notice.hidden = !message || dialogs.some(id => $(id).open);
+  notice.textContent = message;
+  notice.setAttribute("role", isError ? "alert" : "status");
+  notice.setAttribute("aria-live", isError ? "assertive" : "polite");
+}
+function formatSettingValue(key, value) {
+  if (key === "cameraSmoothness" || key === "chaseDistance" || key === "minimapZoom"
+      || key === "junctionHudOpacity") return `${value}%`;
+  if (key === "cameraRotationSpeed") return `${(value / 100).toFixed(1)} rad/s`;
+  if (key === "steeringSensitivity") return `${(value / 100).toFixed(2)}×`;
+  if (key === "junctionGrace") return `${value} ms`;
+  return String(value);
+}
+function updateSettingsControls() {
+  if (!$("settings-dialog").open) {
+    updateSettingsMessage();
+    return;
+  }
+  document.querySelectorAll("[data-setting]").forEach(input => {
+    const value = preferences[input.dataset.setting];
+    if (input.type === "checkbox") input.checked = value;
+    else input.value = String(value);
+    if (input.type === "range") input.parentElement.querySelector("output").textContent =
+      formatSettingValue(input.dataset.setting, value);
+  });
+  document.querySelectorAll("[data-category]").forEach(button => {
+    const selected = button.dataset.category === settingsCategory;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-selected", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  document.querySelectorAll("[data-panel]").forEach(panel => {
+    panel.hidden = panel.dataset.panel !== settingsCategory;
+  });
+  $("settings-reset").textContent = t("settingsReset");
+  updateSettingsMessage();
+}
+function selectSettingsCategory(category, focus = false) {
+  if (!Object.hasOwn(SETTINGS_CATEGORIES, category)) return;
+  settingsCategory = category;
+  updateSettingsControls();
+  if (focus) document.querySelector(`[data-category="${category}"]`).focus();
+}
+function updateMinimapLayout() {
+  const mobile = innerWidth <= 800;
+  const sizes = mobile
+    ? { small: [136, 97], medium: [168, 120], large: [210, 150] }
+    : { small: [200, 140], medium: [240, 168], large: [300, 210] };
+  const [width, height] = sizes[preferences.minimapSize];
+  document.documentElement.style.setProperty("--minimap-width", `${width}px`);
+  document.documentElement.style.setProperty("--minimap-height", `${height}px`);
+}
+function applyPreferenceEffects() {
+  lang = preferences.language;
+  junctionInput.releaseGrace = preferences.junctionGrace;
+  document.documentElement.classList.toggle("reduce-motion", preferences.reducedMotion);
+  document.documentElement.classList.toggle("hide-shortcut-hints", !preferences.shortcutHints);
+  document.documentElement.style.setProperty("--junction-hud-opacity", String(preferences.junctionHudOpacity / 100));
+  updateMinimapLayout();
+  if (minimap) minimap.zoom = preferences.minimapZoom / 100;
+  if ($("minimap-panel")) $("minimap-panel").hidden = !map3d || view !== map3d || !preferences.minimapVisible;
+  map3d?.applyPreferences(preferences);
+  updateSettingsControls();
+}
+function commitPreferences(next, message = null) {
+  const previousView = preferences.defaultView;
+  preferences = normalizeSettings(next).settings;
+  applyPreferenceEffects();
+  updateUI();
+  if (saveSettings(preferences)) settingsMessage = message;
+  else settingsMessage = "settingsSaveError";
+  updateSettingsMessage();
+  if (preferences.defaultView !== previousView) {
+    if (preferences.defaultView === "3d" && view !== map3d) {
+      preferredViewRequest = "3d";
+      toggleView();
+    } else if (preferences.defaultView === "2d") {
+      if (changingView) preferredViewRequest = "2d";
+      else if (view === map3d) activateView(map2d);
+    }
+  }
+}
+function openSettings(origin) {
+  settingsOrigin = origin;
+  $(origin).close();
+  openDialog("settings-dialog");
+  updateSettingsControls();
+}
+function closeSettings() {
+  $("settings-dialog").close();
+  openDialog(settingsOrigin);
+  $(`${settingsOrigin === "welcome" ? "welcome" : "pause"}-settings`).focus();
+}
 function updateUI() {
   updateViewUI();
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
   document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
   $("language").textContent = lang === "en" ? "繁中" : "EN";
+  updateSettingsControls();
   if (!state) return;
   $("start").disabled = busy; $("start").textContent = t("start");
   const passenger = state.passenger;
@@ -247,12 +365,12 @@ function activateView(next) {
   $("map").hidden = view !== map2d;
   $("map-3d").hidden = view !== map3d;
   $("game").classList.toggle("view-3d", view === map3d);
-  $("minimap-panel").hidden = view !== map3d;
+  $("minimap-panel").hidden = view !== map3d || !preferences.minimapVisible;
   if (view === map3d) {
     if (!minimap) {
       minimap = new MapView($("minimap"), mapData, stops, { compact: true });
-      minimap.zoom = 0.9;
     }
+    minimap.zoom = preferences.minimapZoom / 100;
     minimap.resize();
     lastMinimapFrame = -Infinity;
   }
@@ -266,19 +384,29 @@ function activateView(next) {
 async function toggleView() {
   if (!state || changingView) return;
   if (view === map3d) { activateView(map2d); return; }
+  const requestAtStart = preferredViewRequest;
   changingView = true; viewError = null; updateViewUI();
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=pixel-texture-1");
+      const { Map3DView } = await import("./map3d.mjs?v=settings-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
+      map3d.applyPreferences(preferences);
     }
+    if (preferredViewRequest === "2d") return;
     map3d.cameraReady = false;
     activateView(map3d);
   } catch (error) {
     viewError = { key: "failed3d", detail: error.message };
     console.error("3D renderer initialization failed", error);
-  } finally { changingView = false; updateViewUI(); }
+  } finally {
+    changingView = false;
+    updateViewUI();
+    if (preferredViewRequest === "3d" && requestAtStart !== "3d" && view !== map3d) {
+      preferredViewRequest = null;
+      toggleView();
+    } else preferredViewRequest = null;
+  }
 }
 function frame(timestamp) {
   if ($("junction").open && junctionInput.releaseDeadline !== null) {
@@ -295,6 +423,7 @@ function frame(timestamp) {
       const factor = state.traffic[match.edge.way] || 1;
       const result = stepCar(car, controls, dt, {
         acceleration: state.upgrades.includes("engine") ? roads.driving.upgraded_acceleration : roads.driving.acceleration,
+        steeringSensitivity: preferences.steeringSensitivity / 100,
         traffic: factor,
         fuel: state.fuel, roads, closed: new Set(state.closed),
         selectedExit: state.selected_exit, selectedJunction: state.selected_junction,
@@ -326,7 +455,8 @@ function frame(timestamp) {
     const approach = roads.preview(car, new Set(state.closed));
     const preview = $("junction").open ? previewExit : null;
     view.render(car, state, lang, approach, preview);
-    if (view === map3d && minimap && timestamp - lastMinimapFrame >= 1000 / 60 - 0.5) {
+    if (view === map3d && minimap && preferences.minimapVisible
+        && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {
       minimap.render(car, state, lang, approach, preview);
       lastMinimapFrame = timestamp;
     }
@@ -336,7 +466,7 @@ function frame(timestamp) {
   requestAnimationFrame(frame);
 }
 
-$("language").addEventListener("click", () => { lang = lang === "en" ? "zh" : "en"; updateUI(); });
+$("language").addEventListener("click", () => commitPreferences({ ...preferences, language: lang === "en" ? "zh" : "en" }));
 $("view-mode").addEventListener("click", toggleView);
 $("map-3d").addEventListener("webglcontextlost", event => {
   event.preventDefault();
@@ -357,6 +487,38 @@ $("start").addEventListener("click", resume);
 $("resume").addEventListener("click", resume);
 $("garage-close").addEventListener("click", resume);
 $("pause").addEventListener("click", () => { if (!paused) pauseTo("pause-dialog"); else if ($("pause-dialog").open) resume(); });
+$("welcome-settings").addEventListener("click", () => openSettings("welcome"));
+$("pause-settings").addEventListener("click", () => openSettings("pause-dialog"));
+$("settings-close").addEventListener("click", closeSettings);
+$("settings-reset").addEventListener("click", () => {
+  commitPreferences(resetSettingsCategory(preferences, settingsCategory), "resetDone");
+});
+for (const tab of document.querySelectorAll("[data-category]")) {
+  tab.addEventListener("click", () => selectSettingsCategory(tab.dataset.category));
+  tab.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const tabs = [...document.querySelectorAll("[data-category]")];
+    const index = tabs.indexOf(tab);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+      : (index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+    selectSettingsCategory(tabs[next].dataset.category, true);
+  });
+}
+for (const input of document.querySelectorAll("[data-setting]")) {
+  const updatePreference = () => {
+    const key = input.dataset.setting;
+    const value = input.type === "checkbox" ? input.checked
+      : typeof preferences[key] === "number" ? Number(input.value)
+        : input.value;
+    commitPreferences({ ...preferences, [key]: value });
+  };
+  input.addEventListener(input.tagName === "SELECT" ? "change" : "input", updatePreference);
+}
+$("settings-dialog").addEventListener("cancel", event => {
+  event.preventDefault();
+  closeSettings();
+});
 $("garage").addEventListener("click", () => pauseTo("garage-dialog"));
 $("overview").addEventListener("click", () => { if (view) view.overview = !view.overview; });
 $("zoom-in").addEventListener("click", () => { if (view) { view.overview = false; view.zoom = Math.min(3.5, view.zoom * 1.25); } });
@@ -418,6 +580,7 @@ window.addEventListener("keydown", event => {
   }
   if (event.key === "Escape" && !event.repeat) {
     event.preventDefault();
+    if ($("settings-dialog").open) { closeSettings(); return; }
     if ($("pause-dialog").open) { resume(); return; }
     if ($("junction").open) return;
     if (dialogs.some(id => $(id).open)) return;
@@ -447,7 +610,9 @@ for (const button of document.querySelectorAll("[data-control]")) {
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) resetControls(); });
 window.addEventListener("blur", resetControls);
+window.addEventListener("resize", updateMinimapLayout);
 
+applyPreferenceEffects();
 openDialog("welcome");
 requestAnimationFrame(frame);
 try {
@@ -457,4 +622,5 @@ try {
   view = map2d;
   applyState(await fetchJSON("/api/sessions", { method: "POST" }), true);
   view.camera = { x: car.x, y: car.y };
+  if (preferences.defaultView === "3d") await toggleView();
 } catch (error) { showError(new Error(`${t("loadFailed")} (${error.message})`), false); }

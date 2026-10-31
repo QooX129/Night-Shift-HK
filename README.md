@@ -147,7 +147,8 @@ To stop the server, press **Ctrl+C** in the terminal.
 - **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
 - **3D / 2D:** switch between the experimental chase-camera view and the original
   top-down map without restarting your shift. Zoom changes chase distance in 3D;
-  overview shows the whole district. The initial view remains 2D.
+  overview shows the whole district. The default initial view is 2D and can be
+  changed in Settings.
   In 3D, a north-up minimap in the bottom-left follows the taxi and shows the
   same routes, junction guidance, and stop markers as the 2D map. It updates at
   up to 60 Hz, limited by the browser's animation frame rate.
@@ -155,8 +156,22 @@ To stop the server, press **Ctrl+C** in the terminal.
   Its canvas and cached map render at a minimum 2× pixel density, retaining
   native density on higher-DPI screens without enlarging a low-resolution image.
 
-There is **no saving**. Reloading starts a new shift. A server restart also clears
-sessions. Money and fares are arcade game values, not Hong Kong taxi tariffs.
+**Settings** is available from the welcome and pause menus. It includes the
+**Interface → Enable junction selector** toggle. Turning it off disables automatic
+junction pauses and selection, allowing manual driving while retaining road guidance.
+It defaults on and is saved with your other preferences.
+
+Settings also includes the
+default 2D/3D view and graphics preset; chase-camera smoothing, turn speed,
+distance, and reduced motion; steering sensitivity and junction-key grace time;
+minimap visibility, size, zoom, and refresh rate; junction HUD opacity, shortcut
+hints, and English / Traditional Chinese. Changes apply immediately. Settings
+are stored separately in this browser's local storage; read/write failures are
+shown in the interface.
+
+There is **no shift-progress saving**. Reloading starts a new shift, while
+settings remain in this browser. A server restart also clears sessions. Money
+and fares are arcade game values, not Hong Kong taxi tariffs.
 
 ## What is included
 

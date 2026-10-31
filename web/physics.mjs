@@ -256,6 +256,7 @@ export class RoadNetwork {
 export function stepCar(car, input, dt, {
   roads, maxSpeed = roads.driving.max_speed, acceleration = roads.driving.acceleration,
   traffic = 1, fuel = 100, closed = new Set(), selectedExit = null, selectedJunction = null,
+  steeringSensitivity = STEERING_SENSITIVITY,
 } = {}) {
   const step = Math.min(Math.max(dt, 0), 1 / 30);
   if (input.handbrake) {
@@ -271,7 +272,7 @@ export function stepCar(car, input, dt, {
   if (fuel <= 0) car.speed = 0;
   if (Math.abs(car.speed) > 0.05) {
     const manualSteering = ((input.right ? 1 : 0) - (input.left ? 1 : 0))
-      * STEERING_SENSITIVITY
+      * steeringSensitivity
       * Math.max(-1, Math.min(1, car.speed / 3));
     car.heading += manualSteering * step;
   }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=minimap-2">
+  <link rel="stylesheet" href="/style.css?v=settings-1">
 </head>
 <body>
   <main id="game">
@@ -16,7 +16,7 @@
     </aside>
     <header class="topbar">
       <a class="brand" href="/" aria-label="Night Shift HK home"><span class="brand-icon">的</span><span>NIGHT SHIFT <b>HK</b><small data-i18n="district">MONG KOK · YAU MA TEI</small></span></a>
-      <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
+      <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" data-i18n-aria="changeLanguage" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
     </header>
 
     <section class="dispatch panel" aria-labelledby="dispatch-title">
@@ -39,6 +39,7 @@
     </aside>
     <div id="view-status" class="view-status" role="status" hidden></div>
     <div id="view-error" class="view-error panel" role="alert" hidden></div>
+    <div id="settings-notice" class="settings-notice" role="alert" aria-live="assertive" hidden></div>
     <div class="district-label">九龍 <span>KOWLOON</span></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
@@ -63,7 +64,9 @@
     <p data-i18n="intro">A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.</p>
     <div class="instructions"><p data-i18n="introdrive">Steer with WASD / arrow keys or touch pedals. Hold brake after stopping for low-speed reverse. The taxi stays on the road.</p><p data-i18n="introturn">Ordinary junctions highlight exits. Only connected stacked-road forks pause for a choice. You always steer manually.</p><p data-i18n="introstops">Stop at the coloured roadside marker to pick up or drop off. Fuel, traffic, and closures are simulated. Buildings have no collisions.</p></div>
     <p class="muted" data-i18n="introsave">Progress lasts for this page session only. Reloading starts a new shift.</p>
+    <p id="welcome-settings-message" class="settings-message" role="alert" aria-live="assertive" hidden></p>
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
+    <button id="welcome-settings" class="secondary settings-entry" data-i18n="settings">Settings</button>
   </dialog>
   <dialog id="junction" aria-labelledby="junction-title">
     <div class="dialog-eyebrow" data-i18n="junction">JUNCTION CHOICE · TIME PAUSED</div>
@@ -75,8 +78,97 @@
   <dialog id="pause-dialog">
     <div class="dialog-eyebrow" data-i18n="paused">SHIFT PAUSED</div><h2 data-i18n="breather">Take a breather.</h2>
     <p data-i18n="pausetext">The taxi, shift clock, and fuel are paused.</p>
+    <button id="pause-settings" class="secondary" data-i18n="settings">Settings</button>
     <button id="resume" class="primary" data-i18n="resume">Back to the streets</button>
     <button id="recover-pause" class="secondary" data-i18n="recover">Return to rest stop · up to $20</button>
+  </dialog>
+  <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+    <header class="settings-header">
+      <div>
+        <div class="dialog-eyebrow" data-i18n="settings">Settings</div>
+        <h2 id="settings-title" data-i18n="settingsTitle">Game settings</h2>
+      </div>
+      <button id="settings-close" class="settings-close" data-i18n="settingsClose" autofocus>Done</button>
+    </header>
+    <nav class="settings-categories" data-i18n-aria="settingsCategoryList" aria-label="Settings categories" role="tablist">
+      <button id="settings-tab-display" type="button" class="settings-tab selected" role="tab" aria-selected="true" aria-controls="settings-display" data-category="display" data-i18n="settingsDisplay">Display</button>
+      <button id="settings-tab-camera" type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-camera" data-category="camera" data-i18n="settingsCamera">Camera</button>
+      <button id="settings-tab-controls" type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-controls" data-category="controls" data-i18n="settingsControls">Controls</button>
+      <button id="settings-tab-interface" type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-interface" data-category="interface" data-i18n="settingsInterface">Interface</button>
+      <button id="settings-tab-language" type="button" class="settings-tab" role="tab" aria-selected="false" aria-controls="settings-language" data-category="language" data-i18n="settingsLanguage">Language</button>
+    </nav>
+    <div class="settings-content">
+      <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display" data-panel="display">
+        <label class="setting-row" for="setting-default-view"><span data-i18n="settingsDefaultView">Default view</span>
+          <select id="setting-default-view" data-setting="defaultView">
+            <option value="2d" data-i18n="settingsView2d">2D map</option><option value="3d" data-i18n="settingsView3d">3D district</option>
+          </select>
+        </label>
+        <label class="setting-row" for="setting-graphics"><span data-i18n="settingsGraphics">Graphics</span>
+          <select id="setting-graphics" data-setting="graphics">
+            <option value="auto" data-i18n="graphicsAuto">Auto</option><option value="quality" data-i18n="graphicsQuality">Quality</option><option value="performance" data-i18n="graphicsPerformance">Performance</option>
+          </select>
+        </label>
+      </section>
+      <section id="settings-camera" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-camera" data-panel="camera" hidden>
+        <label class="setting-row range-setting" for="setting-camera-smoothness"><span data-i18n="cameraSmoothness">Camera smoothness</span><output for="setting-camera-smoothness"></output>
+          <input id="setting-camera-smoothness" data-setting="cameraSmoothness" type="range" min="0" max="100" step="5">
+        </label>
+        <label class="setting-row range-setting" for="setting-camera-rotation"><span data-i18n="cameraRotationSpeed">Camera rotation speed</span><output for="setting-camera-rotation"></output>
+          <input id="setting-camera-rotation" data-setting="cameraRotationSpeed" type="range" min="20" max="200" step="10">
+        </label>
+        <label class="setting-row range-setting" for="setting-chase-distance"><span data-i18n="chaseDistance">Chase distance</span><output for="setting-chase-distance"></output>
+          <input id="setting-chase-distance" data-setting="chaseDistance" type="range" min="70" max="150" step="5">
+        </label>
+        <label class="setting-row setting-check" for="setting-reduced-motion"><span data-i18n="reducedMotion">Reduce camera motion</span>
+          <input id="setting-reduced-motion" data-setting="reducedMotion" type="checkbox">
+        </label>
+      </section>
+      <section id="settings-controls" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-controls" data-panel="controls" hidden>
+        <label class="setting-row range-setting" for="setting-steering"><span data-i18n="steeringSensitivity">Steering sensitivity</span><output for="setting-steering"></output>
+          <input id="setting-steering" data-setting="steeringSensitivity" type="range" min="75" max="600" step="25">
+        </label>
+        <label class="setting-row range-setting" for="setting-junction-grace"><span data-i18n="junctionGrace">Junction key grace period</span><output for="setting-junction-grace"></output>
+          <input id="setting-junction-grace" data-setting="junctionGrace" type="range" min="0" max="500" step="25">
+        </label>
+      </section>
+      <section id="settings-interface" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-interface" data-panel="interface" hidden>
+        <label class="setting-row setting-check" for="setting-junction-selector"><span data-i18n="junctionSelector">Enable junction selector</span>
+          <input id="setting-junction-selector" data-setting="junctionSelector" type="checkbox">
+        </label>
+        <label class="setting-row setting-check" for="setting-minimap-visible"><span data-i18n="minimapVisible">Show minimap</span>
+          <input id="setting-minimap-visible" data-setting="minimapVisible" type="checkbox">
+        </label>
+        <label class="setting-row" for="setting-minimap-size"><span data-i18n="minimapSize">Minimap size</span>
+          <select id="setting-minimap-size" data-setting="minimapSize">
+            <option value="small" data-i18n="minimapSmall">Small</option><option value="medium" data-i18n="minimapMedium">Medium</option><option value="large" data-i18n="minimapLarge">Large</option>
+          </select>
+        </label>
+        <label class="setting-row range-setting" for="setting-minimap-zoom"><span data-i18n="minimapZoom">Minimap zoom</span><output for="setting-minimap-zoom"></output>
+          <input id="setting-minimap-zoom" data-setting="minimapZoom" type="range" min="50" max="200" step="5">
+        </label>
+        <label class="setting-row" for="setting-minimap-refresh"><span data-i18n="minimapRefreshRate">Minimap refresh rate</span>
+          <select id="setting-minimap-refresh" data-setting="minimapRefreshRate">
+            <option value="30">30 Hz</option><option value="60">60 Hz</option>
+          </select>
+        </label>
+        <label class="setting-row range-setting" for="setting-hud-opacity"><span data-i18n="hudOpacity">Junction HUD opacity</span><output for="setting-hud-opacity"></output>
+          <input id="setting-hud-opacity" data-setting="junctionHudOpacity" type="range" min="40" max="100" step="5">
+        </label>
+        <label class="setting-row setting-check" for="setting-shortcut-hints"><span data-i18n="shortcutHints">Show shortcut hints</span>
+          <input id="setting-shortcut-hints" data-setting="shortcutHints" type="checkbox">
+        </label>
+      </section>
+      <section id="settings-language" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-language" data-panel="language" hidden>
+        <label class="setting-row" for="setting-language"><span data-i18n="settingsLanguage">Language</span>
+          <select id="setting-language" data-setting="language">
+            <option value="en" data-i18n="languageEnglish">English</option><option value="zh" data-i18n="languageTraditionalChinese">繁體中文</option>
+          </select>
+        </label>
+      </section>
+      <div id="settings-message" class="settings-message" role="status" aria-live="polite" hidden></div>
+      <footer class="settings-footer"><button id="settings-reset" class="secondary" data-i18n="settingsReset">Reset category</button></footer>
+    </div>
   </dialog>
   <dialog id="garage-dialog">
     <div class="dialog-eyebrow" data-i18n="garage">REST STOP / GARAGE</div><h2 data-i18n="pitstop">A little care goes a long way.</h2>
@@ -94,6 +186,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=minimap-2"></script>
+  <script type="module" src="/app.mjs?v=junction-toggle-1"></script>
 </body>
 </html>
