@@ -192,7 +192,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
   expect(arrows[2].angle).toBeCloseTo(Math.PI);
 });
 
-test("2D guides prioritize selected exit, pickup, yellow, then normal guidance", async ({ page }) => {
+test("2D guides keep routes and selected exits without normal road guidance", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const colors = await page.evaluate(async () => {
@@ -205,6 +205,12 @@ test("2D guides prioritize selected exit, pickup, yellow, then normal guidance",
       nodes: { a: [0, 0], b: [100, 0], c: [200, 0] }, edges, backdrop: [],
       bounds: [-20, -30, 220, 30], driving: { widths: { residential: 10 } },
     }, []);
+    const highlights = [];
+    const highlight = view.highlightExit;
+    view.highlightExit = function (context, edge, ...rest) {
+      highlights.push(edge.id);
+      return highlight.call(this, context, edge, ...rest);
+    };
     const colors = [], stroke = view.ctx.stroke.bind(view.ctx);
     view.ctx.stroke = function (...args) { colors.push(this.strokeStyle); return stroke(...args); };
     const results = [];
@@ -220,16 +226,23 @@ test("2D guides prioritize selected exit, pickup, yellow, then normal guidance",
     });
       results.push({ phase, colors: [...colors] });
     }
+    highlights.length = 0;
+    view.render({ x: 80, y: 0, heading: 0, edge: "in" }, {
+      edge: "in", closed: [], traffic: {}, route: null,
+      selected_exit: null, phase: "available",
+    }, "en", {
+      start: { x: 80, y: 0 }, edges: [edges[0]], incoming: "in",
+      exits: [{ edge: edges[1], path: { edges: [edges[1]] } }],
+    });
+    if (highlights.length) throw new Error("Unselected road guides must not be drawn.");
     return results;
   });
   for (const { phase, colors: strokes } of colors) {
     const selected = strokes.lastIndexOf("#55e9ff");
-    const yellow = strokes.lastIndexOf("#f5c65a");
-    expect(yellow).toBeGreaterThan(strokes.indexOf("#92d7b6"));
-    expect(selected).toBeGreaterThan(yellow);
-    if (phase === "pickup") {
-      expect(strokes.lastIndexOf("#92d7b6")).toBeGreaterThan(yellow);
-      expect(selected).toBeGreaterThan(strokes.lastIndexOf("#92d7b6"));
-    }
+    const route = strokes.lastIndexOf(phase === "pickup" ? "#92d7b6" : "#f5c65a");
+    expect(route).toBeGreaterThanOrEqual(0);
+    expect(selected).toBeGreaterThan(route);
+    expect(strokes).not.toContain("#b5e3d780");
+    if (phase === "pickup") expect(strokes).not.toContain("#f5c65a");
   }
 });

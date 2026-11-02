@@ -112,7 +112,93 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
   expect(result.reset).toBe(-1);
 });
 
-test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
+test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const view = Object.create(Map3DView.prototype);
+    view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
+    view.data = { nodes: view.nodes };
+    view.elevation = { node_heights: { a: 10, b: 12, c: 14, d: 16 } };
+    const edges = [
+      { id: "one", a: "a", b: "b", way: 1 },
+      { id: "two", a: "b", b: "c", way: 2 },
+      { id: "three", a: "c", b: "d", way: 3 },
+    ];
+    view.edges = new Map(edges.map(edge => [edge.id, edge]));
+    view.overlays = new THREE.Group();
+    const state = { closed: [], traffic: { 1: .5 }, phase: "onboard", route: edges.map(edge => edge.id) };
+    let builds = 0;
+    const geometry = view.ribbonGeometry;
+    view.ribbonGeometry = function (...args) { builds++; return geometry.apply(this, args); };
+    view.updateOverlays(state, null, null);
+    const initialBuilds = builds;
+    const traffic = view.overlays.children.find(mesh => mesh.material.color.getHexString() === "bd955c");
+    const route = view.overlays.children.find(mesh => mesh.material.color.getHexString() === "f3c047");
+    const count = route.geometry.getAttribute("position").count;
+    view.updateOverlays({ ...state, route: ["two", "three"] }, null, null);
+    const progressBuilds = builds - initialBuilds;
+    const trafficReused = traffic.parent === view.overlays;
+    const routeReused = route.parent === view.overlays;
+    const range = { ...route.geometry.drawRange };
+    view.updateOverlays(state, null, null);
+    const restored = route.geometry.drawRange.start === 0;
+    view.updateOverlays({ ...state, route: ["three", "two"] }, null, null);
+    const rerouteBuilds = builds - initialBuilds - progressBuilds;
+    view.updateOverlays({ ...state, route: null }, null, null);
+    const cleared = !view.overlays.children.some(mesh => mesh.material.color.getHexString() === "f3c047");
+    for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
+    return { progressBuilds, rerouteBuilds, trafficReused, routeReused, range, count, cleared, restored };
+  });
+  expect(result.progressBuilds).toBe(0);
+  expect(result.trafficReused && result.routeReused && result.cleared && result.restored).toBe(true);
+  expect(result.range.start).toBeGreaterThan(0);
+  expect(result.range.start + result.range.count).toBe(result.count);
+  expect(result.rerouteBuilds).toBe(1);
+});
+
+test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const data = await (await fetch("/api/map")).json();
+    const session = await (await fetch("/api/sessions", { method: "POST" })).json();
+    const response = await fetch(`/api/sessions/${session.id}/commands`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ seq: 1, command: { action: "accept", order: session.offers[0].id } }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const state = await response.json();
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data, nodes: data.nodes, elevation: data.elevation,
+      edges: new Map(data.edges.map(edge => [edge.id, edge])), overlays: new THREE.Group(),
+    });
+    const samples = [];
+    let builds = 0;
+    const geometry = view.ribbonGeometry;
+    view.ribbonGeometry = function (...args) { builds++; return geometry.apply(this, args); };
+    const started = performance.now();
+    view.updateOverlays({ ...state, phase: "onboard" }, null, null);
+    const initialMs = performance.now() - started;
+    const initialBuilds = builds;
+    for (let i = 1; i < Math.min(20, state.route.length); i++) {
+      const start = performance.now();
+      view.updateOverlays({ ...state, phase: "onboard", route: state.route.slice(i) }, null, null);
+      samples.push(performance.now() - start);
+    }
+    for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
+    return { initialMs, maxProgressMs: Math.max(...samples), transitions: samples.length,
+      progressBuilds: builds - initialBuilds };
+  });
+  console.log(`Passenger GPS update timing ${JSON.stringify(result)}`);
+  expect(result.transitions).toBeGreaterThan(0);
+  expect(result.progressBuilds).toBe(0);
+  expect(result.maxProgressMs).toBeLessThan(16.7);
+});
+
+test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
     const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
@@ -136,15 +222,19 @@ test("3D road guides have camera-independent selected, pickup, yellow, normal pr
         smoothed: Boolean(mesh.geometry.getAttribute("boundaryCoord")),
       })));
     }
+    view.updateOverlays({ ...state, route: null, phase: "available" }, approach, null);
+    if (view.overlays.children.some(mesh => mesh.geometry.getAttribute("position").count)) {
+      throw new Error("Unselected road guides must not be drawn.");
+    }
     for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
     return snapshots;
   });
   const order = (snapshot, color) => Math.max(...snapshot.filter(item => item.color === color).map(item => item.order));
-  expect(order(results[0], "#24ca72")).toBeGreaterThan(order(results[0], "#f5c65a"));
-  expect(order(results[0], "#f5c65a")).toBeGreaterThan(order(results[0], "#92d7b6"));
+  expect(results[0].filter(item => item.height).map(item => item.color)).toEqual(["#24ca72"]);
   expect(order(results[1], "#55e9ff")).toBeGreaterThan(order(results[1], "#f3c047"));
   expect(order(results[2], "#55e9ff")).toBeGreaterThan(order(results[2], "#24ca72"));
   for (const snapshot of results) {
+    expect(snapshot.some(item => item.color === "#92d7b6" || item.color === "#f5c65a")).toBe(false);
     for (const item of snapshot.filter(item => item.height)) {
       expect(item.height).toBeCloseTo(item.order / 100);
       expect(item.smoothed).toBe(true);
@@ -210,9 +300,9 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
     return { nativePass: view.directionLines.parent === view.boundaryScene,
       smoothed: Boolean(view.directionLines.geometry.getAttribute("boundaryCoord")),
       vertices: view.directionLines.geometry.getAttribute("position").count,
-      priority: view.directionLines.renderOrder < view.forwardRibbon.renderOrder };
+      noForwardRibbon: !view.forwardRibbon };
   });
-  expect(arrows.nativePass && arrows.smoothed && arrows.priority).toBe(true);
+  expect(arrows.nativePass && arrows.smoothed && arrows.noForwardRibbon).toBe(true);
   expect(arrows.vertices).toBeGreaterThan(0);
   const boundaryAreas = await page.evaluate(async () => {
     const view = window.threeView;

@@ -102,6 +102,11 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
       }
     }
     const boundariesVisible = view.boundaryOutline.visible;
+    const boundaryTiles = view.boundaryOutline.children;
+    view.renderer.info.reset();
+    view.renderer.render(view.boundaryScene, view.lens);
+    const visibleBoundaryTriangles = view.renderer.info.render.triangles;
+    const staticBoundaryTriangles = boundaryPositions.count / 3;
     const upperLines = view.boundaryLines;
     const geometry = view.ribbonGeometry([view.edges.get(pilot.bridge)], 1, .3);
     const positions = geometry.getAttribute("position");
@@ -127,6 +132,8 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
       frames.push(performance.now() - before);
     }
     const sample = { bridgeHeight, groundHeight, pitch, guideError, boundaryError, boundariesVisible,
+      visibleBoundaryTriangles, staticBoundaryTriangles,
+      boundaryTileCount: boundaryTiles.length,
       boundaryVertices: boundaryPositions.count,
       allLevelsStatic: upperLines === view.boundaryLines
         && view.boundaryLines.some(line => line.edge.way === view.edges.get(pilot.ground).way)
@@ -146,6 +153,9 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   expect(result.boundaryError).toBeLessThan(.001);
   expect(result.boundaryVertices).toBeGreaterThan(0);
   expect(result.boundariesVisible).toBe(true);
+  expect(result.boundaryTileCount).toBeGreaterThan(10);
+  expect(result.visibleBoundaryTriangles).toBeGreaterThan(0);
+  expect(result.visibleBoundaryTriangles).toBeLessThan(result.staticBoundaryTriangles * .25);
   expect(result.allLevelsStatic).toBe(true);
   expect(result.boundaryCacheStable).toBe(true);
   expect(result.groundVertices).toBeGreaterThan(30000);

@@ -12,6 +12,8 @@ let map2d = null, map3d = null, changingView = false, viewError = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
+let inFlightElapsed = 0;
+let visualElapsed = 0;
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 let previewExit = null;
 let phoneTab = "available";
@@ -48,6 +50,8 @@ function applyState(next, resetPosition = false) {
   if (resetPosition) {
     car = { x: next.x, y: next.y, speed: next.speed, heading: next.heading, edge: next.edge };
     elapsed = 0; trail = [];
+    inFlightElapsed = 0;
+    visualElapsed = next.elapsed;
   }
   updateUI();
 }
@@ -77,6 +81,7 @@ async function send(action, fields = {}) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
     });
     pending = null;
+    if (action === "move") inFlightElapsed = 0;
     applyState(next);
     return next;
   } catch (error) {
@@ -84,6 +89,8 @@ async function send(action, fields = {}) {
       pending = null;
       car = { x: state.x, y: state.y, speed: 0, heading: state.heading, edge: state.edge };
       elapsed = 0; trail = [];
+      inFlightElapsed = 0;
+      visualElapsed = state.elapsed;
     } else error.message = `${t("retryNetwork")} (${error.message})`;
     showError(error, Boolean(pending));
     throw error;
@@ -93,6 +100,7 @@ async function flush() {
   while (moving) await new Promise(resolve => setTimeout(resolve, 10));
   if (!state || (elapsed < 0.001 && Math.hypot(car.x - state.x, car.y - state.y) < 0.05)) return;
   const dt = elapsed, samples = trail; elapsed = 0; trail = [];
+  inFlightElapsed = dt;
   moving = true;
   try {
     await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples });
@@ -103,9 +111,13 @@ async function flush() {
   finally { moving = false; }
 }
 async function perform(task) {
-  if (busy || pending) return;
+  if (busy || (pending && !moving)) return;
   busy = true; updateUI();
-  try { await task(); }
+  try {
+    while (moving) await new Promise(resolve => setTimeout(resolve, 10));
+    if (pending || $("error-dialog").open) return;
+    await task();
+  }
   catch (error) {
     if (!$("error-dialog").open) showError(error, false);
   } finally {
@@ -533,7 +545,8 @@ function frame(timestamp) {
   if (view && state) {
     const approach = roads.preview(car, new Set(state.closed));
     const preview = $("junction").open ? previewExit : null;
-    const visualState = state.boarding ? { ...state, elapsed: state.elapsed + elapsed } : state;
+    visualElapsed = Math.max(visualElapsed, state.elapsed + inFlightElapsed + elapsed);
+    const visualState = { ...state, elapsed: visualElapsed };
     view.render(car, visualState, lang, approach, preview);
     if (view === map3d && minimap && preferences.minimapVisible
         && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {

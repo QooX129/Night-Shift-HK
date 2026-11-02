@@ -103,6 +103,12 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(after["offers"], before["offers"])
         self.assertEqual(after["citizens"], before["citizens"])
 
+    def test_citizen_snapshot_identifies_its_road_surface(self):
+        state = self.game.snapshot(self.session)
+        self.assertTrue(state["citizens"])
+        for citizen, snapshot in zip(self.session.citizens, state["citizens"]):
+            self.assertEqual(snapshot["edge"], self.game.stops[citizen.stop].edge)
+
     def test_accept_uses_order_id_and_replay_cannot_duplicate(self):
         self.game.offer(self.session)
         chosen = self.session.offers[1]

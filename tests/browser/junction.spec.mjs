@@ -73,12 +73,8 @@ test("stacked selection previews the exit and waits until arrival to snap", asyn
   });
   await page.locator("#start").click();
   await expect(page.locator("#welcome")).not.toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h =>
-    h.edge === "in" && h.color === "#92d7b6" && h.start.x === 0 && h.segments[0] === "in"))).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h =>
-    h.edge === "upper" && h.color === "#f5c65a" && h.segments[0] === "upper"))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.exitHighlights)).toEqual([]);
   await page.keyboard.down("w");
-  await expect.poll(() => page.evaluate(() => window.exitHighlights.some(h => h.edge === "upper"))).toBe(true);
   expect(state.x).toBeLessThan(36);
   await expect(page.locator("#junction")).not.toBeVisible();
   await expect(page.locator("#junction")).toBeVisible();

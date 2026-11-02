@@ -26,7 +26,7 @@ self.onmessage = ({ data }) => {
     view.directionLines = { geometry: { dispose() {} } };
     return;
   }
-  view.updateDirections(data.x, data.y);
+  if (!view.data.elevation) view.updateDirections(data.x, data.y);
   let image = null;
   if (view.detailMap) {
     const half = view.detailSize / 2;
@@ -34,7 +34,7 @@ self.onmessage = ({ data }) => {
     const canvas = view.detailMap.backdrop;
     image = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
   }
-  const geometries = [view.directionLines.geometry];
+  const geometries = view.data.elevation ? [] : [view.directionLines.geometry];
   const buffers = geometries.map(geometry => ({
     position: geometry.getAttribute("position").array,
     boundaryCoord: geometry.getAttribute("boundaryCoord").array,

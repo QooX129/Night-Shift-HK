@@ -1,5 +1,175 @@
 import { test, expect } from "@playwright/test";
 
+test("elevated terrain uses a sharp scrolling texture for nearby building footprints", async ({ page }) => {
+  await page.goto("/");
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const data = {
+      bounds: [-300, -300, 300, 300],
+      backdrop: [{ kind: "building", points: [[10.37, 10], [20.37, 10], [24.37, 30], [14.37, 30]] }],
+      nodes: { a: [-100, -100], b: [100, -100] },
+      edges: [{ id: "road", a: "a", b: "b", way: 1, kind: "residential",
+        width: 10, length: 200, layer: "0", bridge: "no", tunnel: "no" }],
+      driving: { widths: { residential: 10 }, taxi_length: 4.7, taxi_width: 1.7 },
+      elevation: { node_heights: { a: 10, b: 10 }, pilot: {}, buildings: [],
+        terrain: { origin: [-300, -300], spacing: 600, width: 2, height: 2, values: [10, 10, 10, 10] } },
+    };
+    const canvas = document.createElement("canvas");
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    try {
+      const car = { x: 16, y: 16 };
+      view.updateGroundDetail(car);
+      const texture = view.groundDetail.material.map;
+      const initialImage = texture.image;
+      const initialBounds = [...view.detailMap.backdropBounds];
+      let builds = 0;
+      const build = view.detailMap.buildBackdrop;
+      view.detailMap.buildBackdrop = function (...args) { builds++; return build.apply(this, args); };
+      view.updateGroundDetail(car);
+      const reused = texture.image === initialImage && builds === 0;
+      for (const object of view.scene.children) object.visible = view.terrainTiles.includes(object);
+      view.boundaryScene.visible = false;
+      view.lens = new THREE.OrthographicCamera(0, 32, 32, 0, .1, 200);
+      view.lens.position.set(0, 100, 32);
+      view.lens.up.set(0, 0, -1);
+      view.lens.lookAt(0, 10, 32);
+      const capture = () => {
+        view.drawScene();
+        const image = document.createElement("canvas");
+        image.width = canvas.width; image.height = canvas.height;
+        image.getContext("2d").drawImage(canvas, 0, 0);
+        return image;
+      };
+      const sharp = capture();
+      view.terrainDetailEnabled.value = 0;
+      const coarse = capture();
+      // Compare against a separately rasterized 16 px/m reference through the same terrain shader.
+      build.call(view.detailMap, initialBounds, 16);
+      const referenceCanvas = view.detailMap.backdrop;
+      texture.image = referenceCanvas.getContext("2d").getImageData(0, 0, referenceCanvas.width, referenceCanvas.height);
+      texture.needsUpdate = true;
+      view.terrainDetailEnabled.value = 1;
+      const reference = capture();
+      const pixels = image => image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
+      const expected = pixels(reference), actual = pixels(sharp), old = pixels(coarse);
+      let sharpError = 0, coarseError = 0;
+      for (let y = Math.floor(canvas.height * .35); y < canvas.height * .65; y++) {
+        for (let x = Math.floor(canvas.width * .3); x < canvas.width * .85; x++) {
+          const index = (y * canvas.width + x) * 4;
+          sharpError += Math.abs(actual[index] - expected[index]);
+          coarseError += Math.abs(old[index] - expected[index]);
+        }
+      }
+      texture.image = initialImage; texture.needsUpdate = true;
+      view.detailMap.backdropScale = view.detailScale;
+      const response = new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      view.updateGroundDetail({ x: 80, y: 16 });
+      await response;
+      view.updateGroundDetail({ x: 80, y: 16 });
+      const shifted = view.terrainDetailBounds.x === -128 && view.detailMap.backdropBounds[0] === -128;
+      const stable = texture === view.groundDetail.material.map && builds === 0;
+      view.overview = true;
+      view.updateGroundDetail(car);
+      return { sharpError, coarseError, reused, shifted, stable,
+        enabledInOverview: view.terrainDetailEnabled.value, flatOverlayVisible: view.groundDetail.visible,
+        width: initialImage.width, scale: view.detailScale,
+        terrainHeight: view.terrainTiles[0].geometry.getAttribute("position").getY(0) };
+    } finally {
+      view.dispose();
+      view.renderer.forceContextLoss();
+      canvas.remove();
+    }
+  });
+  expect(result.scale).toBe(8);
+  expect(result.width).toBe(3072);
+  expect(result.terrainHeight).toBe(10);
+  console.log(`Terrain footprint edge error: ${result.sharpError} detailed / ${result.coarseError} district`);
+  expect(result.sharpError, JSON.stringify(result)).toBeLessThan(result.coarseError * .5);
+  expect(result.reused && result.shifted && result.stable).toBe(true);
+  expect(result.enabledInOverview).toBe(0);
+  expect(result.flatOverlayVisible).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+for (const density of [1, 2]) {
+  test.describe(`3D building edges at ${density}x pixel density`, () => {
+    test.use({ deviceScaleFactor: density });
+
+    test("renders the city at screen resolution with multisampled silhouettes", async ({ page }) => {
+      await page.goto("/");
+      const result = await page.evaluate(async () => {
+        const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+        const { DEFAULT_SETTINGS } = await import("/settings.mjs");
+        const THREE = await import("/vendor/three/three.module.min.js");
+        const data = {
+          bounds: [-10, -10, 110, 10], backdrop: [],
+          nodes: { a: [0, 0], b: [100, 0] },
+          edges: [{ id: "road", a: "a", b: "b", way: 1, kind: "residential",
+            width: 10, length: 100, layer: "0", bridge: "no", tunnel: "no" }],
+          driving: { widths: { residential: 10 }, taxi_length: 4.7, taxi_width: 1.7 },
+          elevation: { node_heights: { a: 0, b: 0 }, pilot: {}, buildings: [],
+            terrain: { origin: [-10, -10], spacing: 120, width: 2, height: 2, values: [0, 0, 0, 0] } },
+        };
+        const canvas = document.createElement("canvas");
+        document.body.append(canvas);
+        const view = new Map3DView(canvas, data, []);
+        try {
+          const sizes = [];
+          for (const graphics of ["auto", "quality", "performance", "auto"]) {
+            view.applyPreferences({ ...DEFAULT_SETTINGS, graphics });
+            sizes.push({ graphics, width: view.sceneTarget.width, height: view.sceneTarget.height,
+              outputWidth: canvas.width, outputHeight: canvas.height, minimum: view.minimumQuality });
+          }
+          view.scene.clear();
+          view.boundaryScene.clear();
+          view.scene.fog = null;
+          view.scene.background.set("#000000");
+          view.lens = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 10);
+          view.lens.position.z = 2;
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute("position", new THREE.Float32BufferAttribute([
+            -.8, -.7, 0, .8, -.61, 0, -.33, .8, 0,
+          ], 3));
+          const material = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+          view.scene.add(new THREE.Mesh(geometry, material));
+          view.drawScene();
+          const capture = document.createElement("canvas");
+          capture.width = canvas.width; capture.height = canvas.height;
+          const context = capture.getContext("2d");
+          context.drawImage(canvas, 0, 0);
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          let brightest = 0, partialPixels = 0;
+          for (let i = 0; i < pixels.length; i += 4) brightest = Math.max(brightest, pixels[i]);
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i] > 0 && pixels[i] < brightest - 1) partialPixels++;
+          }
+          geometry.dispose(); material.dispose();
+          return { sizes, partialPixels, pixelRatio: view.renderer.getPixelRatio(), samples: view.sceneTarget.samples,
+            maxSamples: view.renderer.capabilities.maxSamples };
+        } finally {
+          view.dispose();
+          view.renderer.forceContextLoss();
+          canvas.remove();
+        }
+      });
+      for (const size of result.sizes.filter(size => size.graphics !== "performance")) {
+        expect(size.width).toBe(size.outputWidth);
+        expect(size.height).toBe(size.outputHeight);
+        expect(size.minimum).toBe(size.graphics === "quality" ? 1 : .55);
+      }
+      const performance = result.sizes.find(size => size.graphics === "performance");
+      expect(performance.width).toBeLessThan(performance.outputWidth);
+      expect(result.pixelRatio).toBe(density);
+      expect(result.samples).toBe(Math.min(4, result.maxSamples));
+      expect(result.partialPixels).toBeGreaterThan(100);
+    });
+  });
+}
+
 for (const density of [1, 2, 3]) {
   test.describe(`map at ${density}x pixel density`, () => {
     test.use({ deviceScaleFactor: density });

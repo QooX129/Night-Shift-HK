@@ -20,9 +20,9 @@ export class Map3DView {
     this.elevation = data.elevation;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(1);
-    this.quality = this.elevation ? .75 : 1;
+    this.quality = 1;
     this.graphicsMode = "auto";
-    this.minimumQuality = 0.55;
+    this.minimumQuality = .55;
     this.cameraSmoothness = 0.6;
     this.cameraRotationSpeed = 0.9;
     this.chaseDistanceScale = 1;
@@ -40,7 +40,10 @@ export class Map3DView {
     sun.position.set(-100, 180, -60);
     this.scene.add(sun);
     this.resources = [];
-    this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, { depthTexture: new THREE.DepthTexture(1, 1) });
+    this.sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
+      depthTexture: new THREE.DepthTexture(1, 1),
+      samples: Math.min(4, this.renderer.capabilities.maxSamples),
+    });
     const outputMaterial = new THREE.MeshBasicMaterial({ map: this.sceneTarget.texture, depthTest: false, depthWrite: false });
     this.outputSize = new THREE.Vector2();
     this.sceneSize = new THREE.Vector2();
@@ -62,19 +65,19 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      if (!this.elevation) {
-        this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=orders-terrain-merge-1", import.meta.url), { type: "module" });
-        this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique,
-          size: this.detailSize, scale: this.detailScale });
-        this.detailWorker.onmessage = ({ data }) => {
-          this.detailPending = false;
-          this.readyDetail = data;
-        };
-        this.detailWorker.onerror = event => {
-          console.error("3D detail worker failed", event.message);
-          this.canvas.dispatchEvent(new CustomEvent("renderererror", { detail: event.message }));
-        };
-      }
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=terrain-detail-1", import.meta.url), { type: "module" });
+      this.detailWorker.postMessage({ type: "init", map: this.data,
+        edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
+          : this.groundMap.unique,
+        size: this.detailSize, scale: this.detailScale });
+      this.detailWorker.onmessage = ({ data }) => {
+        this.detailPending = false;
+        this.readyDetail = data;
+      };
+      this.detailWorker.onerror = event => {
+        console.error("3D detail worker failed", event.message);
+        this.canvas.dispatchEvent(new CustomEvent("renderererror", { detail: event.message }));
+      };
     } catch (error) {
       this.dispose();
       throw error;
@@ -86,11 +89,12 @@ export class Map3DView {
   }
   applyPreferences(preferences) {
     const presets = {
-      auto: [1, 0.55],
-      quality: [1, 0.85],
+      auto: [1, .55],
+      quality: [1, 1],
       performance: [0.75, 0.5],
     };
     const [quality, minimum] = presets[preferences.graphics] || presets.auto;
+    const previousQuality = this.quality;
     const resizeNeeded = preferences.graphics !== this.graphicsMode;
     this.quality = resizeNeeded ? quality : Math.max(minimum, this.quality);
     this.graphicsMode = preferences.graphics;
@@ -100,13 +104,13 @@ export class Map3DView {
     this.chaseDistanceScale = preferences.chaseDistance / 100;
     this.reducedMotion = preferences.reducedMotion;
     this.frameTimes = [];
-    if (resizeNeeded) this.resize();
+    if (resizeNeeded || this.quality !== previousQuality) this.resize();
   }
   resize() {
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     this.renderer.setSize(innerWidth, innerHeight, false);
     this.renderer.getDrawingBufferSize(this.outputSize);
-    this.sceneTarget.setSize(Math.ceil(innerWidth * this.quality), Math.ceil(innerHeight * this.quality));
+    this.sceneTarget.setSize(Math.ceil(this.outputSize.x * this.quality), Math.ceil(this.outputSize.y * this.quality));
     this.sceneSize.set(this.sceneTarget.width, this.sceneTarget.height);
     this.lens.aspect = innerWidth / innerHeight;
     this.lens.updateProjectionMatrix();
@@ -216,6 +220,9 @@ export class Map3DView {
     }
     this.groundMap = map;
     this.detailMap = Object.create(map);
+    if (this.elevation) {
+      this.detailMap.unique = allRoads.filter(edge => edge.bridge === "no" && edge.tunnel === "no");
+    }
     this.detailMap.drawRoadDirections = () => {};
     this.detailMap.backdrop = document.createElement("canvas");
     this.detailMap.backdropBounds = null;
@@ -238,17 +245,43 @@ export class Map3DView {
     this.groundDetail.name = "district-roads-detail";
     this.groundDetail.visible = false;
     this.scene.add(this.groundDetail);
+    if (this.elevation) {
+      this.terrainDetailBounds = new THREE.Vector4(0, 0, this.detailSize, this.detailSize);
+      this.terrainDetailEnabled = { value: 0 };
+      ground.material.onBeforeCompile = shader => {
+        shader.uniforms.terrainDetail = { value: detailTexture };
+        shader.uniforms.terrainDetailBounds = { value: this.terrainDetailBounds };
+        shader.uniforms.terrainDetailEnabled = this.terrainDetailEnabled;
+        shader.vertexShader = `varying vec2 vTerrainPoint;\n${shader.vertexShader}`
+          .replace("#include <begin_vertex>", `#include <begin_vertex>
+            vTerrainPoint = (modelMatrix * vec4(transformed, 1.0)).xz;`);
+        shader.fragmentShader = `uniform sampler2D terrainDetail;
+          uniform vec4 terrainDetailBounds;
+          uniform float terrainDetailEnabled;
+          varying vec2 vTerrainPoint;\n${shader.fragmentShader}`
+          .replace("#include <map_fragment>", `#include <map_fragment>
+            vec2 detailUV = (vTerrainPoint - terrainDetailBounds.xy) / terrainDetailBounds.zw;
+            vec2 border = min(detailUV, 1.0 - detailUV) * terrainDetailBounds.zw;
+            float detailWeight = smoothstep(0.0, 16.0, min(border.x, border.y)) * terrainDetailEnabled;
+            vec4 detailColor = texture2D(terrainDetail, vec2(detailUV.x, 1.0 - detailUV.y));
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuse * detailColor.rgb, detailWeight);`);
+      };
+      ground.material.customProgramCacheKey = () => "terrain-detail-1";
+    }
   }
   updateGroundDetail(car) {
-    if (this.elevation) { this.groundDetail.visible = false; return; }
-    this.groundDetail.visible = !this.overview;
+    this.groundDetail.visible = !this.overview && !this.elevation;
+    if (this.elevation) {
+      this.terrainDetailEnabled.value = !this.overview && this.detailMap.backdropBounds ? 1 : 0;
+    }
     if (this.overview) return;
     if (this.readyDetail) {
       const { x, y, buffers, image } = this.readyDetail;
       this.readyDetail = null;
-      for (const [index, mesh] of [this.directionLines].entries()) {
+      for (const [index, attributes] of buffers.entries()) {
+        const mesh = [this.directionLines][index];
         const geometry = new THREE.BufferGeometry();
-        for (const [name, array] of Object.entries(buffers[index])) {
+        for (const [name, array] of Object.entries(attributes)) {
           geometry.setAttribute(name, new THREE.BufferAttribute(array, 3));
         }
         mesh.geometry.dispose();
@@ -267,7 +300,7 @@ export class Map3DView {
       return;
     }
     this.refreshGroundDetail(x, y);
-    if (this.directionLines) this.updateDirections(x, y);
+    if (this.directionLines && !this.elevation) this.updateDirections(x, y);
   }
   buildRoadSurfaces() {
     const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set();
@@ -410,6 +443,10 @@ export class Map3DView {
     // Typed pixels avoid the GPU canvas/bitmap synchronization that stalls ANGLE.
     this.groundDetail.material.map.image = image;
     this.groundDetail.material.map.needsUpdate = true;
+    if (this.elevation) {
+      this.terrainDetailBounds.set(bounds[0], bounds[1], this.detailSize, this.detailSize);
+      this.terrainDetailEnabled.value = this.overview ? 0 : 1;
+    }
   }
   buildBoundaries() {
     this.boundaryOutline = new THREE.Mesh(new THREE.BufferGeometry(), this.smoothLineMaterial("#f15e5e", 0.8));
@@ -495,8 +532,36 @@ export class Map3DView {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("boundaryCoord", new THREE.Float32BufferAttribute(coverage, 3));
+    for (const tile of [...this.boundaryOutline.children]) {
+      tile.geometry.dispose();
+      this.boundaryOutline.remove(tile);
+    }
     this.boundaryOutline.geometry.dispose();
     this.boundaryOutline.geometry = geometry;
+    if (this.elevation) {
+      const tiles = new Map();
+      for (const [index, { a, b }] of lines.entries()) {
+        const key = `${Math.floor((a[0] + b[0]) / 160)}:${Math.floor((a[1] + b[1]) / 160)}`;
+        if (!tiles.has(key)) tiles.set(key, []);
+        const indices = tiles.get(key);
+        for (let vertex = index * 54; vertex < (index + 1) * 54; vertex++) indices.push(vertex);
+      }
+      const point = new THREE.Vector3();
+      for (const indices of tiles.values()) {
+        const tileGeometry = new THREE.BufferGeometry();
+        for (const [name, attribute] of Object.entries(geometry.attributes)) tileGeometry.setAttribute(name, attribute);
+        tileGeometry.setIndex(indices);
+        const bounds = new THREE.Box3();
+        for (const index of indices) bounds.expandByPoint(point.fromBufferAttribute(geometry.getAttribute("position"), index));
+        tileGeometry.boundingBox = bounds;
+        tileGeometry.boundingSphere = bounds.getBoundingSphere(new THREE.Sphere());
+        const tile = new THREE.Mesh(tileGeometry, this.boundaryOutline.material);
+        tile.renderOrder = this.boundaryOutline.renderOrder;
+        this.boundaryOutline.add(tile);
+      }
+      // Share the static vertex data; only nearby tile indices are submitted.
+      geometry.setDrawRange(0, 0);
+    }
   }
   lineGeometry(outlines) {
     const hasHoles = outlines.some(polygon => polygon.length > 1);
@@ -753,7 +818,15 @@ export class Map3DView {
       const person = people[index];
       item.group.visible = Boolean(person);
       if (!person) return;
-      item.group.position.set(person.point[0], 0, person.point[1]);
+      let height = 0;
+      if (this.elevation) {
+        const edgeId = person.boarding ? car.edge
+          : person.id === "customer" ? this.stops.find(stop => stop.id === state.pickup).edge
+          : person.edge;
+        height = surfacePose(this, this.edges.get(edgeId),
+          { x: person.point[0], y: person.point[1] }, 0).height + .1;
+      }
+      item.group.position.set(person.point[0], height, person.point[1]);
       item.group.scale.setScalar(person.scale ?? 1);
       item.body.material = person.hailing ? this.hailMaterial : this.personMaterial;
       item.arm.position.set(0, person.hailing ? 1.7 : 1, 0.5);
@@ -773,7 +846,9 @@ export class Map3DView {
   ribbonGeometry(edges, width, height, start = null) {
     if (this.elevation) {
       const attributes = { position: [], normal: [], uv: [], boundaryCoord: [] };
+      const edgeStarts = [];
       for (const [index, edge] of edges.entries()) {
+        edgeStarts.push(attributes.position.length / 3);
         if (!edge) continue;
         const a = index === 0 && start ? [start.x, start.y] : this.nodes[edge.a], b = this.nodes[edge.b];
         const geometry = this.roundLineGeometry([[a, b]], width, height);
@@ -788,6 +863,7 @@ export class Map3DView {
       const result = new THREE.BufferGeometry();
       for (const [key, values] of Object.entries(attributes))
         result.setAttribute(key, new THREE.Float32BufferAttribute(values, key === "uv" ? 2 : 3));
+      result.userData.edgeStarts = edgeStarts;
       return result;
     }
     const segments = [];
@@ -819,29 +895,44 @@ export class Map3DView {
     return geometry;
   }
   updateOverlays(state, approach, previewExit) {
+    const selectedPaths = approach?.exits.filter(({ edge }) =>
+      edge.id === previewExit || edge.id === state.selected_exit) ?? [];
     const key = JSON.stringify([state.closed, state.traffic, state.route, state.phase,
-      state.selected_exit, approach?.edges[0]?.id, approach?.incoming, approach?.exits.map(e => e.edge.id), previewExit]);
+      selectedPaths.map(({ path }) => path.edges.map(edge => edge.id))]);
     if (key === this.overlayKey) return;
     this.overlayKey = key;
-    for (const child of [...this.overlays.children]) {
-      child.geometry.dispose(); child.material.dispose(); this.overlays.remove(child);
-    }
-    this.forwardRibbon = null;
-    this.forwardStart = null;
-    const closed = new Set(state.closed);
-    this.ribbon([...this.edges.values()].filter(e => closed.has(e.way)), "#ed8879", 3, 0.12);
-    this.ribbon([...this.edges.values()].filter(e => !closed.has(e.way) && state.traffic[e.way]), "#bd955c", 1, 0.14);
-    if (approach) {
-      this.forwardRibbon = this.ribbon(approach.edges, "#92d7b6", 1.4, 0.16);
-      const index = state.route?.indexOf(approach.incoming) ?? -1;
-      for (const { edge, path } of approach.exits) {
-        const selected = edge.id === previewExit || edge.id === state.selected_exit;
-        const suggested = index >= 0 && edge.id === state.route?.[index + 1];
-        this.ribbon(path.edges, selected ? "#55e9ff" : suggested ? "#f5c65a" : "#92d7b6",
-          selected ? 2 : 1, selected ? 0.3 : suggested ? 0.22 : 0.18);
+    this.overlayLayers ??= new Map();
+    const updateLayer = (name, ids, color, width, height) => {
+      const key = JSON.stringify([ids, color]);
+      const previous = this.overlayLayers.get(name);
+      if (previous?.key === key) {
+        if (name === "route") previous.mesh.geometry.setDrawRange(0, Infinity);
+        return;
       }
-    }
-    if (state.route) this.ribbon(state.route.map(id => this.edges.get(id)),
+      if (name === "route" && this.elevation && previous?.color === color && ids.length) {
+        const offset = previous.ids.length - ids.length;
+        if (offset >= 0 && ids.every((id, index) => id === previous.ids[offset + index])) {
+          const start = previous.mesh.geometry.userData.edgeStarts[offset];
+          previous.mesh.geometry.setDrawRange(start, previous.mesh.geometry.getAttribute("position").count - start);
+          return;
+        }
+      }
+      if (previous) {
+        previous.mesh.geometry.dispose();
+        previous.mesh.material.dispose();
+        this.overlays.remove(previous.mesh);
+        this.overlayLayers.delete(name);
+      }
+      if (!ids.length) return;
+      const mesh = this.ribbon(ids.map(id => this.edges.get(id)), color, width, height);
+      this.overlayLayers.set(name, { key, ids: [...ids], color, mesh });
+    };
+    const closed = new Set(state.closed);
+    updateLayer("closed", [...this.edges.values()].filter(e => closed.has(e.way)).map(e => e.id), "#ed8879", 3, 0.12);
+    updateLayer("traffic", [...this.edges.values()].filter(e => !closed.has(e.way) && state.traffic[e.way]).map(e => e.id),
+      "#bd955c", 1, 0.14);
+    updateLayer("selected", selectedPaths.flatMap(({ path }) => path.edges.map(edge => edge.id)), "#55e9ff", 2, 0.3);
+    updateLayer("route", state.route ?? [],
       state.phase === "pickup" ? "#24ca72" : "#f3c047", 0.8, state.phase === "pickup" ? 0.25 : 0.22);
   }
   updateCameraHeading(heading, dt) {
@@ -868,6 +959,10 @@ export class Map3DView {
     const forward = new THREE.Vector3(Math.cos(this.cameraHeading), 0, Math.sin(this.cameraHeading));
     const pose = surfacePose(this, this.edges.get(car.edge), car, car.heading);
     const position = new THREE.Vector3(car.x, pose.height + (this.elevation ? .08 : 0), car.y);
+    for (const tile of this.boundaryOutline.children) {
+      const sphere = tile.geometry.boundingSphere;
+      tile.visible = this.overview || sphere.center.distanceTo(position) < 240 + sphere.radius;
+    }
     this.taxi.position.copy(position);
     this.taxi.rotation.set(0, -car.heading, pose.pitch, "YXZ");
     const distance = Math.min(150, 48 * 1.65 / this.zoom) * this.chaseDistanceScale;
@@ -936,15 +1031,6 @@ export class Map3DView {
     if (state) {
       this.updateCitizens(state, car);
       this.updateOverlays(state, approach, previewExit);
-      if (this.forwardRibbon && approach?.start) {
-        const start = approach.start;
-        if (!this.forwardStart || start.x !== this.forwardStart.x || start.y !== this.forwardStart.y) {
-          const geometry = this.ribbonGeometry(approach.edges, 1.4, 0.16, start);
-          this.forwardRibbon.geometry.dispose();
-          this.forwardRibbon.geometry = geometry;
-          this.forwardStart = { x: start.x, y: start.y };
-        }
-      }
       let activeLabel = null;
       for (const item of this.markers) {
         const { stop, marker, ring, beacon } = item;

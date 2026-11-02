@@ -813,6 +813,7 @@ class Game:
                 {
                     "id": c.id,
                     "point": self.citizen_point(c),
+                    "edge": self.stops[c.stop].edge,
                     "hailing": c.hailing,
                     "ready": session.phase not in {"onboard", "boarding"}
                     and not session.boarding

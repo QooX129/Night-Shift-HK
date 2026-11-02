@@ -171,15 +171,6 @@ export class MapView {
         c.lineWidth = (closed.has(e.way) ? 5 : 2) / Math.max(zoom, 0.8);
         c.beginPath(); this.roadPath(c, e); c.stroke();
       }
-      if (approach) {
-        this.highlightExit(c, approach.edges[0], "#92d7b6", zoom, approach);
-        const index = state.route?.indexOf(approach.incoming) ?? -1;
-        const suggested = index >= 0 ? state.route[index + 1] : null;
-        for (const { edge, path } of [...approach.exits].sort((a, b) =>
-          Number(a.edge.id === suggested) - Number(b.edge.id === suggested))) {
-          this.highlightExit(c, edge, edge.id === suggested ? "#f5c65a" : "#b5e3d780", zoom, path);
-        }
-      }
       if (state.route) {
         c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();
         for (const id of state.route) this.roadPath(c, this.edges.get(id));

@@ -60,7 +60,8 @@ To stop the server, press **Ctrl+C** in the terminal.
   citizens can be picked up by stopping alongside on the same road, then using
   **Open door / E**. A short boarding animation holds the taxi still; the street
   passenger's destination appears only after boarding. Phone pickups do not
-  require the door button.
+  require the door button. In 3D, citizens and waiting, boarding, and alighting
+  passengers follow their road's elevation rather than the flat map plane.
 - Street pickups can temporarily put an accepted phone pickup on hold; its
   original waiting deadline still applies. Stop at the **yellow** destination
   marker and use **Drop off passenger / E** to earn the fare. The passenger
@@ -68,14 +69,17 @@ To stop the server, press **Ctrl+C** in the terminal.
   on whichever side is nearer the passenger. Any waiting phone
   pickup becomes the next trip automatically.
 - Offer, waiting, and boarding timers use simulated shift time, so explicit
-  pauses (including junction choices) freeze them.
+  pauses (including junction choices) freeze them. Passenger animations include
+  unacknowledged movement time, so network updates do not rewind their progress.
+  Passenger actions wait for an in-flight movement acknowledgement instead of
+  discarding the click.
 - The route is a suggestion; you may choose another legal route.
   Overlapping road guides render in this priority, highest first: cyan selected
-  or previewed exit, green pickup route, yellow destination/recommended route,
-  then normal forward/exit guidance. This applies in both 2D and 3D.
-- Steering remains under your control. Ordinary junctions highlight the connected exits
-  without opening a popup; the GPS-recommended exit is brighter. Junctions with
-  more than two available exits and connected stacked-road forks pause to offer
+  or previewed exit, green pickup route, then yellow destination route.
+  Current-road and unselected available-exit highlights are not drawn in 2D,
+  3D, or the minimap.
+- Steering remains under your control. Ordinary junctions do not open a popup.
+  Junctions with more than two available exits and connected stacked-road forks pause to offer
   a route choice before the junction in a compact, scrollable bottom-right GPS
   panel, without dimming or blurring the map. The GPS-recommended exit is identified in
   the list. Hover over an option or focus it with the keyboard to preview its
@@ -87,10 +91,9 @@ To stop the server, press **Ctrl+C** in the terminal.
   queued turn before the taxi reaches the junction.
   There is no steering assist or temporary sensitivity boost; manual steering
   remains unchanged before and after the snap. Highlight the
-  whole road ahead from the taxi to the next junction, then each available exit
-  to its following junction or dead end, including short segments and bends.
-  This remains visible when stopped facing forward; closed roads and disconnected
-  crossings are excluded. The selected-road highlight clears on entry.
+  selected or previewed exit to its following junction or dead end, including
+  short segments and bends. Closed roads and disconnected crossings are excluded.
+  The selected-road highlight clears on entry.
 - An unconnected flyover crossing never opens a selector or changes the current
   road level. Reach other levels through actual connecting roads/ramps.
 - Steering sensitivity is configured by `STEERING_SENSITIVITY` in
@@ -292,9 +295,13 @@ Python-only startup and the existing Docker image need no Node.js runtime.
 
 3D requires WebGL 2. Initialization failures and context loss are reported on
 screen and leave the 2D view usable. Buildings are batched into small blocks,
-distant blocks are culled, and the city pass can fall to 55% of CSS resolution
-on slow devices. Red boundaries use a separate depth-tested pass at screen
-resolution (up to 1.5 times CSS resolution on high-DPI screens), independent
+distant blocks are culled, and Quality renders the city at screen resolution
+(up to 2 times CSS resolution on high-DPI screens). Auto starts at the same
+resolution and can fall to 55% on slow devices without reducing terrain-cache
+texture detail or road-guide resolution. Up to 4x
+multisample anti-aliasing smooths building and terrain silhouettes. Performance
+mode starts at 75% of screen resolution and can fall to 50% on slow devices.
+Red boundaries use a separate depth-tested pass at screen resolution, independent
 of city quality. Derivative-based edge anti-aliasing smooths the boundary silhouette
 without blurring it or drawing seams across its triangles. The 2D renderer retains
 its native high-DPI resolution. Free-steering Chromium reference tests cover both
@@ -303,7 +310,13 @@ hardware/browser performance varies.
 Driving guidelines use the same screen-resolution, depth-aware anti-aliasing
 pass, with round end caps and round joins. Overlapping segments are merged so
 bends do not leave cracks or darker overlapping patches;
-the selected/pickup/yellow/normal drawing priority remains unchanged.
+the selected/pickup/yellow drawing priority remains unchanged.
+GPS, traffic, closure, and selected-turn overlays are cached independently.
+Following an elevated GPS route hides completed segments with a draw range;
+it does not rebuild the route or unrelated traffic geometry at each road.
+Elevated collision outlines share static vertices in 80 m tiles; off-screen
+and distant tiles are culled instead of submitting the entire district each
+frame. This does not rebuild geometry or change collision rules.
 Nearby road-direction arrows also use rounded, anti-aliased vector strokes in
 this pass, preserving the same legal directions and left-side offsets as 2D.
 After the initial view loads, nearby boundary/arrow geometry and the high-resolution
@@ -389,7 +402,7 @@ junction tests; those are not addressed by the order update.
   segments, exact speed caps, acceleration upgrades, and high-speed corridor travel.
 - 24 Chromium browser tests pass across desktop and phone-emulated viewports,
   including manual junctions, cyan selection rendering/clearing, reverse,
-  full forward highlighting before the popup, thicker 80%-opacity outlines,
+  hidden current-road/available-exit guides, thicker 80%-opacity outlines,
   legal traffic arrows, destination-guide rendering priority,
   bilingual UI, touch pedals, purchases, connection retry, and slow acknowledgements.
 - Active free-steering animation measured approximately 60 FPS in both reference
@@ -451,12 +464,16 @@ geographic coordinates retain their original metre scale. Pickup beacons,
 route/junction highlights, map labels and HUD remain deliberately readable game
 overlays, not physical objects or surveyed road markings.
 
-The elevated driving view rasterizes its terrain backdrop at 3 pixels/metre
-(twice the overview's detail per axis), capped at 8192 pixels and the GPU's
-texture limit. This sharpens building-footprint edges without nearest-neighbor
-pixelation; mipmaps and anisotropic filtering remain enabled for distant and
-oblique surfaces. Overview and flat-renderer detail caches retain their existing
-budgets. The higher-detail terrain is built once, not refreshed while driving.
+The elevated driving view projects a scrolling 384 m terrain-detail texture
+at 8 pixels/metre (subject to the GPU texture-size limit) onto the existing
+terrain mesh. Building footprints and parks retain sharp edges near the taxi
+without flattening slopes or drawing a decal over bridges. The cache refreshes
+in the worker at 64 m intervals and fades into the district backdrop over its
+outer 16 m, keeping the previous detail visible until the next image arrives.
+The distant terrain backdrop is built once at up to 3 pixels/metre, capped at
+8192 pixels and the GPU's texture limit. Mipmaps and anisotropic filtering
+remain enabled for distant and oblique surfaces; overview keeps its lighter
+district-wide texture.
 
 The complete rotated taxi footprint must stay inside the connected road
 capsules. Red lines are static, full-district collision geometry built once

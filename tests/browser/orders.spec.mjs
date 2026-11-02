@@ -1,6 +1,54 @@
 import { test, expect } from "@playwright/test";
 
-async function dispatchFixture(page) {
+test("citizens and passengers stand on their road level after elevation is enabled", async ({ page }) => {
+  await page.goto("/");
+  const heights = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const ground = { id: "ground", a: "a", b: "b" };
+    const bridge = { id: "bridge", a: "c", b: "d" };
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data: { driving: { taxi_width: 1.7 } },
+      nodes: { a: [0, 0], b: [100, 0], c: [0, 0], d: [100, 0] },
+      edges: new Map([["ground", ground], ["bridge", bridge]]),
+      stops: [{ id: "pickup", edge: "ground" }],
+      elevation: { node_heights: { a: 10, b: 20, c: 40, d: 50 } },
+      scene: new THREE.Scene(), taxi: new THREE.Group(), resources: [],
+    });
+    view.buildCitizens();
+    const car = { x: 50, y: 0, heading: 0, edge: "bridge" };
+    const state = {
+      elapsed: 0, pickup: "pickup", customer: [50, 6],
+      citizens: [
+        { id: "walker", point: [25, 6], edge: "ground", hailing: false },
+        { id: "hailing", point: [75, 6], edge: "bridge", hailing: true },
+      ],
+      boarding: { point: [50, 6], starts: 0, ends: 2 },
+    };
+    const sample = () => view.people.map(person => person.group.position.y);
+    view.updateCitizens(state, car);
+    const elevated = sample();
+    state.elapsed = 1;
+    state.boarding.alighting = true;
+    view.updateCitizens(state, car);
+    const alighting = sample();
+    view.elevation = null;
+    view.updateCitizens(state, car);
+    const legacy = sample();
+    for (const resource of view.resources) resource.dispose();
+    view.door.geometry.dispose();
+    view.door.material.dispose();
+    return { elevated, alighting, legacy };
+  });
+  for (const kind of ["elevated", "alighting"]) {
+    for (const [index, height] of [12.6, 47.6, 15.1, 45.1].entries()) {
+      expect(heights[kind][index]).toBeCloseTo(height, 6);
+    }
+  }
+  expect(heights.legacy).toEqual([0, 0, 0, 0]);
+});
+
+async function dispatchFixture(page, moveDelay = 0) {
   const passenger = { name: "Mei", zh: "阿美", role: "Photographer", role_zh: "攝影師",
     pickup: "Thanks!", pickup_zh: "唔該！", arrival: "Here!", arrival_zh: "到喇！" };
   const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 300,
@@ -73,6 +121,7 @@ async function dispatchFixture(page) {
       state.destination = ""; state.citizens = []; state.dialogue = "boarding";
     } else throw new Error(`Unexpected command ${command.action}`);
     state.can_accept = !["pickup", "boarding"].includes(state.phase) && !state.accepted_orders.length;
+    if (command.action === "move" && moveDelay) await new Promise(resolve => setTimeout(resolve, moveDelay));
     await route.fulfill({ json: state });
   });
   await page.goto("/");
@@ -150,6 +199,30 @@ test("Tab toggles the phone while Shift+Tab keeps focus navigation", async ({ pa
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   await page.keyboard.press("Shift+Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
+  const fixture = await dispatchFixture(page, 350);
+  await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
+    const render = MapView.prototype.render;
+    window.passengerTimes = [];
+    MapView.prototype.render = function (car, state, ...rest) {
+      if (state.boarding) window.passengerTimes.push(state.elapsed);
+      return render.call(this, car, state, ...rest);
+    };
+  });
+  await page.waitForRequest(request => request.url().endsWith("/commands")
+    && request.postDataJSON()?.command?.action === "move");
+  await page.locator("#door").click();
+  await expect.poll(() => fixture.state.phase).toBe("onboard");
+  expect(fixture.commands.filter(command => command.action === "door")).toHaveLength(1);
+  const times = await page.evaluate(() => window.passengerTimes);
+  expect(times.length).toBeGreaterThan(30);
+  for (let i = 1; i < times.length; i++) {
+    expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(0);
+    expect(times[i] - times[i - 1]).toBeLessThan(.15);
+  }
 });
 
 for (const mode of ["2D", "3D"]) {
