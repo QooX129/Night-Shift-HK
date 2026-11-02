@@ -1,5 +1,6 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=minimap-2";
+import { MapView } from "./map.mjs?v=phone-orders-4";
+import { doorSide, peopleOnMap } from "./citizens.mjs?v=phone-orders-4";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 
 export class Map3DView {
@@ -49,11 +50,12 @@ export class Map3DView {
       this.buildBoundaries();
       this.buildCity();
       this.buildTaxi();
+      this.buildCitizens();
       this.overlays = new THREE.Group();
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=settings-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=phone-orders-4", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data, edges: this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale });
       this.detailWorker.onmessage = ({ data }) => {
@@ -488,6 +490,61 @@ export class Map3DView {
     this.roadLabel.className = "road-label";
     this.canvas.parentElement.append(this.roadLabel);
   }
+  buildCitizens() {
+    this.people = [];
+    this.personBody = new THREE.CylinderGeometry(0.3, 0.25, 0.8, 6);
+    this.personHead = new THREE.SphereGeometry(0.25, 6, 6);
+    this.personLimb = new THREE.CylinderGeometry(0.08, 0.08, 0.7, 5);
+    this.personMaterial = new THREE.MeshStandardMaterial({ color: "#b1c8da" });
+    this.hailMaterial = new THREE.MeshStandardMaterial({ color: "#ffac6e", emissive: "#653010" });
+    this.skinMaterial = new THREE.MeshStandardMaterial({ color: "#edc59d" });
+    this.resources.push(this.personBody, this.personHead, this.personLimb,
+      this.personMaterial, this.hailMaterial, this.skinMaterial);
+    this.door = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.08),
+      new THREE.MeshStandardMaterial({ color: "#f7cc65" }));
+    this.door.position.set(-0.4, 0.9, (this.data.driving.taxi_width ?? 2.6) / 2 + 0.45);
+    this.door.rotation.y = Math.PI / 3;
+    this.taxi.add(this.door);
+  }
+  updateCitizens(state, car) {
+    const people = peopleOnMap(state, car);
+    this.door.visible = Boolean(state.boarding);
+    if (state.boarding) {
+      const side = doorSide(state, car);
+      this.door.position.z = side * ((this.data.driving.taxi_width ?? 2.6) / 2 + 0.45);
+      this.door.rotation.y = side * Math.PI / 3;
+    }
+    while (this.people.length < people.length) {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(this.personBody, this.personMaterial);
+      body.position.y = 1;
+      const head = new THREE.Mesh(this.personHead, this.skinMaterial);
+      head.position.y = 1.65;
+      const arm = new THREE.Mesh(this.personLimb, this.personMaterial);
+      const otherArm = new THREE.Mesh(this.personLimb, this.personMaterial);
+      otherArm.position.set(0, 1, -0.45); otherArm.rotation.x = -0.3;
+      group.add(body, head, arm, otherArm);
+      const legs = [-0.16, 0.16].map(z => {
+        const leg = new THREE.Mesh(this.personLimb, this.personMaterial);
+        leg.position.set(0, 0.35, z); group.add(leg); return leg;
+      });
+      this.scene.add(group);
+      this.people.push({ group, body, arm, legs });
+    }
+    this.people.forEach((item, index) => {
+      const person = people[index];
+      item.group.visible = Boolean(person);
+      if (!person) return;
+      item.group.position.set(person.point[0], 0, person.point[1]);
+      item.group.scale.setScalar(person.scale ?? 1);
+      item.body.material = person.hailing ? this.hailMaterial : this.personMaterial;
+      item.arm.position.set(0, person.hailing ? 1.7 : 1, 0.5);
+      item.arm.rotation.x = person.hailing ? -0.7 : 0.3;
+      item.legs.forEach((leg, side) => {
+        leg.rotation.z = person.hailing ? 0 : Math.sin(state.elapsed * 7 + index + side * Math.PI) * 0.3;
+      });
+    });
+  }
   ribbon(edges, color, width, height, start = null) {
     const geometry = this.ribbonGeometry(edges, width, height, start);
     const mesh = new THREE.Mesh(geometry, this.smoothLineMaterial(color));
@@ -606,8 +663,7 @@ export class Map3DView {
     this.lens.position.lerp(eye, smoothCamera ? positionEase : 1);
     this.lookAt.lerp(target, smoothCamera ? targetEase : 1);
     this.lens.lookAt(this.lookAt);
-    this.lens.setViewOffset(innerWidth, innerHeight, innerWidth > 800 ? -innerWidth * 0.13 : 0,
-      innerHeight * 0.04, innerWidth, innerHeight);
+    this.lens.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.04, innerWidth, innerHeight);
     this.cameraReady = true;
     this.camera.x = car.x; this.camera.y = car.y;
     // Fade entire small blocks intersecting the camera sightline, keeping the taxi visible.
@@ -623,6 +679,7 @@ export class Map3DView {
       building.material = !this.overview && obstructs ? this.fadedCityMaterial : this.cityMaterial;
     }
     if (state) {
+      this.updateCitizens(state, car);
       this.updateOverlays(state, approach, previewExit);
       if (this.forwardRibbon && approach?.start) {
         const start = approach.start;

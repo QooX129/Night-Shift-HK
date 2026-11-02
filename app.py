@@ -54,12 +54,22 @@ class Upgrade(StrictModel):
 
 
 class Simple(StrictModel):
-    action: Literal["accept", "service", "next", "recover", "refuel"]
+    action: Literal["service", "next", "recover", "refuel"]
+
+
+class Accept(StrictModel):
+    action: Literal["accept"]
+    order: str | None = Field(default=None, max_length=100)
+
+
+class Door(StrictModel):
+    action: Literal["door"]
+    citizen: str = Field(min_length=1, max_length=100)
 
 
 class Command(StrictModel):
     seq: int = Field(ge=1)
-    command: Annotated[Move | Pause | SelectRoad | Upgrade | Simple, Field(discriminator="action")]
+    command: Annotated[Move | Pause | SelectRoad | Upgrade | Accept | Door | Simple, Field(discriminator="action")]
 
 
 @app.get("/api/health")

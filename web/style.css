@@ -13,6 +13,90 @@
     --junction-hud-opacity: .7
 }
 
+.phone {
+    position: absolute;
+    z-index: 8;
+    right: 0;
+    top: 90px;
+    width: min(330px, calc(100vw - 62px));
+    touch-action: pan-y;
+    transform: translateX(100%);
+    transition: transform .25s ease
+}
+
+.phone.open { transform: translateX(-12px) }
+.phone-screen {
+    box-sizing: border-box;
+    border: 6px solid #060e15;
+    border-radius: 32px;
+    padding: 14px;
+    height: min(620px, calc(100dvh - 245px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    box-shadow: 0 0 0 1px #53636b, 0 16px 40px #0008;
+    scrollbar-width: thin
+}
+.phone-speaker { width: 65px; height: 5px; background: #060e15; border-radius: 8px; margin: 0 auto 15px }
+.phone-home { width: 70px; height: 4px; background: #91a4aa; border-radius: 8px; margin: 18px auto 0 }
+.phone-header { display: flex; justify-content: space-between; align-items: center; gap: 8px }
+.phone-header button { padding: 5px 12px; font-size: 20px }
+.phone h1 { font-size: 22px; margin: 12px 0 }
+.phone-toggle {
+    position: absolute;
+    left: -52px;
+    top: 100px;
+    width: 52px;
+    min-height: 76px;
+    border-radius: 14px 0 0 14px;
+    background: #14212a;
+    display: grid;
+    justify-items: center;
+    gap: 4px;
+    padding: 9px;
+    touch-action: pan-y
+}
+.phone-toggle > span:first-child { font-size: 27px; line-height: 1 }
+.phone-count { border-radius: 12px; background: var(--mint); color: #10251c; padding: 3px 7px; font-size: 12px }
+.phone-tabs { display: flex; gap: 6px; position: sticky; top: 0; background: #14212a; z-index: 1; padding: 6px 0 }
+.phone-tabs button { flex: 1; padding: 10px 6px }
+.phone-tabs [aria-selected="true"] { border-color: var(--mint); color: var(--mint) }
+.order-list { display: grid; gap: 12px }
+.order-card { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0c171ea0 }
+.order-card strong, .order-card small { display: block }
+.order-card p { display: flex; gap: 8px; align-items: center; font-size: 12px; margin: 12px 0 }
+.order-card .stop-dot { flex-shrink: 0 }
+.order-meta { display: flex; justify-content: space-between; font-size: 12px; margin: 14px 0 }
+.order-card .primary { padding: 10px; font-size: 12px }
+.queue-title { font-size: 14px; color: var(--mint); margin: 18px 0 10px }
+.phone #status { min-height: 0; margin: 12px 0 }
+.phone .passenger { gap: 8px }
+.phone blockquote { min-height: 0; font-size: 12px }
+.phone .avatar { flex-shrink: 0 }
+.phone .fare { white-space: nowrap; font-size: 13px }
+.pickup-controls {
+    position: absolute;
+    z-index: 7;
+    right: 82px;
+    bottom: 185px;
+    display: grid;
+    gap: 8px;
+    max-width: 190px
+}
+.pickup-controls .primary { padding: 12px; font-size: 13px }
+#boarding-status { background: var(--panel); padding: 10px; border-radius: 8px; font-size: 12px; color: var(--mint) }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0 }
+@media(max-width:800px) {
+    .phone { top: 78px }
+    .phone-screen { height: min(600px, calc(100dvh - 300px)); padding: 12px }
+    .pickup-controls { bottom: 220px; right: 72px; max-width: 165px }
+}
+@media(max-height:500px) {
+    .phone { top: 65px }
+    .phone-screen { height: calc(100dvh - 88px) }
+    .pickup-controls { right: 16px; bottom: 200px }
+}
+
 .settings-dialog[open] {
     display: grid;
     grid-template-columns: minmax(145px, 185px) minmax(0, 1fr);
@@ -307,7 +391,8 @@ strong,
     position: relative;
     width: 100vw;
     height: 100dvh;
-    min-height: 400px
+    min-height: 400px;
+    overflow: hidden
 }
 
 #map,
@@ -700,7 +785,7 @@ blockquote {
 
 .map-tools {
     position: absolute;
-    right: 30px;
+    left: 30px;
     top: 112px;
     display: flex;
     flex-direction: column;
@@ -1086,7 +1171,7 @@ dialog p {
     }
 
     .map-tools {
-        right: 16px;
+        left: 16px;
         top: 84px
     }
 

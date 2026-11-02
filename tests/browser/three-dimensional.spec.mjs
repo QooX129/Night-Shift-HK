@@ -6,7 +6,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=minimap-2");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -41,7 +41,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
       return { width, height, ratio, car, camera, overview, backdropScale, zoom, dpr: devicePixelRatio, center: [...center],
         buffer: [canvas.width, canvas.height], viewport: [innerWidth, innerHeight],
         rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
-        overlaps: [".dispatch", ".dashboard", ".touch-controls"].map(overlaps) };
+        overlaps: [".phone-screen", ".dashboard", ".touch-controls"].map(overlaps) };
     });
     expect(result.camera).toEqual({ x: result.car.x, y: result.car.y });
     expect(result.width).toBe((result.viewport[0] > 800 ? 240 : 168) - 4);
@@ -80,7 +80,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -115,7 +115,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -161,7 +161,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -353,7 +353,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=settings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },

@@ -1,3 +1,5 @@
+import { doorSide, peopleOnMap } from "./citizens.mjs?v=phone-orders-4";
+
 export class MapView {
   constructor(canvas, data, stops, { compact = false } = {}) {
     this.canvas = canvas;
@@ -132,11 +134,11 @@ export class MapView {
     if (this.ratio !== ratio) this.resize();
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
-    const zoom = this.overview ? Math.min((w - (w > 800 ? 370 : 25)) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
+    const zoom = this.overview ? Math.min((w - 25) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
     const target = this.overview ? { x: (left + right) / 2, y: (top + bottom) / 2 } : car;
     this.camera.x += (target.x - this.camera.x) * 0.12;
     this.camera.y += (target.y - this.camera.y) * 0.12;
-    const cx = this.compact ? w / 2 : w > 800 ? w * 0.64 : w * 0.58;
+    const cx = w / 2;
     const cy = this.compact ? h / 2 : this.overview ? h * 0.5 : h * 0.61;
     if (this.compact) {
       this.camera.x = target.x;
@@ -217,6 +219,23 @@ export class MapView {
         c.strokeText(label, x, y - 28 / zoom); c.fillText(label, x, y - 28 / zoom);
       }
     }
+    for (const person of peopleOnMap(state ?? {}, car)) {
+      const [x, y] = person.point;
+      // Body is ~2 m at true scale; the hail ring stays screen-sized so hails remain easy to spot.
+      const size = Math.max(0.5, 0.8 / zoom) * (person.scale ?? 1);
+      if (person.hailing) {
+        c.strokeStyle = "#ffac6e"; c.lineWidth = 1.5 / zoom;
+        c.beginPath(); c.arc(x, y, 7 / zoom, 0, Math.PI * 2); c.stroke();
+      }
+      c.save(); c.translate(x, y); c.scale(size, size);
+      c.strokeStyle = person.hailing ? "#ffac6e" : "#c3d1dc";
+      c.fillStyle = person.boarding ? "#92d7b6" : person.hailing ? "#ffac6e" : "#c3d1dc";
+      c.lineWidth = 1; c.lineCap = "round";
+      c.beginPath(); c.moveTo(0, -0.5); c.lineTo(0, 1.5);
+      c.moveTo(-1.5, 1); c.lineTo(0, 0); c.lineTo(2, person.hailing ? -3 : 1); c.stroke();
+      c.beginPath(); c.arc(0, -1.6, 1, 0, Math.PI * 2); c.fill();
+      c.restore();
+    }
     c.save(); c.translate(car.x, car.y); c.rotate(car.heading);
     const body = this.data.driving;
     if (body.taxi_length) c.scale(body.taxi_length / 27, body.taxi_width / 13);
@@ -229,6 +248,11 @@ export class MapView {
     c.fillStyle = "#253e42"; c.fillRect(-5 * s, -5 * s, 10 * s, 10 * s);
     c.fillStyle = "#e4e8d6"; c.fillRect(-2 * s, -3 * s, 4 * s, 6 * s);
     c.fillStyle = "#ffffbd"; c.fillRect(10 * s, -5 * s, 2 * s, 2 * s); c.fillRect(10 * s, 3 * s, 2 * s, 2 * s);
+    if (state?.boarding) {
+      const side = doorSide(state, car);
+      c.strokeStyle = "#fff0ba"; c.lineWidth = 1.5 * s;
+      c.beginPath(); c.moveTo(-5 * s, 6 * s * side); c.lineTo(-8 * s, 13 * s * side); c.stroke();
+    }
     c.restore();
     c.setTransform(this.ratio, 0, 0, this.ratio, 0, 0);
     const nx = this.compact ? w - 15 : w - 35;

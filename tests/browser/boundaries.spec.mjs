@@ -4,7 +4,7 @@ test("only collider outlines are light red at 80% opacity without tinting the ro
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const draw = MapView.prototype.drawRoadBoundaries;
     const canvas = document.createElement("canvas");
     const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 100,
@@ -58,7 +58,7 @@ test("narrow-road outlines mark physical boundaries independently of the old cir
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const { RoadNetwork } = await import("/physics.mjs");
     const results = [];
     for (const width of [8, 10, 16]) {
@@ -97,7 +97,7 @@ test("collider outline follows the joined junction perimeter without blocking it
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const pixels = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const data = {
       nodes: { a: [-20, 0], b: [0, 0], c: [20, 0], d: [0, 20] },
       edges: [["a", "b"], ["b", "c"], ["b", "d"]].map(([a, b], i) => ({
@@ -122,7 +122,7 @@ test("rendered taxi body and stroke use the collider dimensions at every zoom", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const { RoadNetwork } = await import("/physics.mjs");
     const data = {
       nodes: { a: [0, 0], b: [100, 0] },
@@ -165,7 +165,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const arrows = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const edges = [
       { a: "a", b: "b", way: 1, kind: "residential", length: 100 },
       { a: "b", b: "a", way: 1, kind: "residential", length: 100, wrongway: true },
@@ -196,7 +196,7 @@ test("2D guides prioritize selected exit, pickup, yellow, then normal guidance",
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const colors = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const edges = [
       { id: "in", a: "a", b: "b", way: 1, kind: "residential", length: 100, name: "Local road", layer: "0" },
       { id: "exit", a: "b", b: "c", way: 2, kind: "residential", length: 100, name: "Local road", layer: "0" },

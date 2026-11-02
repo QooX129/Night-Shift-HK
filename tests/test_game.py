@@ -155,6 +155,8 @@ class GameTests(unittest.TestCase):
         self.cmd("accept")
         self.at_stop(self.session.pickup)
         self.cmd("service")
+        self.session.elapsed += 2
+        self.game.advance_city(self.session, 2)
         self.assertEqual(self.session.phase, "onboard")
         self.at_stop(self.session.destination)
         old_money = self.session.money
@@ -170,6 +172,8 @@ class GameTests(unittest.TestCase):
 
     def test_full_trip_by_driving_the_real_graph(self):
         self.cmd("accept")
+        self.session.order.deadline = math.inf
+        self.session.incident = 1_000_000
         self.cmd("pause", paused=False)
         for expected_phase in ("onboard", "complete"):
             target = self.game.target(self.session)
@@ -193,6 +197,9 @@ class GameTests(unittest.TestCase):
                     self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(edge), speed=10, dt=dt)
             self.cmd("move", x=self.session.point[0], y=self.session.point[1], heading=self.session.heading, speed=0, dt=0)
             self.cmd("service")
+            if expected_phase == "onboard":
+                self.cmd("move", x=self.session.point[0], y=self.session.point[1],
+                         heading=self.session.heading, speed=0, dt=2)
             self.assertEqual(self.session.phase, expected_phase)
         self.assertEqual(self.session.trips, 1)
 

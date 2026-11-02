@@ -40,7 +40,8 @@ class ForcedJunctionTests(unittest.TestCase):
 
     def session(self, point=(59, 0)):
         return Session("test", point, 0, "ab", (1,), speed=10, paused=False,
-                       selected_exit="bd", selected_junction="b")
+                       selected_exit="bd", selected_junction="b",
+                       next_offer=math.inf, next_citizen=math.inf)
 
     def test_closure_blocks_entry_but_allows_escape_and_blocks_reentry(self):
         session = self.session((59, 0))

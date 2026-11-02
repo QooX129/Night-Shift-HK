@@ -114,7 +114,8 @@ test("losing focus clears controls without opening pause and explicit pause stil
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
   await expect(page.locator("#welcome")).not.toBeVisible();
-  await page.locator("#job-action").click();
+  await page.locator("#phone-toggle").click();
+  await page.locator("#available-orders .order-accept").first().click();
   await expect(page.locator("#status")).toContainText("green marker");
   await page.keyboard.down("w");
   await expect(page.locator("#speed")).not.toHaveText("0");
@@ -148,7 +149,8 @@ test("start, manual driving, pause, language, and garage", async ({ page }) => {
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
   await expect(page.locator("#welcome")).not.toBeVisible();
-  await page.locator("#job-action").click();
+  await page.locator("#phone-toggle").click();
+  await page.locator("#available-orders .order-accept").first().click();
   await expect(page.locator("#status")).toContainText("green marker");
   await page.keyboard.down("w");
   await page.waitForTimeout(650);

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=settings-1">
+  <link rel="stylesheet" href="/style.css?v=phone-orders-4">
 </head>
 <body>
   <main id="game">
@@ -19,9 +19,23 @@
       <div class="header-actions"><span class="live"><i></i><span data-i18n="simulated">SIMULATED CITY</span></span><button id="language" class="quiet" data-i18n-aria="changeLanguage" aria-label="Change language">繁中</button><button id="pause" class="quiet" data-i18n="pause">Pause</button></div>
     </header>
 
-    <section class="dispatch panel" aria-labelledby="dispatch-title">
-      <div class="eyebrow"><span class="dot"></span><span data-i18n="dispatch">KOWLOON DISPATCH</span><span class="badge">01</span></div>
+    <aside id="phone" class="phone" aria-label="Dispatch phone">
+      <button id="phone-toggle" class="phone-toggle" aria-expanded="false" aria-controls="phone-screen">
+        <span aria-hidden="true">▯</span><span id="phone-count" class="phone-count">0</span>
+        <span class="sr-only" data-i18n="phoneToggle">Toggle dispatch phone</span>
+      </button>
+      <section id="phone-screen" class="phone-screen panel" inert aria-hidden="true">
+      <div class="phone-speaker" aria-hidden="true"></div>
+      <header class="phone-header"><span class="eyebrow" data-i18n="dispatch">KOWLOON DISPATCH</span><button id="phone-close" data-i18n-aria="phoneClose" aria-label="Hide phone">×</button></header>
       <h1 id="dispatch-title" data-i18n="yourshift">The city is calling.</h1>
+      <div class="phone-tabs" role="tablist" data-i18n-aria="phoneTabs" aria-label="Order lists">
+        <button id="available-tab" role="tab" aria-selected="true" aria-controls="phone-available" data-i18n="availableTab">Available</button>
+        <button id="accepted-tab" role="tab" aria-selected="false" aria-controls="phone-accepted" tabindex="-1" data-i18n="acceptedTab">Accepted</button>
+      </div>
+      <p id="order-notice" class="muted" role="status" aria-live="polite"></p>
+      <div id="phone-available" role="tabpanel" aria-labelledby="available-tab"><div id="available-orders" class="order-list"></div><p id="no-offers" class="muted" data-i18n="noOffers">No offers right now. Watch for street hails.</p></div>
+      <div id="phone-accepted" role="tabpanel" aria-labelledby="accepted-tab" hidden>
+      <div id="active-trip">
       <p class="muted" id="status" role="status" aria-live="polite"></p>
       <div class="passenger"><div class="avatar" id="avatar">林</div><div><strong id="passenger-name">—</strong><small id="passenger-role">—</small></div><span class="fare" id="fare">HK$ —</span></div>
       <div class="stops">
@@ -31,7 +45,28 @@
       <blockquote id="dialogue"></blockquote>
       <button id="job-action" class="primary" disabled data-i18n="loading">Loading roads…</button>
       <button id="cancel-job" class="text-button" hidden data-i18n="cancel">Cancel / find another order</button>
-    </section>
+      </div>
+      <h2 id="pending-title" class="queue-title" data-i18n="pendingOrder">Waiting pickup</h2>
+      <div id="accepted-orders" class="order-list"></div>
+      <p id="no-accepted" class="muted" data-i18n="noAccepted">No accepted orders.</p>
+      </div>
+      <div class="phone-home" aria-hidden="true"></div>
+      </section>
+    </aside>
+    <template id="order-card-template">
+      <article class="order-card">
+        <strong class="order-customer"></strong><small class="order-role muted"></small>
+        <p><span class="stop-dot pickup-dot"></span><span class="order-pickup"></span></p>
+        <p><span class="stop-dot destination-dot"></span><span class="order-destination"></span></p>
+        <div class="order-meta"><span class="order-fare"></span><span class="order-distance muted"></span></div>
+        <button class="primary order-accept" data-i18n="accept">Accept order</button>
+      </article>
+    </template>
+    <div class="pickup-controls">
+      <button id="door" class="primary" disabled data-i18n="door">Open door</button>
+      <button id="street-dropoff" class="primary" hidden data-i18n="dropoffKey">Drop off passenger · E</button>
+      <span id="boarding-status" role="status" hidden data-i18n="boarding">Passenger boarding…</span>
+    </div>
 
     <aside class="map-tools" aria-label="Map tools">
       <button id="view-mode" aria-label="Switch to 3D view" aria-pressed="false" disabled>3D</button>
@@ -50,7 +85,7 @@
       <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
       <button id="garage" class="quiet" data-i18n="garage">Rest stop / garage</button>
     </section>
-    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Esc pause</div>
+    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · Esc pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
       <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
       <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE / REV</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
@@ -186,6 +221,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=junction-toggle-1"></script>
+  <script type="module" src="/app.mjs?v=phone-orders-4"></script>
 </body>
 </html>

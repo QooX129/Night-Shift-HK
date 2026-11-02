@@ -21,9 +21,9 @@ class DrivingConfig(TypedDict):
 
 
 DRIVING: DrivingConfig = {
-    "taxi_radius": 3,
-    "taxi_length": 8,
-    "taxi_width": 4,
+    "taxi_radius": 2,
+    "taxi_length": 5,
+    "taxi_width": 2.2,
     "max_speed": 150 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
@@ -80,7 +80,7 @@ class RoadMap:
                 self.edges[reverse.id] = reverse
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
         self.document["driving"] = DRIVING
-        self.version += "-manual-3"
+        self.version += "-manual-4"
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -286,17 +286,30 @@ class RoadMap:
     def route(self, start: Edge, target: Edge, history: tuple[int, ...], closed: set[int], traffic: dict[int, float]) -> list[str] | None:
         if target.way in closed:
             return None
+        if start.wrongway:
+            # A wrong-way taxi has no legal exits ahead, so plan from turning around.
+            start = self.edges[start.id[1:]]
         initial = (start.id, self.history(history, start.way))
+        goal = self.nodes[target.b]
+        # A* guide: edge lengths are never shorter than 0.99 × straight-line distance.
+        scale = 0.99 / max([1.0, *traffic.values()])
+
+        def estimate(edge: Edge) -> float:
+            return math.dist(self.nodes[edge.b], goal) * scale
+
         counter = itertools.count()
-        queue = [(0.0, next(counter), initial)]
+        queue = [(estimate(start), next(counter), initial)]
         costs = {initial: 0.0}
         parents: dict[tuple, tuple] = {}
+        closed_states: set[tuple] = set()
         found = None
         while queue:
-            cost, _, state = heapq.heappop(queue)
-            if cost != costs.get(state):
-                continue
+            _, _, state = heapq.heappop(queue)
             edge = self.edges[state[0]]
+            cost = costs[state]
+            if state in closed_states:
+                continue
+            closed_states.add(state)
             if edge.id == target.id:
                 found = state
                 break
@@ -307,7 +320,7 @@ class RoadMap:
                 if candidate < costs.get(next_state, math.inf):
                     costs[next_state] = candidate
                     parents[next_state] = state
-                    heapq.heappush(queue, (candidate, next(counter), next_state))
+                    heapq.heappush(queue, (candidate + estimate(nxt), next(counter), next_state))
         if found is None:
             return None
         path = [found[0]]

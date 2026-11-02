@@ -41,8 +41,34 @@ To stop the server, press **Ctrl+C** in the terminal.
   the pause menu; closing it resumes the shift. Losing focus or changing browser tabs clears held controls
   without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
-- Accept an order, stop at the **green** pickup marker, and click **Pick up passenger**.
-  Stop at the **yellow** destination marker to complete the trip and receive earnings.
+- Tap the phone tab on the right edge or press **Tab** to slide the dispatch
+  phone in or out (Shift+Tab still moves keyboard focus); swipe left/right on
+  touchscreens. Its badge counts available offers. Opening
+  the phone does not pause driving.
+- **Available** lists fictional customers, reachable street pickups/destinations,
+  estimated fares, and distance to pickup. Offers arrive every random **45–180
+  seconds** and disappear after **30–180 seconds**, with no offer cap or visible
+  countdown. One initial offer is available when the shift starts.
+- Accept a phone order, then stop at its **green** pickup marker. The customer
+  waits waving at the curb and walks into the taxi automatically once you stop.
+  **Accepted** stores the current pickup and any waiting order.
+  Carry one passenger per trip; while carrying one, you can accept **one pending
+  phone order**. Waiting accepted customers cancel after **120–300 seconds**,
+  without a money penalty. The timer stops applying once they board.
+- Citizens walk along streets without blocking the taxi. Some already hail;
+  others may raise a hand when an empty taxi approaches. **Orange** hailing
+  citizens can be picked up by stopping alongside on the same road, then using
+  **Open door / E**. A short boarding animation holds the taxi still; the street
+  passenger's destination appears only after boarding. Phone pickups do not
+  require the door button.
+- Street pickups can temporarily put an accepted phone pickup on hold; its
+  original waiting deadline still applies. Stop at the **yellow** destination
+  marker and use **Drop off passenger / E** to earn the fare. The passenger
+  steps out and walks to the curb while the taxi is held still. The door opens
+  on whichever side is nearer the passenger. Any waiting phone
+  pickup becomes the next trip automatically.
+- Offer, waiting, and boarding timers use simulated shift time, so explicit
+  pauses (including junction choices) freeze them.
 - The route is a suggestion; you may choose another legal route.
   Overlapping road guides render in this priority, highest first: cyan selected
   or previewed exit, green pickup route, yellow destination/recommended route,
@@ -179,7 +205,8 @@ and fares are arcade game values, not Hong Kong taxi tariffs.
 - Directed road routing with node and ordered via-way turn restrictions.
 - Keyboard/touch manual driving, low-speed reverse, road boundaries, warnings,
   pause/resume, and advisory stacked-road choices.
-- Passenger orders, pickup/drop-off validation, earnings, and bilingual personalities.
+- Sliding dispatch phone, timed random offers, an accepted-order queue, walking
+  street-hail citizens, pickup/boarding validation, earnings, and bilingual personalities.
 - Seeded congestion, changing simulated closures, fuel, refuelling, and two upgrades.
 - Explicit network failure/retry and idempotent commands.
 
@@ -205,8 +232,9 @@ The view includes a red-and-silver procedural taxi, extruded OSM building
 footprints, road directions, route/exit highlights, pickup/drop-off/rest-stop
 beacons, and a bilingual current-road label. Nearby building blocks fade when
 they obscure the taxi. Location rings and beacons respect scene depth, so they
-do not draw over the taxi. On phones the dispatch panel scrolls to leave room for
-the camera. Switch back to **2D** at any time for the detailed map.
+do not draw over the taxi. Walking and hailing citizens, plus street boarding,
+appear in both views and the minimap. The dispatch phone slides away to leave
+room for the camera. Switch back to **2D** at any time for the detailed map.
 The chase camera filters steering changes and limits its heading-follow speed
 to 0.9 radians/second, easing junction turns without changing taxi steering.
 Reload an already-open game after renderer updates; ES modules stay loaded for
@@ -302,7 +330,24 @@ tails and cache-refresh work, not only average FPS. A 20-second drive crosses
 multiple cache cells and asserts a maximum frame gap below 250 ms, including
 the actual texture upload/render rather than only the refresh function call.
 
-### Verified local build
+### Order system checks
+
+The order rules are covered by `tests/test_orders.py`; phone controls and boarding
+in both views are covered by `tests/browser/orders.spec.mjs`. Animation geometry
+is covered by `tests/citizens.test.mjs`. Run the focused checks with:
+
+```powershell
+python -m unittest discover -s tests -p test_orders.py
+node --test tests/citizens.test.mjs
+npx playwright test orders.spec.mjs
+```
+
+The order update passed all 60 Python tests, 19 focused JavaScript tests, and all
+10 order browser tests across desktop and phone emulation. The broader suites
+still report failures in the unchanged boundary-drag physics test and older
+junction tests; those are not addressed by the order update.
+
+### Earlier baseline measurements
 
 - 25 Python rule/API tests pass, including a complete real-graph passenger trip,
   replay-safe rewards, road containment, advisory choices, warning-only turns,
@@ -328,6 +373,8 @@ the actual texture upload/render rather than only the refresh function call.
 Road widths are game estimates shared by rendering, browser physics, and server
 validation: primary 16 m, secondary 14 m, tertiary 12 m, local/link roads 10 m,
 and service/living streets 8 m. These are not surveyed road or lane widths.
+The taxi body is 5 m × 2.2 m, close to a real Hong Kong taxi, so it fits the
+roads and the ~1.9 m citizens in proportion.
 
 A conservative 2.5 m-radius circle encloses the simulated taxi body. Its centre
 stays within a road capsule narrowed by that radius, keeping the complete

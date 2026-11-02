@@ -1,6 +1,6 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=settings-1";
-import { MapView } from "./map.mjs?v=minimap-2";
-import { en, zh } from "./i18n.mjs?v=junction-toggle-1";
+import { MapView } from "./map.mjs?v=phone-orders-4";
+import { en, zh } from "./i18n.mjs?v=phone-orders-4";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
 
@@ -14,6 +14,7 @@ let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 let previewExit = null;
+let phoneTab = "available";
 let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
   : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
 let settingsOrigin = "welcome", settingsCategory = "display", preferredViewRequest = null;
@@ -93,7 +94,12 @@ async function flush() {
   if (!state || (elapsed < 0.001 && Math.hypot(car.x - state.x, car.y - state.y) < 0.05)) return;
   const dt = elapsed, samples = trail; elapsed = 0; trail = [];
   moving = true;
-  try { await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples }); }
+  try {
+    await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples });
+    if (!busy && !paused && !state.boarding && state.phase === "pickup" && state.service_ready && Math.abs(car.speed) <= 0.6) {
+      await send("service");
+    }
+  }
   finally { moving = false; }
 }
 async function perform(task) {
@@ -301,6 +307,61 @@ function closeSettings() {
   openDialog(settingsOrigin);
   $(`${settingsOrigin === "welcome" ? "welcome" : "pause"}-settings`).focus();
 }
+function setPhoneOpen(open) {
+  $("phone").classList.toggle("open", open);
+  $("phone-toggle").setAttribute("aria-expanded", String(open));
+  if (!open && $("phone-screen").contains(document.activeElement)) $("phone-toggle").focus();
+  $("phone-screen").inert = !open;
+  $("phone-screen").setAttribute("aria-hidden", String(!open));
+}
+function selectPhoneTab(tab, focus = false) {
+  phoneTab = tab;
+  for (const name of ["available", "accepted"]) {
+    const active = name === tab;
+    $(`${name}-tab`).setAttribute("aria-selected", String(active));
+    $(`${name}-tab`).tabIndex = active ? 0 : -1;
+    $(`phone-${name}`).hidden = !active;
+  }
+  if (focus) $(`${tab}-tab`).focus();
+}
+function renderOrders(id, orders, accepted = false) {
+  const list = $(id);
+  const ids = new Set(orders.map(order => order.id));
+  for (const card of [...list.children]) {
+    if (ids.has(card.dataset.order)) continue;
+    if (card.contains(document.activeElement)) $(`${phoneTab}-tab`).focus();
+    card.remove();
+  }
+  for (const order of orders) {
+    let card = [...list.children].find(item => item.dataset.order === order.id);
+    if (!card) {
+      card = $("order-card-template").content.firstElementChild.cloneNode(true);
+      card.dataset.order = order.id;
+      card.querySelector(".order-accept").addEventListener("click", () => perform(async () => {
+        const wasPaused = paused; paused = true; await flush();
+        await send("accept", { order: order.id });
+        paused = wasPaused;
+        selectPhoneTab("accepted");
+      }));
+      list.append(card);
+    }
+    const text = (selector, value) => { card.querySelector(selector).textContent = value; };
+    const name = key => {
+      const stop = stops.find(s => s.id === key);
+      return stop?.[lang === "zh" ? "zh" : "name"] ?? "—";
+    };
+    text(".order-customer", order.passenger[lang === "zh" ? "zh" : "name"]);
+    text(".order-role", order.passenger[lang === "zh" ? "role_zh" : "role"]);
+    text(".order-pickup", `${t("pickup")}: ${name(order.pickup)}`);
+    text(".order-destination", `${t("destination")}: ${name(order.destination)}`);
+    text(".order-fare", `HK$ ${order.fare}`);
+    text(".order-distance", `${order.distance} m · ${t("toPickup")}`);
+    const accept = card.querySelector(".order-accept");
+    accept.textContent = t("accept");
+    accept.hidden = accepted;
+    accept.disabled = busy || !state.can_accept;
+  }
+}
 function updateUI() {
   updateViewUI();
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
@@ -316,19 +377,36 @@ function updateUI() {
   $("avatar").textContent = lang === "zh" ? passenger.zh.slice(-1) : passenger.name[0];
   for (const [element, key] of [["pickup-name", state.pickup], ["destination-name", state.destination]]) {
     const stop = stops.find(s => s.id === key);
-    $(element).textContent = lang === "zh" ? stop.zh : stop.name;
+    $(element).textContent = stop ? (lang === "zh" ? stop.zh : stop.name) : t("destinationHidden");
   }
-  $("fare").textContent = `HK$ ${state.fare}`;
-  $("status").textContent = t({ available: "available", pickup: "pickupStatus", onboard: "onboard", complete: "complete" }[state.phase]);
+  $("fare").textContent = state.phase === "boarding" ? "—" : `HK$ ${state.fare}`;
+  $("status").textContent = t({ available: "available", pickup: "pickupStatus", boarding: "boarding", onboard: "onboard", complete: "complete" }[state.phase]);
   let dialogue;
   if (state.dialogue === "pickup" || state.dialogue === "arrival") dialogue = passenger[state.dialogue + (lang === "zh" ? "_zh" : "")];
   else dialogue = t({ refuel: "refuelDone", upgrade: "upgradeDone" }[state.dialogue] || state.dialogue);
   $("dialogue").textContent = `“${dialogue}”`;
-  const jobAction = { available: "accept", pickup: "collect", onboard: "dropoff", complete: "next" }[state.phase];
+  const jobAction = { available: "accept", pickup: "collect", boarding: "wait", onboard: "dropoff", complete: "next" }[state.phase];
   $("job-action").textContent = t(jobAction);
   $("job-action").disabled = busy || (["pickup", "onboard"].includes(state.phase) && !state.service_ready);
   $("cancel-job").hidden = !["pickup", "onboard"].includes(state.phase);
   $("cancel-job").disabled = busy;
+  $("active-trip").hidden = state.phase === "available";
+  $("job-action").hidden = state.phase === "boarding" || state.phase === "pickup";
+  renderOrders("available-orders", state.offers ?? []);
+  const waiting = (state.accepted_orders ?? []).filter(order => order.id !== state.active_order);
+  renderOrders("accepted-orders", waiting, true);
+  $("pending-title").hidden = !waiting.length;
+  $("phone-count").textContent = String(state.offers?.length ?? 0);
+  $("phone-toggle").setAttribute("aria-label", `${t("phoneToggle")} · ${state.offers?.length ?? 0} ${t("availableTab")}`);
+  $("no-offers").hidden = Boolean(state.offers?.length);
+  $("no-accepted").hidden = state.phase !== "available" || Boolean(state.accepted_orders?.length);
+  $("order-notice").textContent = state.cancelled_orders
+    ? `${t("waitingCancelled")} (${state.cancelled_orders})` : t("queueHelp");
+  $("door").disabled = busy || paused || !state.citizens?.some(citizen => citizen.ready);
+  $("door").hidden = state.phase === "onboard" || state.phase === "boarding";
+  $("boarding-status").hidden = state.phase !== "boarding";
+  $("street-dropoff").hidden = state.phase !== "onboard";
+  $("street-dropoff").disabled = busy || paused || !state.service_ready;
   $("money").textContent = `$${state.money}`;
   $("trips").textContent = `${state.trips} ${t("trips")}`;
   $("fuel").textContent = `${Math.ceil(state.fuel)}%`;
@@ -389,7 +467,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=settings-1");
+      const { Map3DView } = await import("./map3d.mjs?v=phone-orders-4");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }
@@ -421,7 +499,8 @@ function frame(timestamp) {
       stepBank -= dt;
       const match = localMatch();
       const factor = state.traffic[match.edge.way] || 1;
-      const result = stepCar(car, controls, dt, {
+      if (state.boarding) car.speed = 0;
+      const result = state.boarding ? { blocked: false, contact: false, closed: false } : stepCar(car, controls, dt, {
         acceleration: state.upgrades.includes("engine") ? roads.driving.upgraded_acceleration : roads.driving.acceleration,
         steeringSensitivity: preferences.steeringSensitivity / 100,
         traffic: factor,
@@ -454,10 +533,11 @@ function frame(timestamp) {
   if (view && state) {
     const approach = roads.preview(car, new Set(state.closed));
     const preview = $("junction").open ? previewExit : null;
-    view.render(car, state, lang, approach, preview);
+    const visualState = state.boarding ? { ...state, elapsed: state.elapsed + elapsed } : state;
+    view.render(car, visualState, lang, approach, preview);
     if (view === map3d && minimap && preferences.minimapVisible
         && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {
-      minimap.render(car, state, lang, approach, preview);
+      minimap.render(car, visualState, lang, approach, preview);
       lastMinimapFrame = timestamp;
     }
   }
@@ -467,6 +547,45 @@ function frame(timestamp) {
 }
 
 $("language").addEventListener("click", () => commitPreferences({ ...preferences, language: lang === "en" ? "zh" : "en" }));
+$("phone-toggle").addEventListener("click", () => setPhoneOpen(!$("phone").classList.contains("open")));
+$("phone-close").addEventListener("click", () => setPhoneOpen(false));
+for (const tab of ["available", "accepted"]) {
+  $(`${tab}-tab`).addEventListener("click", () => selectPhoneTab(tab));
+  $(`${tab}-tab`).addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    selectPhoneTab(event.key === "Home" ? "available" : event.key === "End" ? "accepted"
+      : tab === "available" ? "accepted" : "available", true);
+  });
+}
+let phoneSwipe = null;
+let phoneSwipedAt = -Infinity;
+$("phone").addEventListener("click", event => {
+  if (performance.now() - phoneSwipedAt < 400) {
+    event.preventDefault(); event.stopPropagation();
+  }
+}, true);
+$("phone").addEventListener("pointerdown", event => {
+  if (event.pointerType === "touch") phoneSwipe = { x: event.clientX, y: event.clientY };
+});
+window.addEventListener("pointerup", event => {
+  if (!phoneSwipe) return;
+  const dx = event.clientX - phoneSwipe.x, dy = event.clientY - phoneSwipe.y;
+  phoneSwipe = null;
+  if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    phoneSwipedAt = performance.now();
+    setPhoneOpen(dx < 0);
+  }
+});
+window.addEventListener("pointercancel", () => { phoneSwipe = null; });
+$("door").addEventListener("click", () => perform(async () => {
+  const wasPaused = paused; paused = true; await flush();
+  const citizen = state.citizens?.find(item => item.ready);
+  if (!citizen) throw new Error(t("stopFirst"));
+  await send("door", { citizen: citizen.id });
+  car.speed = 0; resetControls(); paused = wasPaused;
+}));
+$("street-dropoff").addEventListener("click", () => $("job-action").click());
 $("view-mode").addEventListener("click", toggleView);
 $("map-3d").addEventListener("webglcontextlost", event => {
   event.preventDefault();
@@ -526,6 +645,7 @@ $("zoom-out").addEventListener("click", () => { if (view) { view.overview = fals
 $("job-action").addEventListener("click", () => perform(async () => {
   const wasPaused = paused; paused = true; await flush();
   await send(({ available: "accept", pickup: "service", onboard: "service", complete: "next" })[state.phase]);
+  if (state.phase === "complete" && state.accepted_orders?.length) await send("next");
   paused = wasPaused;
 }));
 $("cancel-job").addEventListener("click", () => perform(async () => {
@@ -564,6 +684,16 @@ const bindings = {
 };
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
+  if (key === "e" && !event.repeat && !paused && !dialogs.some(id => $(id).open)) {
+    $(state.phase === "onboard" ? "street-dropoff" : "door").click();
+  }
+  // Plain Tab toggles the phone; Shift+Tab keeps normal focus navigation.
+  if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey
+      && !dialogs.some(id => $(id).open) && !$("junction").open) {
+    event.preventDefault();
+    if (!event.repeat) setPhoneOpen(!$("phone").classList.contains("open"));
+    return;
+  }
   if ($("junction").open && bindings[key]) {
     event.preventDefault();
     if (busy || event.repeat) return;

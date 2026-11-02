@@ -59,7 +59,7 @@ test("stacked selection previews the exit and waits until arrival to snap", asyn
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs");
+    const { MapView } = await import("/map.mjs?v=phone-orders-4");
     const render = MapView.prototype.render, highlight = MapView.prototype.highlightExit;
     MapView.prototype.render = function (...args) {
       window.renderedCar = { ...args[0] };
