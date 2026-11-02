@@ -1,3 +1,6 @@
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs";
+import { roadWidth } from "./road-width.mjs";
+
 export function angleDifference(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
@@ -13,6 +16,7 @@ export function project(point, a, b) {
 export class RoadNetwork {
   constructor(data) {
     this.nodes = data.nodes;
+    this.elevation = data.elevation;
     this.edges = new Map(data.edges.map(e => [e.id, e]));
     this.driving = data.driving;
     this.bounds = data.bounds;
@@ -28,7 +32,7 @@ export class RoadNetwork {
     return Math.atan2(b[1] - a[1], b[0] - a[0]);
   }
   radius(edge) {
-    return (this.driving.widths[edge.kind] ?? 10) / 2
+    return roadWidth(this.driving, edge) / 2
       - (this.driving.taxi_length ? 0 : this.driving.taxi_radius);
   }
   bodyFits(point, heading, previous, padding = 0, allowance = 0) {
@@ -77,13 +81,19 @@ export class RoadNetwork {
     const found = new Map([[previous.id, previous]]), stack = [previous];
     while (stack.length) {
       const edge = stack.pop();
+      const reach = this.driving.taxi_length
+        ? Math.hypot(this.driving.taxi_length, this.driving.taxi_width) / 2 : 1;
+      const onSurface = project(point, this.nodes[edge.a], this.nodes[edge.b]).distance <= this.radius(edge) + reach;
       for (const node of [edge.a, edge.b]) {
         const [x, y] = this.nodes[node];
-        const reach = this.driving.taxi_length
-          ? Math.hypot(this.driving.taxi_length, this.driving.taxi_width) / 2 : 1;
-        if (Math.hypot(point.x - x, point.y - y) > this.radius(edge) + reach) continue;
+        const nearNode = Math.hypot(point.x - x, point.y - y) <= this.radius(edge) + reach;
         for (const next of this.outgoing.get(node) || []) {
           if (node === selectedJunction && next.id !== selectedExit) continue;
+          // Acute and unequal-width junction openings extend beyond the node's
+          // radius. Join their overlapping surfaces, not unrelated crossings.
+          if (!nearNode && !(onSurface
+              && ["layer", "bridge", "tunnel"].every(tag => edge[tag] === next[tag])
+              && project(point, this.nodes[next.a], this.nodes[next.b]).distance <= this.radius(next) + reach)) continue;
           if (!found.has(next.id)) { found.set(next.id, next); stack.push(next); }
         }
       }
@@ -102,6 +112,9 @@ export class RoadNetwork {
       if (selectedJunction != null && edge.a === selectedJunction && edge.id !== selectedExit) continue;
       const projection = project(point, this.nodes[edge.a], this.nodes[edge.b]);
       if (projection.distance > this.radius(edge) + 1e-6) continue;
+      if (this.elevation && edge.id !== previous.id
+          && Math.abs(surfacePose(this, edge, point, heading).height
+            - surfacePose(this, previous, point, heading).height) > .35) continue;
       const score = projection.distance + (1 - Math.cos(heading - this.angle(edge))) * 0.15;
       if (edge.id === previous.id && edge.b === selectedJunction && projection.t < 1
           && Math.cos(heading - this.angle(edge)) > 0.35) return { ...projection, edge, score };
@@ -259,6 +272,11 @@ export function stepCar(car, input, dt, {
   steeringSensitivity = STEERING_SENSITIVITY,
 } = {}) {
   const step = Math.min(Math.max(dt, 0), 1 / 30);
+  const surface = roads?.edges.has(car.edge)
+    ? surfacePose(roads, roads.edges.get(car.edge), car, car.heading) : { grade: 0 };
+  const gravity = 9.81 * surface.grade / Math.sqrt(1 + surface.grade ** 2);
+  maxSpeed = slopeSpeedLimit(maxSpeed, surface.grade);
+  const beforePedal = car.speed;
   if (input.handbrake) {
     car.speed = Math.sign(car.speed) * Math.max(0, Math.abs(car.speed) - 28 * step);
   } else if (input.brake) {
@@ -267,6 +285,13 @@ export function stepCar(car, input, dt, {
     car.speed = car.speed < 0 ? Math.min(0, car.speed + 19 * step) : Math.min(maxSpeed * traffic, car.speed + acceleration * step);
   } else {
     car.speed = Math.sign(car.speed) * Math.max(0, Math.abs(car.speed) - 2.8 * step);
+  }
+  if (Math.abs(beforePedal) > .05 || input.gas || input.brake) {
+    const adjusted = car.speed - gravity * step;
+    // Pedal braking must stop, not turn into downhill rolling or automatic reverse.
+    car.speed = input.handbrake || (input.brake && beforePedal > 0)
+      || (input.gas && beforePedal < 0)
+      ? Math.sign(beforePedal) * Math.max(0, Math.sign(beforePedal) * adjusted) : adjusted;
   }
   car.speed = Math.max(-4 * traffic, Math.min(maxSpeed * traffic, car.speed));
   if (fuel <= 0) car.speed = 0;
@@ -302,6 +327,8 @@ export function stepCar(car, input, dt, {
         car.edge = departure.blocked ? departure.edge : exit.id;
         const junctionPoint = { x, y, heading: car.heading };
         car.heading = heading;
+        car.speed = Math.min(car.speed, slopeSpeedLimit(roads.driving.max_speed,
+          surfacePose(roads, roads.edges.get(car.edge), car, car.heading).grade) * traffic);
         return { ...departure, edge: car.edge, junctionPoint };
       }
     }
@@ -310,6 +337,8 @@ export function stepCar(car, input, dt, {
     ? roads.constrain(old, desired, car.heading, previous, closed, selectedExit, selectedJunction)
     : { ...desired, edge: car.edge, blocked: false, closed: false };
   car.x = constrained.x; car.y = constrained.y; car.edge = constrained.edge;
+  if (roads) car.speed = Math.min(car.speed, slopeSpeedLimit(roads.driving.max_speed,
+    surfacePose(roads, roads.edges.get(car.edge), car, car.heading).grade) * traffic);
   const contact = touching || (roads?.driving.taxi_length
     && !roads.bodyFits(car, car.heading, roads.edges.get(car.edge), 0.02));
   if (roads?.driving.taxi_length && !touching && (contact || constrained.blocked) && !constrained.closed) {

@@ -4,8 +4,8 @@ test("only collider outlines are light red at 80% opacity without tinting the ro
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
-    const draw = MapView.prototype.drawRoadBoundaries;
+    const { MapView } = await import("/map.mjs");
+    const draw = MapView.prototype.drawCollisionLines;
     const canvas = document.createElement("canvas");
     const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 100,
       name: "Local road", zh: "", layer: "0" };
@@ -13,28 +13,28 @@ test("only collider outlines are light red at 80% opacity without tinting the ro
       bounds: [-20, -20, 120, 20], driving: { taxi_radius: 3, taxi_length: 5.4, taxi_width: 2.6,
         widths: { residential: 10 } } };
     const alpha = [];
-    MapView.prototype.drawRoadBoundaries = function (context, scale) {
-      const drawImage = context.drawImage;
-      context.drawImage = function (...args) {
+    MapView.prototype.drawCollisionLines = function (context, car) {
+      const stroke = context.stroke;
+      context.stroke = function (...args) {
         alpha.push(this.globalAlpha);
-        return drawImage.apply(this, args);
+        return stroke.apply(this, args);
       };
-      draw.call(this, context, scale);
-      context.drawImage = drawImage;
+      draw.call(this, context, car);
+      context.stroke = stroke;
     };
     const outlined = new MapView(canvas, data, []);
-    outlined.buildBackdrop(data.bounds, 1.4);
-    MapView.prototype.drawRoadBoundaries = () => {};
+    outlined.buildBackdrop(data.bounds, 4);
+    MapView.prototype.drawCollisionLines = () => {};
     const baseline = new MapView(document.createElement("canvas"), data, []);
-    baseline.buildBackdrop(data.bounds, 1.4);
-    MapView.prototype.drawRoadBoundaries = draw;
+    baseline.buildBackdrop(data.bounds, 4);
+    MapView.prototype.drawCollisionLines = draw;
     const points = [];
     const context = { beginPath() {}, moveTo: (...point) => points.push(point),
       lineTo: (...point) => points.push(point), stroke() {} };
     outlined.highlightExit(context, edge, "#92d7b6", 1, {
       start: { x: 40, y: 0 }, edges: [edge, { b: "a" }],
     });
-    const pixel = (view, y) => [...view.backdrop.getContext("2d").getImageData(84, Math.round((y + 20) * 1.4), 1, 1).data];
+    const pixel = (view, y) => [...view.backdrop.getContext("2d").getImageData(240, Math.round((y + 20) * 4), 1, 1).data];
     const result = { alpha, points, centre: pixel(outlined, 0), oldCentre: pixel(baseline, 0),
       collider: pixel(outlined, 5), oldCollider: pixel(baseline, 5),
       edge: pixel(outlined, 7.5), oldEdge: pixel(baseline, 7.5),
@@ -58,7 +58,7 @@ test("narrow-road outlines mark physical boundaries independently of the old cir
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const { RoadNetwork } = await import("/physics.mjs");
     const results = [];
     for (const width of [8, 10, 16]) {
@@ -97,7 +97,7 @@ test("collider outline follows the joined junction perimeter without blocking it
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const pixels = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const data = {
       nodes: { a: [-20, 0], b: [0, 0], c: [20, 0], d: [0, 20] },
       edges: [["a", "b"], ["b", "c"], ["b", "d"]].map(([a, b], i) => ({
@@ -122,7 +122,7 @@ test("rendered taxi body and stroke use the collider dimensions at every zoom", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const { RoadNetwork } = await import("/physics.mjs");
     const data = {
       nodes: { a: [0, 0], b: [100, 0] },
@@ -165,7 +165,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const arrows = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const edges = [
       { a: "a", b: "b", way: 1, kind: "residential", length: 100 },
       { a: "b", b: "a", way: 1, kind: "residential", length: 100, wrongway: true },
@@ -196,7 +196,7 @@ test("2D guides prioritize selected exit, pickup, yellow, then normal guidance",
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const colors = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const edges = [
       { id: "in", a: "a", b: "b", way: 1, kind: "residential", length: 100, name: "Local road", layer: "0" },
       { id: "exit", a: "b", b: "c", way: 2, kind: "residential", length: 100, name: "Local road", layer: "0" },

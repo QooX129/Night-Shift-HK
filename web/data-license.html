@@ -8,7 +8,8 @@
 <p>© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>.
 OpenStreetMap data is available under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License (ODbL) 1.0</a>.</p>
 <p>The game's district road database and building/park backdrop are adapted from OpenStreetMap.
-The adapted district database is also offered under ODbL 1.0. Download the
+The OSM-derived component of the adapted database is offered under ODbL 1.0;
+the combined API response also contains Government data under the terms below. Download the
 <a href="/api/map" download="district.json">adapted database</a> or the
 <a href="/api/source">bounded original OSM extract</a>.
 The preparation script is included with the project as <code>tools\prepare_map.py</code>.</p>
@@ -17,8 +18,28 @@ The preparation script is included with the project as <code>tools\prepare_map.p
 <h2>Not a real navigation service / 並非實際導航服務</h2>
 <p>The experimental 3D renderer uses locally packaged Three.js under the
 <a href="/vendor/three/LICENSE">MIT licence</a>. Building footprints come from
-OpenStreetMap; heights, windows, and the taxi model are artistic approximations.
-The 3D view does not add real-world elevation or building collision data.</p>
+OpenStreetMap. Tagged heights are used where available; floor-count × 3.2 m and an
+18 m default are explicitly labelled estimates, not measurements. Windows and the taxi are artistic.</p>
+<h2>Elevation sources / 高度資料來源</h2>
+<p>© Hong Kong SAR Government, Lands Department and DATA.GOV.HK.
+The district contains a clipped, resampled
+<a href="https://data.gov.hk/en-data/dataset/hk-landsd-openmap-5m-grid-dtm">5 m DTM</a>
+and a clipped highest-detail <a href="https://portal.csdi.gov.hk/csdi-webpage/apidoc/3d-spatial-data-api">official 3D infrastructure model</a>
+of the Yau Ma Tei Interchange / Hoi Wang Road pilot crossing.
+Government data may be downloaded, reproduced and redistributed for commercial and non-commercial purposes,
+subject to source/IP attribution, indemnity and the
+<a href="https://data.gov.hk/en/terms-and-conditions">DATA.GOV.HK terms</a> and
+<a href="https://portal.csdi.gov.hk/csdi-webpage/apidoc/3d-spatial-data-api">3D API terms and fair-usage policy</a>.
+Government data remain under these terms, not the ODbL or the game-code licence.</p>
+<p>The DTM accuracy is ±5 m. It includes elevated roads, bridges and vegetation:
+it is <strong>not bare-earth ground beneath flyovers</strong>.
+Ground reconstruction, road profiles outside the pilot, tunnel clearance (5 m), bridge thickness (0.65 m),
+and vertical alignment of the pilot model are estimates.
+The pilot is source-model/topology confirmed, <strong>not survey verified</strong>.
+Per-feature quality, hashes and source URLs are included in
+<a href="/api/elevation" download="elevation.json">the offline elevation package</a>.</p>
+<p>官方地形網格精度為 ±5 米，包含天橋及植被，不能直接推算橋底地面。
+試點天橋採用官方三維模型；地面重建、其他道路及隧道高度、樓層換算和垂直基準對齊均為估算，並非實地測量。</p>
 <p>Road outline geometry uses locally packaged polygon-clipping under the
 <a href="/vendor/polygon-clipping/LICENSE.md">MIT licence</a>.</p>
 <p>Road data may be incomplete or outdated. Pickup points are fictional game stops near named areas,

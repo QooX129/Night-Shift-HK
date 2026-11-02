@@ -78,6 +78,7 @@ async function dispatchFixture(page) {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
+  await expect(page.locator("#welcome")).not.toBeVisible();
   return { commands, get state() { return state; }, expireOffers() { expire = true; } };
 }
 
@@ -162,7 +163,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=phone-orders-4`);
+      const module = await import(`/${path}?v=orders-terrain-merge-1`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

@@ -99,6 +99,7 @@ To stop the server, press **Ctrl+C** in the terminal.
 - The taxi uses a rotated rectangular body collider, configured in metres by
   `taxi_length` and `taxi_width` in `roads.py`'s `DRIVING` settings. The rendered
   body uses the same dimensions, including its outline, and scales with map zoom.
+  The current metric footprint is 4.7 m long by 1.7 m wide.
   Normal movement and reverse keep the full body within connected road corridors.
   Manual steering is not cancelled by wall contact: rotation may overlap
   the boundary. An overlapping taxi can slide along the wall or drive/reverse
@@ -221,12 +222,43 @@ high-resolution bitmap of the entire district.
 
 ### Experimental 3D view
 
-Press **3D** in the map tools after starting a shift. This is a visual conversion,
-not a new driving simulation: the Python game, road matching, rectangular collider,
-wall drag, junction selection, orders, fuel, and controls are unchanged. Roads
-remain flat even at stacked crossings; there is no gravity, suspension, slope
-handling, or 3D building collision. Building heights (10–38 m) and window details
-are deterministic artistic approximations, not measured Hong Kong architecture.
+Press **3D** in the map tools after starting a shift. The packaged district now
+contains official LandsD terrain and one highest-detail infrastructure-model pilot:
+**Yau Ma Tei Interchange over Hoi Wang Road**. Taxi height/pitch, road decks,
+road-surface guides, rings, building bases and chase camera use offline elevations.
+The source-confirmed pilot is **not survey verified**: its vertical datum alignment
+is estimated. Elsewhere ground/road/tunnel profiles are explicitly estimated from
+the DTM and OSM topology. Tagged building heights replace artistic random heights;
+floor counts × 3.2 m and an 18 m fallback remain labelled estimates.
+
+Slope gravity affects acceleration/braking in both views; client and server share
+the same surface and slope-speed-limit equations (12% simulation grade ceiling).
+The 2D map presentation, preferences, junction controls and existing corridor
+collider remain unchanged. No discarded boundary/blocker update is restored.
+No rigid-body jumps, suspension or rollover physics are added. Cars remain on their
+connected road surface, never switching to an unconnected bridge at a crossing.
+Solid bridge decks and estimated tunnel floors/walls/ceilings render separately;
+obstructing structures fade, and terrain fades for readable tunnel interiors.
+These are constrained arcade road-surface collisions, not surveyed 3D building/
+pillar collision meshes. Building collision still relies on staying on roads.
+
+See [elevation provenance and limitations](data/ELEVATION-SOURCES.md).
+The Government datasets retain their own attribution/terms, separate from ODbL.
+The game makes no external terrain/model requests at runtime.
+
+To reproduce the district package (map-build dependency only):
+
+```sh
+.venv/bin/python -m pip install -r requirements-map.txt
+.venv/bin/python tools/prepare_elevation.py --refresh
+.venv/bin/python tools/prepare_pilot.py
+```
+
+The DTM importer streams at most 40 MB compressed via HTTP ranges and retains
+only district samples, not the whole-Hong-Kong archive or expanded raster.
+The pilot importer downloads at most 5 MB and retains only a 200 m crossing clip.
+Without `--refresh`, the retained district DTM is reused. After refreshing OSM,
+rebuild both packages; stale map/elevation versions are rejected at server startup.
 
 The view includes a red-and-silver procedural taxi, extruded OSM building
 footprints, road directions, route/exit highlights, pickup/drop-off/rest-stop
@@ -370,18 +402,74 @@ junction tests; those are not addressed by the order update.
 
 ### Road-boundary model
 
-Road widths are game estimates shared by rendering, browser physics, and server
-validation: primary 16 m, secondary 14 m, tertiary 12 m, local/link roads 10 m,
-and service/living streets 8 m. These are not surveyed road or lane widths.
-The taxi body is 5 m × 2.2 m, close to a real Hong Kong taxi, so it fits the
-roads and the ~1.9 m citizens in proportion.
+Geographic scale is unchanged: centre lines and building footprints retain the
+same local metre coordinates derived from OSM latitude/longitude. Zoom changes
+the camera, not road geometry. Enlarging the entire map would also enlarge
+building blocks and is not a correction for oversized carriageways.
 
-A conservative 2.5 m-radius circle encloses the simulated taxi body. Its centre
-stays within a road capsule narrowed by that radius, keeping the complete
-footprint inside the rendered road. The map outlines both the approximate road
-edges and the collider limits inset by the taxi radius, so the visible limits
-match the movement constraint. The readable screen-sized icon is separate and
-can extend beyond the road edge at some zoom levels.
+`data/road-widths.json` supplies per-segment widths shared by Python validation,
+browser physics, 2D textures, minimap, 3D decks/joints, direction arrows and red
+boundaries. It prefers a usable OSM `width`, then estimates **3 m per tagged
+lane**, then uses one-way-aware class estimates. `lanes` is a carriageway total,
+not a per-direction count. These are tagged/estimated widths, not surveyed ones.
+The old broad `DRIVING.widths` values remain only for legacy maps/test fixtures
+without per-edge widths.
+
+A spatial audit constrains neighboring, near-parallel, same-level carriageways
+to leave at least **0.3 m** between their physical edges. Widths are reduced
+proportionally toward a 2.2 m minimum; coordinates are never shifted. Connected
+junctions, merging sections within 15 m of a shared node, and tagged
+bridge/tunnel/layer differences intentionally remain exempt. This is not a
+survey or a guarantee for missing/mistagged topology, nonparallel intersections,
+or road furniture. Impossible spacing is recorded as a conflict and reported
+when building/loading the package, not hidden by allowing the taxi through.
+The package includes provenance, requested widths, adjustments and spacing checks;
+its map version is validated on load. The current district audit has zero
+unresolved eligible pairs. The Ferry/Ching Ping pair that previously overlapped
+now retains at least the 0.3 m gap, and the 4.7 x 1.7 m taxi fits both roads.
+Red boundary strokes are 0.25 m wide rather than the previous 0.8 m, so the
+strokes themselves do not visually fill the minimum parallel-road gap.
+Their 3D segments use rounded, anti-aliased caps to close gaps at angled joins,
+without smoothing or moving the actual collision boundary.
+At acute or unequal-width junctions, the connected same-level road surfaces
+form one collision corridor throughout their overlap, not just within a small
+radius of the shared node. Internal red edges are clipped at that opening.
+This shared rule runs in browser and server physics; disconnected crossings,
+different-level approaches and queued-exit restrictions do not gain shortcuts.
+
+Other physical visual dimensions are centralized in `web/world-scale.mjs`.
+The 4.7 x 1.7 m taxi now has a 1.5 m roof, a 0.12 m taxi sign and 0.31 m-radius,
+0.19 m-wide wheels; its horizontal footprint still matches collision validation.
+Road paint is 0.1 m wide, with estimated 3 m dashes / 6 m gaps and 3 x 0.8 m
+direction arrows. Single narrow carriageways no longer get a centre divider.
+Building footprints and tagged/estimated heights are preserved; facade floors
+repeat every 3.2 m and window bays every 3 m. Missing building heights use the
+same labelled 18 m estimate rather than randomized heights, including flat 3D.
+Bridge thickness (0.65 m) and tunnel clearance (5 m) remain estimates, not
+surveyed dimensions; official pilot geometry is not rescaled. Terrain and
+geographic coordinates retain their original metre scale. Pickup beacons,
+route/junction highlights, map labels and HUD remain deliberately readable game
+overlays, not physical objects or surveyed road markings.
+
+The elevated driving view rasterizes its terrain backdrop at 3 pixels/metre
+(twice the overview's detail per axis), capped at 8192 pixels and the GPU's
+texture limit. This sharpens building-footprint edges without nearest-neighbor
+pixelation; mipmaps and anisotropic filtering remain enabled for distant and
+oblique surfaces. Overview and flat-renderer detail caches retain their existing
+budgets. The higher-detail terrain is built once, not refreshed while driving.
+
+The complete rotated taxi footprint must stay inside the connected road
+capsules. Red lines are static, full-district collision geometry built once
+per map, independent of taxi movement or its current road. Passable connected junction openings are removed using
+the physics candidate rules; disconnected overlapping roads do not erase an
+edge. In 3D the lines follow the associated road height, including ramps and
+tunnels. The same fixed boundaries appear in 2D, the minimap and district overview.
+District limits are also marked where they cross a road.
+These are physical road edges, not an inset taxi-centre limit: the taxi's front
+or side touches them before its centre does. Geometry is shared across map views
+and never rebuilt while driving. Normal camera/depth visibility still applies.
+Traffic and closure indicators
+remain separate from physical boundaries.
 
 Movement checkpoints carry the intervening positions. The backend checks the
 connected road corridor along those paths, rejecting off-road movement and
@@ -413,6 +501,16 @@ To rebuild from the existing source without downloading:
 ```sh
 python tools/prepare_map.py
 ```
+
+The map importer also rebuilds `data/road-widths.json`. To revise width rules
+without regenerating geographic/elevation data:
+
+```sh
+python tools/prepare_road_widths.py
+```
+
+Restart the Python server and reload the page after scale changes; existing
+shifts use the previous geometry and cannot be migrated safely.
 
 The importer retains road direction, access, grade-separation metadata, raw
 geometry, and turn-restriction relations; it excludes non-drivable and private

@@ -427,6 +427,7 @@ class Game:
         if session.fuel <= 0 and distance > 0.5:
             raise RuleError("Out of fuel. Call recovery.")
         previous = self.roads.edges[session.edge]
+        surface_speed_budget = self.roads.speed_limit(previous, old, session.heading)
         escaping_closure = previous.way if previous.way in session.closed else None
         history = session.history
         warning = session.warning
@@ -479,12 +480,10 @@ class Game:
                         check_body=False,
                     )
                     if physical and physical.edge.way in session.closed:
-                        raise RuleError(
-                            "Road closed. Reverse or steer onto another road."
-                        )
-                    raise RuleError(
-                        "The taxi footprint must remain on a connected road."
-                    )
+                        raise RuleError("Road closed. Reverse or steer onto another road.")
+                    raise RuleError("The taxi footprint must remain on a connected road.")
+                surface_speed_budget = max(surface_speed_budget,
+                                           self.roads.speed_limit(match.edge, sample_point, sample_heading))
                 if match.edge.way != escaping_closure:
                     escaping_closure = None
                 if match.edge.id != previous.id:
@@ -502,6 +501,10 @@ class Game:
             raise RuleError("Resume the game before driving.")
         if session.fuel <= 0 and total_distance > 0.01:
             raise RuleError("Out of fuel. Call recovery.")
+        if total_distance > elapsed * surface_speed_budget + 6:
+            raise RuleError("Movement exceeds the road's slope speed limit.")
+        if speed > self.roads.speed_limit(previous, point, heading) + 1e-6:
+            raise RuleError("Speed exceeds this road's slope limit.")
         session.edge, session.history, session.warning = previous.id, history, warning
         if session.selected_junction:
             node = self.roads.nodes[session.selected_junction]

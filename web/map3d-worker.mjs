@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=phone-orders-4";
-import { MapView } from "./map.mjs?v=phone-orders-4";
+import { Map3DView } from "./map3d.mjs?v=orders-terrain-merge-1";
+import { MapView } from "./map.mjs?v=orders-terrain-merge-1";
 
 let view;
 self.onmessage = ({ data }) => {
@@ -9,6 +9,7 @@ self.onmessage = ({ data }) => {
     view.groundMap = Object.create(MapView.prototype);
     view.groundMap.data = data.map;
     view.groundMap.unique = data.edges;
+    view.groundMap.drawCollisionLines = () => {};
     view.detailSize = data.size;
     view.detailScale = data.scale;
     const canvas = typeof OffscreenCanvas === "undefined" ? null : new OffscreenCanvas(1, 1);
@@ -16,18 +17,15 @@ self.onmessage = ({ data }) => {
     if (context) {
       view.detailMap = Object.create(view.groundMap);
       view.detailMap.backdrop = canvas;
-      view.detailMap.drawRoadBoundaries = () => {};
       view.detailMap.drawRoadDirections = () => {};
       context.fillText = () => {};
       context.strokeText = () => {};
     } else {
       console.warn("OffscreenCanvas 2D unavailable; 3D road textures will refresh on the main thread.");
     }
-    view.boundaryOutline = { geometry: { dispose() {} } };
     view.directionLines = { geometry: { dispose() {} } };
     return;
   }
-  view.updateBoundaries(data.x, data.y);
   view.updateDirections(data.x, data.y);
   let image = null;
   if (view.detailMap) {
@@ -36,7 +34,7 @@ self.onmessage = ({ data }) => {
     const canvas = view.detailMap.backdrop;
     image = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
   }
-  const geometries = [view.boundaryOutline.geometry, view.directionLines.geometry];
+  const geometries = [view.directionLines.geometry];
   const buffers = geometries.map(geometry => ({
     position: geometry.getAttribute("position").array,
     boundaryCoord: geometry.getAttribute("boundaryCoord").array,

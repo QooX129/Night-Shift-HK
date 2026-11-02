@@ -1,12 +1,15 @@
 """Metric road geometry, turn restrictions, and routing for the district."""
 
 from dataclasses import asdict, dataclass, replace
+import hashlib
 import heapq
 import itertools
 import json
 import math
+import warnings
 from pathlib import Path
 from typing import TypedDict
+from elevation import surface_pose, slope_speed_limit
 
 
 Point = tuple[float, float]
@@ -21,10 +24,10 @@ class DrivingConfig(TypedDict):
 
 
 DRIVING: DrivingConfig = {
-    "taxi_radius": 2,
-    "taxi_length": 5,
-    "taxi_width": 2.2,
-    "max_speed": 150 / 3.6,
+    "taxi_radius": 2.5,
+    "taxi_length": 3.7,
+    "taxi_width": 1.7,
+    "max_speed": 200 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
     "widths": {"primary": 16, "secondary": 14, "tertiary": 12, "unclassified": 10,
@@ -48,6 +51,8 @@ class Edge:
     bridge: str
     tunnel: str
     wrongway: bool = False
+    width: float | None = None
+    width_source: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +75,34 @@ class RoadMap:
     def __init__(self, path: Path):
         self.document = json.loads(path.read_text(encoding="utf-8"))
         self.version: str = self.document["version"]
+        width_path = path.with_name("road-widths.json")
+        width_version = ""
+        if width_path.exists():
+            width_bytes = width_path.read_bytes()
+            widths = json.loads(width_bytes)
+            width_version = "-road-scale-1-" + hashlib.sha256(width_bytes).hexdigest()[:12]
+            if widths["map_version"] != self.version:
+                raise ValueError("Road-width package is stale; rebuild tools/prepare_road_widths.py")
+            for edge in self.document["edges"]:
+                key = ":".join(map(str, (edge["way"], *sorted((edge["a"], edge["b"])))))
+                value = widths["values"][key]
+                width = value["width"]
+                if not isinstance(width, (int, float)) or not math.isfinite(width) or width <= 0:
+                    raise ValueError(f"Invalid road width for {edge['id']}")
+                edge["width"] = width
+                edge["width_source"] = value["source"] + ("-spacing-constrained" if value["spacing_constrained"] else "")
+            self.document["road_width_audit"] = widths["audit"]
+            if widths["conflicts"]:
+                warnings.warn(f"{len(widths['conflicts'])} unresolved road-width pairs; see {width_path}", stacklevel=2)
+        elif path.name == "district.json":
+            raise ValueError("Missing road-width package; run tools/prepare_road_widths.py")
+        elevation_path = path.with_name("elevation.json")
+        self.elevation = json.loads(elevation_path.read_text()) if elevation_path.exists() else None
+        if self.elevation and self.elevation["map_version"] != self.version:
+            raise ValueError("Elevation package is stale; rebuild tools/prepare_elevation.py")
+        self.document["elevation"] = self.elevation
+        if self.elevation:
+            self.document["license_scope"] = "ODbL covers OSM-derived components; Government elevation/model terms also apply"
         self.bounds: list[float] = self.document["bounds"]
         self.nodes: dict[str, Point] = {k: tuple(v) for k, v in self.document["nodes"].items()}
         self.edges = {e["id"]: Edge(**e) for e in self.document["edges"]}
@@ -80,7 +113,7 @@ class RoadMap:
                 self.edges[reverse.id] = reverse
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
         self.document["driving"] = DRIVING
-        self.version += "-manual-4"
+        self.version += "-manual-3" + ("-elevation-1" if self.elevation else "") + width_version
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -104,8 +137,15 @@ class RoadMap:
             edge.b for edge in self.edges.values() if self.stacked_choice(edge, set())
         })
 
+    def surface(self, edge: Edge, point: Point, heading: float) -> dict:
+        return surface_pose(self.nodes, self.elevation["node_heights"] if self.elevation else None,
+                            edge, point, heading)
+
+    def speed_limit(self, edge: Edge, point: Point, heading: float) -> float:
+        return slope_speed_limit(DRIVING["max_speed"], self.surface(edge, point, heading)["grade"])
+
     def radius(self, edge: Edge) -> float:
-        return DRIVING["widths"].get(edge.kind, 10) / 2
+        return (edge.width if edge.width is not None else DRIVING["widths"].get(edge.kind, 10)) / 2
 
     def body_fits(
         self, point: Point, heading: float, previous: Edge, padding: float = 0, allowance: float = 0,
@@ -163,17 +203,23 @@ class RoadMap:
         self, point: Point, previous: Edge,
         selected_exit: str | None = None, selected_junction: str | None = None,
     ) -> list[Edge]:
-        """Reach other segments only through nearby shared OSM nodes, never crossings."""
+        """Join nearby shared nodes or overlapping same-level connected surfaces."""
         found = {previous.id: previous}
         stack = [previous]
         while stack:
             edge = stack.pop()
+            reach = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
+            on_surface = project(point, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + reach
             for node in (edge.a, edge.b):
-                reach = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
-                if math.dist(point, self.nodes[node]) > self.radius(edge) + reach:
-                    continue
+                near_node = math.dist(point, self.nodes[node]) <= self.radius(edge) + reach
                 for nxt in self.outgoing.get(node, []):
                     if node == selected_junction and nxt.id != selected_exit:
+                        continue
+                    if not near_node and not (
+                        on_surface
+                        and (edge.layer, edge.bridge, edge.tunnel) == (nxt.layer, nxt.bridge, nxt.tunnel)
+                        and project(point, self.nodes[nxt.a], self.nodes[nxt.b])[1] <= self.radius(nxt) + reach
+                    ):
                         continue
                     if nxt.id not in found:
                         found[nxt.id] = nxt
@@ -200,6 +246,10 @@ class RoadMap:
             if selected_junction is not None and edge.a == selected_junction and edge.id != selected_exit:
                 continue
             nearest, distance, fraction = project(point, self.nodes[edge.a], self.nodes[edge.b])
+            if (self.elevation and edge.id != previous.id
+                    and abs(self.surface(edge, point, heading)["height"]
+                            - self.surface(previous, point, heading)["height"]) > .35):
+                continue
             if distance <= self.radius(edge) + 1e-6:
                 score = distance + (1 - math.cos(heading - self.angle(edge))) * 0.15
                 match = Match(edge, nearest, distance, fraction, edge.wrongway)
@@ -316,7 +366,10 @@ class RoadMap:
             for nxt in self.exits(edge, state[1], closed):
                 next_history = self.history(state[1], nxt.way)
                 next_state = (nxt.id, next_history)
-                candidate = cost + nxt.length / traffic.get(nxt.way, 1.0)
+                heading = math.atan2(self.nodes[nxt.b][1] - self.nodes[nxt.a][1],
+                                     self.nodes[nxt.b][0] - self.nodes[nxt.a][0])
+                candidate = cost + nxt.length / traffic.get(nxt.way, 1.0) * DRIVING["max_speed"] / self.speed_limit(
+                    nxt, self.nodes[nxt.a], heading)
                 if candidate < costs.get(next_state, math.inf):
                     costs[next_state] = candidate
                     parents[next_state] = state

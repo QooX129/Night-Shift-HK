@@ -95,6 +95,11 @@ def stops() -> list[dict]:
     ]
 
 
+@app.get("/api/elevation")
+def elevation_source() -> FileResponse:
+    return FileResponse(ROOT / "data/elevation.json", media_type="application/json", filename="elevation.json")
+
+
 @app.post("/api/sessions")
 def create_session() -> dict:
     try:

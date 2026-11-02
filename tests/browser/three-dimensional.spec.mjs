@@ -6,7 +6,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=phone-orders-4");
+    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -80,7 +80,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -115,7 +115,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("3D road guides have camera-independent selected, pickup, yellow, normal priority", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -152,16 +152,21 @@ test("3D road guides have camera-independent selected, pickup, yellow, normal pr
   }
 });
 
-test("3D district renders locally and toggles without resetting the shift or changing physics", async ({ page }, testInfo) => {
+test("legacy flat 3D fallback renders locally and toggles without resetting the shift", async ({ page }, testInfo) => {
   const errors = [], external = [];
   page.on("pageerror", error => errors.push(error.message));
   page.on("request", request => {
     if (!request.url().startsWith("http://127.0.0.1:8765")) external.push(request.url());
   });
+  await page.route("**/api/map", async route => {
+    const response = await route.fetch(), data = await response.json();
+    data.elevation = null;
+    await route.fulfill({ response, json: data });
+  });
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -210,21 +215,18 @@ test("3D district renders locally and toggles without resetting the shift or cha
   expect(arrows.nativePass && arrows.smoothed && arrows.priority).toBe(true);
   expect(arrows.vertices).toBeGreaterThan(0);
   const boundaryAreas = await page.evaluate(async () => {
-    const clipping = (await import("/vendor/polygon-clipping/polygon-clipping.mjs")).default;
-    const view = window.threeView, difference = clipping.difference;
-    let outlines;
-    clipping.difference = (...args) => { outlines = difference(...args); return outlines; };
+    const view = window.threeView;
     const results = [];
     try {
-      for (const [x, y] of [[64, 512], [0, 448], [128, 576], [-256, 192]]) {
-        view.updateBoundaries(x, y);
-        const half = view.detailSize / 2;
-        outlines = clipping.intersection(outlines, [[[x - half, y - half], [x + half, y - half],
-          [x + half, y + half], [x - half, y + half], [x - half, y - half]]]);
-        const ringArea = ring => Math.abs(ring.slice(1).reduce((sum, point, i) =>
-          sum + ring[i][0] * point[1] - point[0] * ring[i][1], 0) / 2);
-        const expected = outlines.reduce((sum, [outer, ...holes]) =>
-          sum + ringArea(outer) - holes.reduce((total, hole) => total + ringArea(hole), 0), 0);
+      const roads = view.groundMap.collisionLines.roads;
+      for (const edge of [...roads.edges.values()].slice(0, 4)) {
+        const a = roads.nodes[edge.a], b = roads.nodes[edge.b];
+        const car = { edge: edge.id, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
+        view.updateBoundaries(car);
+        const { COLLISION_LINE_WIDTH } = await import("/collision-lines.mjs?v=orders-terrain-merge-1");
+        const expected = view.boundaryLines.reduce((sum, { a, b }) =>
+          sum + Math.hypot(b[0] - a[0], b[1] - a[1]) * COLLISION_LINE_WIDTH
+            + 8 * Math.sin(Math.PI / 8) * (COLLISION_LINE_WIDTH / 2) ** 2, 0);
         const vertices = view.boundaryOutline.geometry.getAttribute("position");
         let actual = 0;
         for (let i = 0; i < vertices.count; i += 3) {
@@ -238,12 +240,12 @@ test("3D district renders locally and toggles without resetting the shift or cha
           bounds.minY = Math.min(bounds.minY, vertices.getZ(i));
           bounds.maxY = Math.max(bounds.maxY, vertices.getZ(i));
         }
-        results.push({ expected, actual, contained: bounds.minX >= x - half - 0.001
-          && bounds.maxX <= x + half + 0.001 && bounds.minY >= y - half - 0.001 && bounds.maxY <= y + half + 0.001 });
+        const [left, top, right, bottom] = view.data.bounds;
+        results.push({ expected, actual, contained: bounds.minX >= left - .126
+          && bounds.maxX <= right + .126 && bounds.minY >= top - .126 && bounds.maxY <= bottom + .126 });
       }
     } finally {
-      clipping.difference = difference;
-      view.updateBoundaries(view.groundDetail.position.x, view.groundDetail.position.z);
+      view.updateBoundaries(window.threeCar);
     }
     return results;
   });
@@ -307,7 +309,7 @@ test("3D district renders locally and toggles without resetting the shift or cha
   await page.evaluate(() => { window.threeHeadingOffset = 0; });
 
   await page.locator("#language").click();
-  await expect(page.locator("#view-status")).toContainText("3D 預覽");
+  await expect(page.locator("#view-status")).toContainText("3D 實驗");
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-label", "切換至 2D 地圖");
   await page.locator("#zoom-in").click();
   await page.locator("#overview").click();
@@ -353,7 +355,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=phone-orders-4");
+    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -370,6 +372,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
     const view = new Map3DView(canvas, data, []);
     try {
       view.updateGroundDetail({ x: 0, y: 0 });
+      view.updateBoundaries({ x: 0, y: 0, edge: "0" });
       view.taxi.visible = false;
       const { backdrop } = view.detailMap;
       const cutOutline = view.lineGeometry([[
@@ -396,12 +399,16 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       capture.width = canvas.width; capture.height = canvas.height;
       const c = capture.getContext("2d");
       c.drawImage(canvas, 0, 0);
-      const pixel = (x, y) => {
-        const point = view.groundDetail.position.clone().set(x, 0.04, y).project(view.lens);
-        return [...c.getImageData(Math.round((point.x + 1) * capture.width / 2),
-          Math.round((1 - point.y) * capture.height / 2), 1, 1).data];
+      const pixel = (x, y, strongestRed = false) => {
+        const point = view.groundDetail.position.clone().set(x, 0.14, y).project(view.lens);
+        const px = Math.round((point.x + 1) * capture.width / 2),
+          py = Math.round((1 - point.y) * capture.height / 2);
+        if (!strongestRed) return [...c.getImageData(px, py, 1, 1).data];
+        const samples = c.getImageData(px - 1, py - 1, 3, 3).data;
+        const pixels = Array.from({ length: 9 }, (_, i) => [...samples.slice(i * 4, i * 4 + 4)]);
+        return pixels.sort((a, b) => (b[0] - b[1]) - (a[0] - a[1]))[0];
       };
-      const edges = [pixel(-12, -5), pixel(5, 12)];
+      const edges = [pixel(-12, -5, true), pixel(5, 12, true)];
       const openings = [pixel(1, 1), pixel(0, 3), pixel(-12, 0), pixel(-12, -7)];
       view.quality = 0.55;
       view.resize();
@@ -409,7 +416,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
       view.lens.lookAt(0, 0, 0);
       view.drawScene();
       c.drawImage(canvas, 0, 0);
-      const continuous = Array.from({ length: 30 }, (_, i) => pixel(-25 + i * 0.5, -5));
+      const continuous = Array.from({ length: 30 }, (_, i) => pixel(-25 + i * 0.5, -5, true));
       const guide = view.ribbon([data.edges[0], data.edges[2]], "#24ca72", 1.4, 0.25);
       view.drawScene();
       c.drawImage(canvas, 0, 0);

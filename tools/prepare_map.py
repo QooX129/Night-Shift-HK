@@ -9,6 +9,10 @@ from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
+if __package__:
+    from .prepare_road_widths import build as build_road_widths
+else:
+    from prepare_road_widths import build as build_road_widths
 
 ROOT = Path(__file__).resolve().parents[1]
 BOUNDS = (22.304, 114.161, 22.324, 114.178)
@@ -179,6 +183,7 @@ def build(raw_path: Path, output: Path) -> None:
     print(f"Prepared {len(nodes)} nodes, {len(edges)} directed edges, {len(backdrop)} backdrop shapes")
     print(f"Restrictions: {len(restrictions)} supported; {len(omitted)} require audit")
     print(f"Dataset version: {result['version']}")
+    build_road_widths(output, raw_path, output.with_name("road-widths.json"))
 
 
 if __name__ == "__main__":

@@ -182,19 +182,35 @@ class GameTests(unittest.TestCase):
                 self.session.history, self.session.closed, self.session.traffic,
             )
             self.assertIsNotNone(route)
-            for index, edge_id in enumerate(route):
-                edge = self.roads.edges[edge_id]
-                destination = target.point if index == len(route) - 1 else self.roads.nodes[edge.b]
+            vertices = [self.session.point, *[self.roads.nodes[self.roads.edges[key].b] for key in route[:-1]], target.point]
+            vertices = [point for index, point in enumerate(vertices) if index == 0 or math.dist(point, vertices[index - 1]) > .01]
+
+            def line_to(destination):
                 origin = self.session.point
-                length = math.dist(origin, destination)
-                steps = max(1, math.ceil(length / 15))
+                steps = max(1, math.ceil(math.dist(origin, destination) / 10))
+                heading = math.atan2(destination[1] - origin[1], destination[0] - origin[0])
                 for i in range(1, steps + 1):
-                    point = (
-                        origin[0] + (destination[0] - origin[0]) * i / steps,
-                        origin[1] + (destination[1] - origin[1]) * i / steps,
-                    )
-                    dt = math.dist(self.session.point, point) / 10
-                    self.cmd("move", x=point[0], y=point[1], heading=self.roads.angle(edge), speed=10, dt=dt)
+                    point = tuple(a + (b - a) * i / steps for a, b in zip(origin, destination))
+                    self.cmd("move", x=point[0], y=point[1], heading=heading, speed=3,
+                             dt=math.dist(self.session.point, point) / 3)
+
+            # Narrow lanes require steering before the nose reaches a corner,
+            # not instantaneous heading changes while following a sharp vertex.
+            for index in range(1, len(vertices) - 1):
+                before, node, after = vertices[index - 1:index + 2]
+                incoming, outgoing = math.dist(before, node), math.dist(node, after)
+                trim = min(3.5, incoming * .45, outgoing * .45)
+                start = tuple(b + (a - b) * trim / incoming for a, b in zip(before, node))
+                end = tuple(b + (a - b) * trim / outgoing for a, b in zip(after, node))
+                line_to(start)
+                for step in range(1, 21):
+                    t = step / 20
+                    point = tuple((1 - t) ** 2 * a + 2 * t * (1 - t) * b + t ** 2 * c
+                                  for a, b, c in zip(start, node, end))
+                    tangent = tuple((1 - t) * (b - a) + t * (c - b) for a, b, c in zip(start, node, end))
+                    self.cmd("move", x=point[0], y=point[1], heading=math.atan2(tangent[1], tangent[0]),
+                             speed=3, dt=math.dist(self.session.point, point) / 3)
+            line_to(vertices[-1])
             self.cmd("move", x=self.session.point[0], y=self.session.point[1], heading=self.session.heading, speed=0, dt=0)
             self.cmd("service")
             if expected_phase == "onboard":
@@ -225,11 +241,13 @@ class GameTests(unittest.TestCase):
     def test_movement_fuel_congestion_and_pause_clock(self):
         self.cmd("pause", paused=False)
         x, y = self.session.point
-        self.cmd("move", x=x + 2, y=y, speed=2, heading=0, dt=1)
+        heading = self.session.heading
+        point = (x + math.cos(heading) * 2, y + math.sin(heading) * 2)
+        self.cmd("move", x=point[0], y=point[1], speed=2, heading=heading, dt=1)
         self.assertLess(self.session.fuel, 100)
         self.assertEqual(self.session.elapsed, 1)
         self.cmd("pause", paused=True)
-        self.cmd("move", x=x + 2, y=y, speed=0, heading=0, dt=0)
+        self.cmd("move", x=point[0], y=point[1], speed=0, heading=heading, dt=0)
         self.assertEqual(self.session.elapsed, 1)
 
     def test_upgrades_recovery_refuel(self):

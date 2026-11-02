@@ -10,7 +10,7 @@ for (const density of [1, 2, 3]) {
       await page.locator("#start").click();
       await expect(page.locator("#welcome")).not.toBeVisible();
       const results = await page.evaluate(async () => {
-        const { MapView } = await import("/map.mjs?v=phone-orders-4");
+        const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
         const data = await (await fetch("/api/map")).json();
         const view = new MapView(document.createElement("canvas"), data, []);
         const [left, top, right, bottom] = data.bounds;

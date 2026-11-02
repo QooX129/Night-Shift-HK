@@ -1,4 +1,7 @@
-import { doorSide, peopleOnMap } from "./citizens.mjs?v=phone-orders-4";
+import { doorSide, peopleOnMap } from "./citizens.mjs?v=orders-terrain-merge-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=orders-terrain-merge-1";
+import { roadWidth } from "./road-width.mjs";
+import { WORLD_SCALE } from "./world-scale.mjs";
 
 export class MapView {
   constructor(canvas, data, stops, { compact = false } = {}) {
@@ -6,6 +9,7 @@ export class MapView {
     this.compact = compact;
     this.ctx = canvas.getContext("2d");
     this.data = data;
+    this.collisionLines = staticCollisionLines(data);
     this.edges = new Map(data.edges.map(e => [e.id, e]));
     this.stops = stops;
     this.zoom = 1.65;
@@ -51,12 +55,12 @@ export class MapView {
       for (const e of this.unique) {
         const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
         const major = ["primary", "secondary"].includes(e.kind);
-        c.lineWidth = (this.data.driving.widths[e.kind] ?? 10) + (border ? 2 : 0);
+        c.lineWidth = roadWidth(this.data.driving, e) + (border ? .2 : 0);
         c.strokeStyle = border ? "#17292d" : e.layer !== "0" ? "#52605b" : major ? "#4b5955" : "#3b504f";
         c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
       }
     }
-    this.drawRoadBoundaries(c, s);
+    this.drawCollisionLines(c);
     this.drawRoadDirections(c);
     const labelled = new Set();
     const occupied = new Set();
@@ -79,28 +83,12 @@ export class MapView {
   roadPath(c, e) {
     c.moveTo(...this.data.nodes[e.a]); c.lineTo(...this.data.nodes[e.b]);
   }
-  drawRoadBoundaries(context, scale) {
-    const mask = document.createElement("canvas");
-    mask.width = this.backdrop.width; mask.height = this.backdrop.height;
-    const c = mask.getContext("2d");
-    const [left, top] = this.backdropBounds;
-    c.scale(scale, scale); c.translate(-left, -top);
-    c.lineCap = "round"; c.strokeStyle = "#f15e5e";
-    for (const erase of [false, true]) {
-      c.globalCompositeOperation = erase ? "destination-out" : "source-over";
-      for (const edge of this.unique) {
-        const width = this.data.driving.widths[edge.kind] ?? 10;
-        const radius = Math.max(0, width / 2 - (this.data.driving.taxi_length ? 0 : this.data.driving.taxi_radius));
-        const strokeWidth = Math.max(0, radius * 2 + (erase ? -1 : 1));
-        if (strokeWidth === 0) continue;
-        c.lineWidth = strokeWidth;
-        c.beginPath(); this.roadPath(c, edge); c.stroke();
-      }
-    }
-    context.save(); context.resetTransform();
-    context.globalAlpha = 0.8;
-    context.drawImage(mask, 0, 0);
-    context.restore();
+  drawCollisionLines(c) {
+    c.save();
+    c.strokeStyle = "#f15e5e"; c.globalAlpha = .8; c.lineWidth = COLLISION_LINE_WIDTH; c.lineCap = "round";
+    c.beginPath();
+    for (const { a, b } of this.collisionLines.all()) { c.moveTo(...a); c.lineTo(...b); }
+    c.stroke(); c.restore();
   }
   *directionArrows() {
     const legal = this.data.edges.filter(edge => !edge.wrongway);
@@ -110,7 +98,7 @@ export class MapView {
       const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
       const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
       const offset = directions.has(`${edge.way}:${edge.b}:${edge.a}`)
-        ? (this.data.driving.widths[edge.kind] ?? 10) / 4 : 0;
+        ? roadWidth(this.data.driving, edge) / 4 : 0;
       const count = Math.max(1, Math.floor(edge.length / 55));
       for (let i = 0; i < count; i++) {
         const t = (i + 0.5) / count;
@@ -120,11 +108,12 @@ export class MapView {
     }
   }
   drawRoadDirections(c) {
-    c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = 0.9;
+    c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = WORLD_SCALE.markingWidth;
     for (const { x, y, angle } of this.directionArrows()) {
       c.save(); c.translate(x, y); c.rotate(angle);
-      c.beginPath(); c.moveTo(-3, 0); c.lineTo(3, 0);
-      c.moveTo(0, -2); c.lineTo(3, 0); c.lineTo(0, 2); c.stroke();
+      const tip = WORLD_SCALE.arrowLength / 2, halfWidth = WORLD_SCALE.arrowWidth / 2;
+      c.beginPath(); c.moveTo(-tip, 0); c.lineTo(tip, 0);
+      c.moveTo(0, -halfWidth); c.lineTo(tip, 0); c.lineTo(0, halfWidth); c.stroke();
       c.restore();
     }
     c.restore();
