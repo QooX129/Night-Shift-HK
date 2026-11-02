@@ -1,5 +1,5 @@
 import { RoadNetwork, project } from "./physics.mjs?v=orders-terrain-merge-1";
-import { surfacePose } from "./elevation.mjs";
+import { surfacePose, surfaceSegments } from "./elevation.mjs";
 
 const mapLines = new WeakMap();
 export const COLLISION_LINE_WIDTH = .25;
@@ -68,7 +68,14 @@ export class CollisionLines {
       a = pointAt(originalA, originalB, clipped[0][0]);
       b = pointAt(originalA, originalB, clipped[0][1]);
       const firstLine = lines.length;
-      const length = Math.hypot(b[0] - a[0], b[1] - a[1]), steps = Math.max(1, Math.ceil(length / 2));
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const profile = roads.elevation?.road_profiles?.[edge.id];
+      const grade = roads.elevation
+        ? (roads.elevation.node_heights[edge.b] - roads.elevation.node_heights[edge.a])
+          / Math.hypot(roads.nodes[edge.b][0] - roads.nodes[edge.a][0],
+            roads.nodes[edge.b][1] - roads.nodes[edge.a][1]) : 0;
+      const curved = profile && profile.some(value => Math.abs(value - grade) > 1e-9);
+      const steps = Math.max(1, Math.ceil(length / 2), curved ? surfaceSegments(roads, edge, a, b).length : 1);
       for (let i = 0; i < steps; i++) {
         const start = pointAt(a, b, i / steps), end = pointAt(a, b, (i + 1) / steps);
         let intervals = rectangleInterval(start, end, bounds);
@@ -95,7 +102,8 @@ export class CollisionLines {
           const first = pointAt(start, end, low), last = pointAt(start, end, high);
           if (Math.hypot(last[0] - first[0], last[1] - first[1]) > .01) {
             const previous = lines.length > firstLine ? lines[lines.length - 1] : null;
-            if (previous && Math.hypot(previous.b[0] - first[0], previous.b[1] - first[1]) < 1e-7)
+            if (previous && !curved
+                && Math.hypot(previous.b[0] - first[0], previous.b[1] - first[1]) < 1e-7)
               previous.b = last;
             else lines.push({ a: first, b: last, edge });
           }

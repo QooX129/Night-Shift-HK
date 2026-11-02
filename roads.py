@@ -9,7 +9,7 @@ import math
 import warnings
 from pathlib import Path
 from typing import TypedDict
-from elevation import surface_pose, slope_speed_limit
+from elevation import road_profiles, surface_pose, slope_speed_limit
 
 
 Point = tuple[float, float]
@@ -27,7 +27,7 @@ DRIVING: DrivingConfig = {
     "taxi_radius": 2.5,
     "taxi_length": 3.7,
     "taxi_width": 1.7,
-    "max_speed": 200 / 3.6,
+    "max_speed": 160 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
     "widths": {"primary": 16, "secondary": 14, "tertiary": 12, "unclassified": 10,
@@ -112,8 +112,10 @@ class RoadMap:
                 reverse = replace(edge, id=f"~{edge.id}", a=edge.b, b=edge.a, wrongway=True)
                 self.edges[reverse.id] = reverse
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
+        if self.elevation:
+            self.elevation["road_profiles"] = road_profiles(self.nodes, self.elevation["node_heights"], list(self.edges.values()))
         self.document["driving"] = DRIVING
-        self.version += "-manual-3" + ("-elevation-1" if self.elevation else "") + width_version
+        self.version += "-manual-3" + ("-elevation-curves-1" if self.elevation else "") + width_version
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -139,7 +141,7 @@ class RoadMap:
 
     def surface(self, edge: Edge, point: Point, heading: float) -> dict:
         return surface_pose(self.nodes, self.elevation["node_heights"] if self.elevation else None,
-                            edge, point, heading)
+                            edge, point, heading, self.elevation.get("road_profiles") if self.elevation else None)
 
     def speed_limit(self, edge: Edge, point: Point, heading: float) -> float:
         return slope_speed_limit(DRIVING["max_speed"], self.surface(edge, point, heading)["grade"])

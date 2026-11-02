@@ -183,19 +183,33 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
     view.updateOverlays({ ...state, phase: "onboard" }, null, null);
     const initialMs = performance.now() - started;
     const initialBuilds = builds;
+    let segmentBuilds = 0;
+    const round = view.roundLineGeometry;
+    view.roundLineGeometry = function (...args) { segmentBuilds++; return round.apply(this, args); };
     for (let i = 1; i < Math.min(20, state.route.length); i++) {
       const start = performance.now();
       view.updateOverlays({ ...state, phase: "onboard", route: state.route.slice(i) }, null, null);
       samples.push(performance.now() - start);
     }
+    const progressBuilds = builds - initialBuilds;
+    const rerouteSamples = [];
+    for (let i = 1; i < Math.min(10, state.route.length); i++) {
+      const start = performance.now();
+      const route = [...state.route.slice(i), ...state.route.slice(0, i)];
+      view.updateOverlays({ ...state, phase: "onboard", route }, null, null);
+      rerouteSamples.push(performance.now() - start);
+    }
     for (const mesh of view.overlays.children) { mesh.geometry.dispose(); mesh.material.dispose(); }
     return { initialMs, maxProgressMs: Math.max(...samples), transitions: samples.length,
-      progressBuilds: builds - initialBuilds };
+      progressBuilds, segmentBuilds, reroutes: rerouteSamples.length, maxRerouteMs: Math.max(...rerouteSamples) };
   });
   console.log(`Passenger GPS update timing ${JSON.stringify(result)}`);
   expect(result.transitions).toBeGreaterThan(0);
   expect(result.progressBuilds).toBe(0);
   expect(result.maxProgressMs).toBeLessThan(16.7);
+  expect(result.reroutes).toBeGreaterThan(0);
+  expect(result.segmentBuilds).toBe(0);
+  expect(result.maxRerouteMs).toBeLessThan(16.7);
 });
 
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {

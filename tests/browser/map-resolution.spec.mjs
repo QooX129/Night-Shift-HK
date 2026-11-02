@@ -47,34 +47,91 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
       const sharp = capture();
       view.terrainDetailEnabled.value = 0;
       const coarse = capture();
-      // Compare against a separately rasterized 16 px/m reference through the same terrain shader.
-      build.call(view.detailMap, initialBounds, 16);
-      const referenceCanvas = view.detailMap.backdrop;
-      texture.image = referenceCanvas.getContext("2d").getImageData(0, 0, referenceCanvas.width, referenceCanvas.height);
-      texture.needsUpdate = true;
-      view.terrainDetailEnabled.value = 1;
+      // Use ordinary canvas mapping as an independent reference for the terrain shader.
+      build.call(view.detailMap, initialBounds, 8);
+      const oldTexture = new THREE.CanvasTexture(view.detailMap.backdrop);
+      oldTexture.colorSpace = texture.colorSpace;
+      oldTexture.anisotropy = texture.anisotropy;
+      oldTexture.repeat.set(600 / view.detailSize, 600 / view.detailSize);
+      oldTexture.offset.set((data.bounds[0] - initialBounds[0]) / view.detailSize,
+        (initialBounds[3] - data.bounds[3]) / view.detailSize);
+      const coarseTexture = view.ground.material.map;
+      view.ground.material.map = oldTexture;
+      const oldDetail = capture();
+      const referenceMap = Object.create(view.detailMap);
+      referenceMap.backdrop = document.createElement("canvas");
+      const referenceContext = referenceMap.backdrop.getContext("2d");
+      referenceContext.fillText = () => {};
+      referenceContext.strokeText = () => {};
+      build.call(referenceMap, initialBounds, 32);
+      const referenceCanvas = referenceMap.backdrop;
+      const referenceTexture = new THREE.CanvasTexture(referenceCanvas);
+      referenceTexture.colorSpace = texture.colorSpace;
+      referenceTexture.anisotropy = texture.anisotropy;
+      referenceTexture.repeat.set(600 / view.detailSize, 600 / view.detailSize);
+      referenceTexture.offset.set((data.bounds[0] - initialBounds[0]) / view.detailSize,
+        (initialBounds[3] - data.bounds[3]) / view.detailSize);
+      view.ground.material.map = referenceTexture;
       const reference = capture();
+      view.ground.material.map = coarseTexture;
+      referenceTexture.dispose();
+      oldTexture.dispose();
       const pixels = image => image.getContext("2d").getImageData(0, 0, image.width, image.height).data;
-      const expected = pixels(reference), actual = pixels(sharp), old = pixels(coarse);
-      let sharpError = 0, coarseError = 0;
+      const expected = pixels(reference), actual = pixels(sharp), old = pixels(coarse), previous = pixels(oldDetail);
+      let sharpError = 0, coarseError = 0, oldDetailError = 0;
       for (let y = Math.floor(canvas.height * .35); y < canvas.height * .65; y++) {
         for (let x = Math.floor(canvas.width * .3); x < canvas.width * .85; x++) {
           const index = (y * canvas.width + x) * 4;
           sharpError += Math.abs(actual[index] - expected[index]);
           coarseError += Math.abs(old[index] - expected[index]);
+          oldDetailError += Math.abs(previous[index] - expected[index]);
         }
       }
-      texture.image = initialImage; texture.needsUpdate = true;
+      view.terrainDetailEnabled.value = 1;
       view.detailMap.backdropScale = view.detailScale;
       const response = new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      const uploads = [];
+      const copy = view.renderer.copyTextureToTexture;
+      view.renderer.copyTextureToTexture = function (source, ...args) {
+        const started = performance.now();
+        const result = copy.call(this, source, ...args);
+        uploads.push({ bytes: source.image.data.byteLength, ms: performance.now() - started });
+        return result;
+      };
       view.updateGroundDetail({ x: 80, y: 16 });
       await response;
       view.updateGroundDetail({ x: 80, y: 16 });
-      const shifted = view.terrainDetailBounds.x === -128 && view.detailMap.backdropBounds[0] === -128;
-      const stable = texture === view.groundDetail.material.map && builds === 0;
+      const previousVisible = view.groundDetail.material.map === texture
+        && view.terrainDetailBounds.x === initialBounds[0] && Boolean(view.detailUpload);
+      let uploadFrames = 1;
+      while (view.detailUpload && uploadFrames < 100) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        view.updateGroundDetail({ x: 80, y: 16 });
+        uploadFrames++;
+      }
+      const shifted = view.terrainDetailBounds.x === -64 && view.detailMap.backdropBounds[0] === -64;
+      const stable = texture === view.detailSpareTexture && builds === 0;
+      const shiftedPixels = pixels(capture());
+      let shiftedError = 0;
+      for (let i = 0; i < actual.length; i++) shiftedError = Math.max(shiftedError, Math.abs(actual[i] - shiftedPixels[i]));
+      const textureCount = view.renderer.info.memory.textures;
+      const versions = [texture.version, view.groundDetail.material.map.version];
+      const secondResponse = new Promise(resolve => view.detailWorker.addEventListener("message", resolve, { once: true }));
+      view.updateGroundDetail({ x: 144, y: 16 });
+      await secondResponse;
+      do {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        view.updateGroundDetail({ x: 144, y: 16 });
+      } while (view.detailUpload);
+      capture();
+      const recycled = view.groundDetail.material.map === texture
+        && textureCount === view.renderer.info.memory.textures
+        && versions[0] === texture.version && versions[1] === view.detailSpareTexture.version;
       view.overview = true;
       view.updateGroundDetail(car);
-      return { sharpError, coarseError, reused, shifted, stable,
+      return { sharpError, coarseError, oldDetailError, reused, shifted, stable, previousVisible, recycled,
+        uploadFrames, shiftedError, uploadBytes: uploads.map(upload => upload.bytes),
+        maxUploadMs: Math.max(...uploads.map(upload => upload.ms)),
         enabledInOverview: view.terrainDetailEnabled.value, flatOverlayVisible: view.groundDetail.visible,
         width: initialImage.width, scale: view.detailScale,
         terrainHeight: view.terrainTiles[0].geometry.getAttribute("position").getY(0) };
@@ -84,12 +141,21 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
       canvas.remove();
     }
   });
-  expect(result.scale).toBe(8);
-  expect(result.width).toBe(3072);
+  expect(result.scale).toBe(16);
+  expect(result.width).toBe(4096);
   expect(result.terrainHeight).toBe(10);
-  console.log(`Terrain footprint edge error: ${result.sharpError} detailed / ${result.coarseError} district`);
+  console.log(`Terrain footprint edge error: ${result.sharpError} detailed / ${result.oldDetailError} previous / ${result.coarseError} district`);
   expect(result.sharpError, JSON.stringify(result)).toBeLessThan(result.coarseError * .5);
+  expect(result.sharpError, JSON.stringify(result)).toBeLessThan(result.oldDetailError * .65);
   expect(result.reused && result.shifted && result.stable).toBe(true);
+  expect(result.previousVisible).toBe(true);
+  expect(result.recycled).toBe(true);
+  expect(result.uploadFrames).toBeGreaterThan(1);
+  expect(result.uploadFrames).toBeLessThan(100);
+  expect(Math.max(...result.uploadBytes)).toBeLessThanOrEqual(2 * 1024 * 1024);
+  expect(result.shiftedError).toBeLessThanOrEqual(8);
+  expect(result.maxUploadMs).toBeLessThan(30);
+  console.log(`Terrain streaming: ${result.uploadFrames} frames, max upload ${result.maxUploadMs} ms`);
   expect(result.enabledInOverview).toBe(0);
   expect(result.flatOverlayVisible).toBe(false);
   expect(errors).toEqual([]);

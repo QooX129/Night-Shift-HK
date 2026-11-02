@@ -57,6 +57,15 @@ envelope of the DTM plus 6 m per bridge/tunnel OSM layer. Shared graph-node
 heights and grade-bounded propagation ensure continuous ramps, including reverse
 edges. A single DTM cannot establish ground under a flyover: reconstructed ground
 and underpass clearances must not be described as measured.
+At map load, the shared-node heights are converted into monotone cubic Hermite
+profiles. Two-neighbor continuations within a 60-degree bend use weighted
+harmonic-mean endpoint grades; extrema, sharp bends and multi-road junctions
+use zero grade. Reverse edges use the same physical profile. No smoothing
+crosses disconnected graph nodes, even at coincident map coordinates.
+The source preparation's 12% bound applies to average segment grade; the cubic
+profile's local grade can exceed that average. Endpoint elevations and source
+model geometry are not altered. Python exports the profiles to the browser so
+taxi pitch, slope forces, validation and rendered surfaces share the equations.
 Matching also rejects overlapping fork surfaces differing by more than 0.35 m
 at the car's centre; actual level changes must follow continuous shared-node ramps.
 The same filter and endpoint/path slope speed budgets run in Python and JavaScript.

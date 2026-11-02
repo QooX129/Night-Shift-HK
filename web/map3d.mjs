@@ -2,7 +2,7 @@ import * as THREE from "./vendor/three/three.module.min.js";
 import { MapView } from "./map.mjs?v=orders-terrain-merge-1";
 import { doorSide, peopleOnMap } from "./citizens.mjs?v=orders-terrain-merge-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, terrainHeight } from "./elevation.mjs";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs";
 import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=orders-terrain-merge-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
@@ -65,12 +65,16 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=terrain-detail-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=route-stream-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale });
       this.detailWorker.onmessage = ({ data }) => {
+        if (data.type === "route") {
+          if (data.request === this.pendingRoute?.request) this.readyRoute = data;
+          return;
+        }
         this.detailPending = false;
         this.readyDetail = data;
       };
@@ -229,8 +233,8 @@ export class Map3DView {
     const detailContext = this.detailMap.backdrop.getContext("2d", { willReadFrequently: true });
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
-    this.detailSize = 384;
-    this.detailScale = Math.min(8, this.renderer.capabilities.maxTextureSize / this.detailSize);
+    this.detailSize = 256;
+    this.detailScale = Math.min(16, this.renderer.capabilities.maxTextureSize / this.detailSize);
     const detailTexture = new THREE.DataTexture();
     detailTexture.flipY = true;
     detailTexture.generateMipmaps = true;
@@ -246,10 +250,11 @@ export class Map3DView {
     this.groundDetail.visible = false;
     this.scene.add(this.groundDetail);
     if (this.elevation) {
+      this.terrainDetailTexture = { value: detailTexture };
       this.terrainDetailBounds = new THREE.Vector4(0, 0, this.detailSize, this.detailSize);
       this.terrainDetailEnabled = { value: 0 };
       ground.material.onBeforeCompile = shader => {
-        shader.uniforms.terrainDetail = { value: detailTexture };
+        shader.uniforms.terrainDetail = this.terrainDetailTexture;
         shader.uniforms.terrainDetailBounds = { value: this.terrainDetailBounds };
         shader.uniforms.terrainDetailEnabled = this.terrainDetailEnabled;
         shader.vertexShader = `varying vec2 vTerrainPoint;\n${shader.vertexShader}`
@@ -275,9 +280,18 @@ export class Map3DView {
       this.terrainDetailEnabled.value = !this.overview && this.detailMap.backdropBounds ? 1 : 0;
     }
     if (this.overview) return;
+    if (this.detailUpload) {
+      this.uploadGroundDetail();
+      return;
+    }
     if (this.readyDetail) {
-      const { x, y, buffers, image } = this.readyDetail;
+      const { x, y, buffers, image, mipmaps } = this.readyDetail;
       this.readyDetail = null;
+      if (this.elevation && image) {
+        this.detailUpload = { x, y, levels: [image, ...mipmaps], level: 0, row: 0 };
+        this.uploadGroundDetail();
+        return;
+      }
       for (const [index, attributes] of buffers.entries()) {
         const mesh = [this.directionLines][index];
         const geometry = new THREE.BufferGeometry();
@@ -303,7 +317,7 @@ export class Map3DView {
     if (this.directionLines && !this.elevation) this.updateDirections(x, y);
   }
   buildRoadSurfaces() {
-    const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set();
+    const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeGrades = new Map();
     const triangle = (array, a, b, c) => array.push(...a, ...b, ...c);
     const quad = (array, a, b, c, d) => { triangle(array, a, b, c); triangle(array, a, c, d); };
     for (const edge of this.groundMap.unique) {
@@ -311,32 +325,58 @@ export class Map3DView {
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const r = roadWidth(this.data.driving, edge) / 2;
       const nx = -(b[1] - a[1]) / length, ny = (b[0] - a[0]) / length;
-      const za = this.elevation.node_heights[edge.a] + .08, zb = this.elevation.node_heights[edge.b] + .08;
       const point = (p, z, side) => [p[0] + nx * r * side, z, p[1] + ny * r * side];
       const key = `${Math.floor((a[0] + b[0]) / 400)}:${Math.floor((a[1] + b[1]) / 400)}`;
       if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [], markings: [] });
-      const tile = tiles.get(key), al = point(a, za, -1), ar = point(a, za, 1),
-        bl = point(b, zb, -1), br = point(b, zb, 1);
+      const tile = tiles.get(key);
       const bridge = edge.bridge !== "no";
-      quad(bridge ? tile.elevatedDeck : tile.deck, al, ar, br, bl);
+      const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
+      const upper = p => [p[0], p[1] + WORLD_SCALE.tunnelClearance, p[2]];
+      for (const [start, end] of surfaceSegments(this, edge)) {
+        const height = p => surfacePose(this, edge, { x: p[0], y: p[1] }, 0).height + .08;
+        const al = point(start, height(start), -1), ar = point(start, height(start), 1),
+          bl = point(end, height(end), -1), br = point(end, height(end), 1);
+        quad(bridge ? tile.elevatedDeck : tile.deck, al, ar, br, bl);
+        if (bridge && !(this.elevation.node_quality?.[edge.a] && this.elevation.node_quality?.[edge.b])) {
+          quad(tile.shell, lower(al), lower(bl), lower(br), lower(ar));
+          quad(tile.shell, al, bl, lower(bl), lower(al));
+          quad(tile.shell, ar, br, lower(br), lower(ar));
+        }
+        if (edge.tunnel !== "no") {
+          quad(tile.shell, al, bl, upper(bl), upper(al));
+          quad(tile.shell, ar, br, upper(br), upper(ar));
+          quad(tile.shell, upper(al), upper(ar), upper(br), upper(bl));
+        }
+      }
       for (const node of [edge.a, edge.b]) {
         nodeRadii.set(node, Math.max(nodeRadii.get(node) ?? 0, r));
+        const [x, y] = this.nodes[node], z = this.elevation.node_heights[node] + .08;
+        const gx = surfacePose(this, edge, { x, y }, 0).grade,
+          gy = surfacePose(this, edge, { x, y }, Math.PI / 2).grade;
+        nodeGrades.set(node, [gx, gy]);
         if (!bridge) continue;
         elevatedNodes.add(node);
-        const [x, y] = this.nodes[node], z = this.elevation.node_heights[node] + .08;
+        const rim = angle => {
+          const dx = r * Math.cos(angle), dy = r * Math.sin(angle);
+          return [x + dx, z + gx * dx + gy * dy, y + dy];
+        };
         for (let i = 0; i < 16; i++) triangle(tile.elevatedDeck, [x, z, y],
-          [x + r * Math.cos(i * Math.PI / 8), z, y + r * Math.sin(i * Math.PI / 8)],
-          [x + r * Math.cos((i + 1) * Math.PI / 8), z, y + r * Math.sin((i + 1) * Math.PI / 8)]);
+          rim(i * Math.PI / 8), rim((i + 1) * Math.PI / 8));
       }
       const stripe = (start, end, buffer) => {
         const q = (p, z, side) => [p[0] + nx * side * WORLD_SCALE.markingWidth / 2, z + .04,
           p[1] + ny * side * WORLD_SCALE.markingWidth / 2];
         const at = distance => {
           const t = distance / length;
-          return [[a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], za + (zb - za) * t];
+          const point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+          return [point, surfacePose(this, edge, { x: point[0], y: point[1] }, 0).height + .08];
         };
-        const [p, z] = at(start), [qPoint, qHeight] = at(end);
-        quad(buffer, q(p, z, -1), q(p, z, 1), q(qPoint, qHeight, 1), q(qPoint, qHeight, -1));
+        const [p] = at(start), [qPoint] = at(end);
+        for (const [a, b] of surfaceSegments(this, edge, p, qPoint)) {
+          const z = surfacePose(this, edge, { x: a[0], y: a[1] }, 0).height + .08;
+          const qHeight = surfacePose(this, edge, { x: b[0], y: b[1] }, 0).height + .08;
+          quad(buffer, q(a, z, -1), q(a, z, 1), q(b, qHeight, 1), q(b, qHeight, -1));
+        }
       };
       if (r * 2 >= 5.5) {
         for (let distance = 0; distance < length; distance += WORLD_SCALE.dashLength + WORLD_SCALE.dashGap)
@@ -356,18 +396,6 @@ export class Map3DView {
         };
         arrow(1, edge.oneway ? 0 : -r * .5);
         if (!edge.oneway) arrow(-1, r * .5);
-      }
-      if (bridge && !(this.elevation.node_quality?.[edge.a] && this.elevation.node_quality?.[edge.b])) {
-        const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
-        quad(tile.shell, lower(al), lower(bl), lower(br), lower(ar));
-        quad(tile.shell, al, bl, lower(bl), lower(al));
-        quad(tile.shell, ar, br, lower(br), lower(ar));
-      }
-      if (edge.tunnel !== "no") {
-        const upper = p => [p[0], p[1] + WORLD_SCALE.tunnelClearance, p[2]];
-        quad(tile.shell, al, bl, upper(bl), upper(al));
-        quad(tile.shell, ar, br, upper(br), upper(ar));
-        quad(tile.shell, upper(al), upper(ar), upper(br), upper(bl));
       }
     }
     this.structures = [];
@@ -415,12 +443,14 @@ export class Map3DView {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
       if (!jointTiles.has(key)) jointTiles.set(key, []);
-      jointTiles.get(key).push([x, this.elevation.node_heights[node] + .08, y, radius]);
+      jointTiles.get(key).push([x, this.elevation.node_heights[node] + .08, y, radius, ...nodeGrades.get(node)]);
     }
     for (const nodes of jointTiles.values()) {
       const joints = new THREE.InstancedMesh(geometry, material, nodes.length);
-      for (const [index, [x, z, y, radius]] of nodes.entries()) {
+      for (const [index, [x, z, y, radius, gx, gy]] of nodes.entries()) {
         pose.position.set(x, z, y); pose.scale.set(radius, 1, radius); pose.updateMatrix();
+        pose.matrix.elements[1] = gx * radius;
+        pose.matrix.elements[9] = gy * radius;
         joints.setMatrixAt(index, pose.matrix);
       }
       joints.computeBoundingSphere();
@@ -444,9 +474,51 @@ export class Map3DView {
     this.groundDetail.material.map.image = image;
     this.groundDetail.material.map.needsUpdate = true;
     if (this.elevation) {
+      if (!this.detailSpareTexture) {
+        // Allocate both mip chains at startup, never while replacing a driving texture.
+        const texture = this.groundDetail.material.map;
+        this.renderer.initTexture(texture);
+        this.detailSpareTexture = texture.clone();
+        this.detailSpareTexture.source = new THREE.Source(image);
+        this.detailSpareTexture.needsUpdate = true;
+        this.renderer.initTexture(this.detailSpareTexture);
+        this.detailSpareTexture.generateMipmaps = false;
+        this.detailUploadSource = new THREE.DataTexture();
+        this.resources.push(this.detailSpareTexture, this.detailUploadSource);
+      }
       this.terrainDetailBounds.set(bounds[0], bounds[1], this.detailSize, this.detailSize);
       this.terrainDetailEnabled.value = this.overview ? 0 : 1;
     }
+  }
+  uploadGroundDetail() {
+    const upload = this.detailUpload;
+    const image = upload.levels[upload.level];
+    const rows = Math.min(image.height - upload.row, Math.max(1, Math.floor(2 * 1024 * 1024 / (image.width * 4))));
+    const start = upload.row * image.width * 4;
+    this.detailUploadSource.image = {
+      width: image.width, height: rows,
+      data: image.data.subarray(start, start + rows * image.width * 4),
+    };
+    // Each canvas strip is flipped on upload, so its destination rows count from the bottom.
+    this.renderer.copyTextureToTexture(this.detailUploadSource, this.detailSpareTexture, null,
+      new THREE.Vector2(0, image.height - upload.row - rows), 0, upload.level);
+    upload.row += rows;
+    if (upload.row < image.height) return;
+    upload.row = 0;
+    if (++upload.level < upload.levels.length) return;
+    const previous = this.groundDetail.material.map;
+    this.groundDetail.material.map = this.detailSpareTexture;
+    this.terrainDetailTexture.value = this.detailSpareTexture;
+    this.detailSpareTexture.image = upload.levels[0];
+    this.detailSpareTexture = previous;
+    this.detailSpareTexture.generateMipmaps = false;
+    this.detailMap.backdropBounds = [upload.x - this.detailSize / 2, upload.y - this.detailSize / 2,
+      upload.x + this.detailSize / 2, upload.y + this.detailSize / 2];
+    this.detailMap.backdropScale = this.detailScale;
+    this.groundDetail.position.set(upload.x, .02, upload.y);
+    this.terrainDetailBounds.set(this.detailMap.backdropBounds[0], this.detailMap.backdropBounds[1],
+      this.detailSize, this.detailSize);
+    this.detailUpload = null;
   }
   buildBoundaries() {
     this.boundaryOutline = new THREE.Mesh(new THREE.BufferGeometry(), this.smoothLineMaterial("#f15e5e", 0.8));
@@ -845,24 +917,51 @@ export class Map3DView {
   }
   ribbonGeometry(edges, width, height, start = null) {
     if (this.elevation) {
-      const attributes = { position: [], normal: [], uv: [], boundaryCoord: [] };
+      this.ribbonEdgeCache ??= new Map();
+      const chunks = [];
       const edgeStarts = [];
+      let vertices = 0;
       for (const [index, edge] of edges.entries()) {
-        edgeStarts.push(attributes.position.length / 3);
+        edgeStarts.push(vertices);
         if (!edge) continue;
         const a = index === 0 && start ? [start.x, start.y] : this.nodes[edge.a], b = this.nodes[edge.b];
-        const geometry = this.roundLineGeometry([[a, b]], width, height);
-        const positions = geometry.getAttribute("position");
-        for (let i = 0; i < positions.count; i++) {
-          const x = positions.getX(i), y = positions.getZ(i);
-          positions.setY(i, surfacePose(this, edge, { x, y }, 0).height + height + .08);
+        const key = JSON.stringify([edge.id, width, height]);
+        const partial = index === 0 && start;
+        let cached = partial ? null : this.ribbonEdgeCache.get(key);
+        if (!cached) {
+          cached = [];
+          for (const segment of surfaceSegments(this, edge, a, b)) {
+            const geometry = this.roundLineGeometry([segment], width, height);
+            const positions = geometry.getAttribute("position");
+            for (let i = 0; i < positions.count; i++) {
+              const x = positions.getX(i), y = positions.getZ(i);
+              positions.setY(i, surfacePose(this, edge, { x, y }, 0).height + height + .08);
+            }
+            cached.push(Object.fromEntries(["position", "normal", "uv", "boundaryCoord"]
+              .map(name => [name, geometry.getAttribute(name).array])));
+            geometry.dispose();
+          }
+          if (!partial) {
+            if (this.ribbonEdgeCache.size >= 512) this.ribbonEdgeCache.delete(this.ribbonEdgeCache.keys().next().value);
+            this.ribbonEdgeCache.set(key, cached);
+          }
         }
-        for (const key of Object.keys(attributes)) attributes[key].push(...geometry.getAttribute(key).array);
-        geometry.dispose();
+        for (const chunk of cached) {
+          chunks.push(chunk);
+          vertices += chunk.position.length / 3;
+        }
       }
       const result = new THREE.BufferGeometry();
-      for (const [key, values] of Object.entries(attributes))
-        result.setAttribute(key, new THREE.Float32BufferAttribute(values, key === "uv" ? 2 : 3));
+      for (const name of ["position", "normal", "uv", "boundaryCoord"]) {
+        const size = name === "uv" ? 2 : 3;
+        const values = new Float32Array(vertices * size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          values.set(chunk[name], offset);
+          offset += chunk[name].length;
+        }
+        result.setAttribute(name, new THREE.BufferAttribute(values, size));
+      }
       result.userData.edgeStarts = edgeStarts;
       return result;
     }
@@ -890,21 +989,54 @@ export class Map3DView {
       points.push(points[0]);
       polygons.push([points]);
     }
-    const geometry = this.lineGeometry(polygons.length ? polygonClipping.union(...polygons) : []);
+    const geometry = this.lineGeometry(polygons.length > 1 ? polygonClipping.union(...polygons) : polygons);
     geometry.translate(0, height, 0);
     return geometry;
   }
   updateOverlays(state, approach, previewExit) {
+    this.overlayLayers ??= new Map();
+    const replaceLayer = (name, ids, color, height, geometry = null) => {
+      const previous = this.overlayLayers.get(name);
+      if (previous) {
+        previous.mesh.geometry.dispose();
+        previous.mesh.material.dispose();
+        this.overlays.remove(previous.mesh);
+        this.overlayLayers.delete(name);
+      }
+      if (!geometry) return;
+      const mesh = new THREE.Mesh(geometry, this.smoothLineMaterial(color));
+      mesh.renderOrder = Math.round(height * 100);
+      this.overlays.add(mesh);
+      this.overlayLayers.set(name, { key: JSON.stringify([ids, color]), ids: [...ids], color, mesh });
+    };
+    if (this.readyRoute) {
+      const ready = this.readyRoute, pending = this.pendingRoute;
+      this.readyRoute = null;
+      if (pending && ready.request === pending.request) {
+        // A newer state can arrive between the worker reply and this frame.
+        if (pending.key === JSON.stringify([state.route ?? [], state.phase === "pickup" ? "#24ca72" : "#f3c047"])) {
+          const geometry = new THREE.BufferGeometry();
+          for (const [name, attribute] of Object.entries(ready.attributes))
+            geometry.setAttribute(name, new THREE.BufferAttribute(attribute.array, attribute.itemSize));
+          geometry.userData.edgeStarts = ready.edgeStarts;
+          replaceLayer("route", pending.ids, pending.color, pending.height, geometry);
+        }
+        this.pendingRoute = null;
+      }
+    }
     const selectedPaths = approach?.exits.filter(({ edge }) =>
       edge.id === previewExit || edge.id === state.selected_exit) ?? [];
     const key = JSON.stringify([state.closed, state.traffic, state.route, state.phase,
       selectedPaths.map(({ path }) => path.edges.map(edge => edge.id))]);
     if (key === this.overlayKey) return;
     this.overlayKey = key;
-    this.overlayLayers ??= new Map();
     const updateLayer = (name, ids, color, width, height) => {
       const key = JSON.stringify([ids, color]);
       const previous = this.overlayLayers.get(name);
+      if (name === "route" && this.pendingRoute?.key !== key) {
+        this.pendingRoute = null;
+        this.readyRoute = null;
+      }
       if (previous?.key === key) {
         if (name === "route") previous.mesh.geometry.setDrawRange(0, Infinity);
         return;
@@ -917,15 +1049,15 @@ export class Map3DView {
           return;
         }
       }
-      if (previous) {
-        previous.mesh.geometry.dispose();
-        previous.mesh.material.dispose();
-        this.overlays.remove(previous.mesh);
-        this.overlayLayers.delete(name);
+      if (name === "route" && this.elevation && this.detailWorker && ids.length) {
+        if (this.pendingRoute?.key === key) return;
+        const request = this.routeRequest = (this.routeRequest ?? 0) + 1;
+        this.pendingRoute = { request, key, ids: [...ids], color, height };
+        this.detailWorker.postMessage({ type: "route", request, ids, width, height });
+        return;
       }
-      if (!ids.length) return;
-      const mesh = this.ribbon(ids.map(id => this.edges.get(id)), color, width, height);
-      this.overlayLayers.set(name, { key, ids: [...ids], color, mesh });
+      replaceLayer(name, ids, color, height,
+        ids.length ? this.ribbonGeometry(ids.map(id => this.edges.get(id)), width, height) : null);
     };
     const closed = new Set(state.closed);
     updateLayer("closed", [...this.edges.values()].filter(e => closed.has(e.way)).map(e => e.id), "#ed8879", 3, 0.12);

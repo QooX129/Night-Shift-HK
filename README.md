@@ -235,7 +235,17 @@ the DTM and OSM topology. Tagged building heights replace artistic random height
 floor counts × 3.2 m and an 18 m fallback remain labelled estimates.
 
 Slope gravity affects acceleration/braking in both views; client and server share
-the same surface and slope-speed-limit equations (12% simulation grade ceiling).
+the same surface and slope-speed-limit equations. Connected road heights use
+monotone cubic vertical profiles: ramps and crests blend their slopes instead
+of changing taxi pitch abruptly. Ordinary two-segment continuations share
+endpoint grades; multi-road junctions and sharp bends flatten at the shared node.
+Endpoint heights, horizontal road layout, turn controls and disconnected levels
+are preserved. The estimated source profiles limit average segment grades to 12%;
+local curved grades can be steeper, with the speed penalty still capped at 12%.
+Road decks, bridge/tunnel shells, markings, collision outlines and GPS guides
+sample the same profile. Curved decks use at most 2 m steps, refined where needed
+to bound vertical interpolation error to 5 mm. Profiles and geometry are prepared
+once, not rebuilt while driving.
 The 2D map presentation, preferences, junction controls and existing corridor
 collider remain unchanged. No discarded boundary/blocker update is restored.
 No rigid-body jumps, suspension or rollover physics are added. Cars remain on their
@@ -275,7 +285,7 @@ to 0.9 radians/second, easing junction turns without changing taxi steering.
 Reload an already-open game after renderer updates; ES modules stay loaded for
 the lifetime of the page. The current app and 3D entry points use versioned URLs
 to bypass older cached code, including in the VS Code browser.
-Nearby roads use a cached local texture at 8 pixels
+Nearby roads use a cached local texture at 16 pixels
 per metre (subject to the GPU texture-size limit), rather than enlarging the
 district overview texture. The cache follows the taxi without changing collision
 geometry; overview keeps the lighter district-wide texture.
@@ -314,6 +324,11 @@ the selected/pickup/yellow drawing priority remains unchanged.
 GPS, traffic, closure, and selected-turn overlays are cached independently.
 Following an elevated GPS route hides completed segments with a draw range;
 it does not rebuild the route or unrelated traffic geometry at each road.
+Reroutes reuse a bounded cache of 512 sampled road-segment shapes, assembling
+the new guide without retriangulating roads already used by the same view.
+In the elevated view, new GPS geometry is prepared in the terrain worker so
+first-time routes do not block acceleration after pickup. The previous guide
+stays visible until its replacement arrives; obsolete worker replies are ignored.
 Elevated collision outlines share static vertices in 80 m tiles; off-screen
 and distant tiles are culled instead of submitting the entire district each
 frame. This does not rebuild geometry or change collision rules.
@@ -464,12 +479,15 @@ geographic coordinates retain their original metre scale. Pickup beacons,
 route/junction highlights, map labels and HUD remain deliberately readable game
 overlays, not physical objects or surveyed road markings.
 
-The elevated driving view projects a scrolling 384 m terrain-detail texture
-at 8 pixels/metre (subject to the GPU texture-size limit) onto the existing
+The elevated driving view projects a scrolling 256 m terrain-detail texture
+at 16 pixels/metre (subject to the GPU texture-size limit) onto the existing
 terrain mesh. Building footprints and parks retain sharp edges near the taxi
 without flattening slopes or drawing a decal over bridges. The cache refreshes
 in the worker at 64 m intervals and fades into the district backdrop over its
-outer 16 m, keeping the previous detail visible until the next image arrives.
+outer 16 m. Elevated cache replacements upload into a second texture in chunks
+of at most 2 MiB per frame. The worker also prepares the mipmaps, avoiding a
+full-texture upload and GPU mipmap rebuild during driving. The previous texture
+and its coordinates stay active until every replacement mip level is ready.
 The distant terrain backdrop is built once at up to 3 pixels/metre, capped at
 8192 pixels and the GPU's texture limit. Mipmaps and anisotropic filtering
 remain enabled for distant and oblique surfaces; overview keeps its lighter
