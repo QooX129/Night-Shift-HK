@@ -88,23 +88,23 @@ test("door opens on the side nearer the passenger", () => {
 test("alighting grows out of the door and walks to the curb", () => {
   const car = { x: 0, y: 0, heading: 0 };
   const render = elapsed => peopleOnMap(
-    { elapsed, boarding: { point: [0, 6], starts: 0, ends: 2, alighting: true } }, car)[0];
+    { elapsed, boarding: { point: [0, -6], starts: 0, ends: 2, alighting: true } }, car)[0];
   assert.equal(render(0).scale, 0);
   assert.ok(render(0.2).scale > 0 && render(0.2).scale < 1);
-  near(render(0.4).point, [0, 1.2]);
-  assert.ok(render(1.2).point[1] > 1.2 && render(1.2).point[1] < 6);
-  near(render(2).point, [0, 6]);
+  near(render(0.4).point, [0, -1.2]);
+  assert.ok(render(1.2).point[1] < -1.2 && render(1.2).point[1] > -6);
+  near(render(2).point, [0, -6]);
   assert.equal(render(2).scale, 1);
 });
 
 test("alighting always uses the taxi left door at every heading", () => {
   for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
     const car = { x: 4, y: 5, heading };
-    const point = [car.x - Math.sin(heading) * 6, car.y + Math.cos(heading) * 6];
+    const point = [car.x + Math.sin(heading) * 6, car.y - Math.cos(heading) * 6];
     const state = { elapsed: .4, boarding: { point, starts: 0, ends: 2, alighting: true } };
-    assert.equal(doorSide(state, car), 1);
+    assert.equal(doorSide(state, car), -1);
     near(peopleOnMap(state, car)[0].point,
-      [car.x - Math.sin(heading) * 1.2, car.y + Math.cos(heading) * 1.2]);
+      [car.x + Math.sin(heading) * 1.2, car.y - Math.cos(heading) * 1.2]);
   }
 });
 

@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("main-road decks own the whole junction surface without side-road penetration", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edges = [
       { id: "ab", a: "a", b: "b", kind: "primary", width: 16, bridge: "no", tunnel: "no" },
@@ -42,8 +42,8 @@ test("main-road decks own the whole junction surface without side-road penetrati
 test("first passenger routes build in the worker without blocking launch or applying stale replies", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
-    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=trip-lifecycle-1");
+    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=guide-left-exit-1");
     const data = await (await fetch("/api/map")).json();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
@@ -97,8 +97,21 @@ test("first passenger routes build in the worker without blocking launch or appl
       const startsMatch = JSON.stringify(reference.userData.edgeStarts) === JSON.stringify(geometry.userData.edgeStarts);
       reference.dispose();
       const correctPhase = layer.color === "#f3c047" && layer.ids[0] === onboard.route[0];
+      update({ ...onboard, route: null });
+      update(onboard);
+      const movingRequest = view.pendingRoute.request;
+      const movingReply = reply(movingRequest);
+      const shortened = { ...onboard, route: onboard.route.slice(3) };
+      update(shortened);
+      const reusedPending = view.pendingRoute.request === movingRequest;
+      await movingReply;
+      update({ ...onboard, route: onboard.route.slice(6) });
+      const movingLayer = view.overlayLayers.get("route");
+      const followsMovingRoute = movingLayer?.mesh.geometry.drawRange.start
+        === movingLayer?.mesh.geometry.userData.edgeStarts[6];
+      const visibleMovingRoute = movingLayer?.mesh.geometry.drawRange.count > 0;
       update(pickup);
-      const retained = view.overlayLayers.get("route").mesh.geometry === geometry;
+      const retained = view.overlayLayers.get("route") === movingLayer;
       const cancelledRequest = view.pendingRoute.request;
       update({ ...onboard, route: null });
       await reply(cancelledRequest);
@@ -106,6 +119,7 @@ test("first passenger routes build in the worker without blocking launch or appl
       return { maxUpdateMs: Math.max(...times), identical, startsMatch, correctPhase, retained,
         launched: car.speed > 0 && Math.hypot(car.x - (a[0] + b[0]) / 2, car.y - (a[1] + b[1]) / 2) > 0,
         maxLaunchMs: Math.max(...launchTimes),
+        reusedPending, followsMovingRoute, visibleMovingRoute,
         superseded: onboardRequest > pickupRequest, cleared: !view.overlayLayers.has("route") && !view.readyRoute };
     } finally {
       view.dispose();
@@ -119,12 +133,13 @@ test("first passenger routes build in the worker without blocking launch or appl
   expect(result.launched).toBe(true);
   expect(result.identical && result.startsMatch && result.correctPhase).toBe(true);
   expect(result.retained && result.superseded && result.cleared).toBe(true);
+  expect(result.reusedPending && result.followsMovingRoute && result.visibleMovingRoute).toBe(true);
 });
 
 test("rerouted guides reuse sampled roads without changing attributes or partial starts", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
       elevation: { node_heights: { a: 0, b: 2, c: 2 }, road_profiles: { ab: [0, 0], bc: [0, 0] } },
@@ -166,9 +181,9 @@ test("curved road decks, guides, taxi pose and speed physics share the vertical 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=trip-lifecycle-1");
-    const { surfacePose } = await import("/elevation.mjs?v=trip-lifecycle-1");
+    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=guide-left-exit-1");
+    const { surfacePose } = await import("/elevation.mjs?v=guide-left-exit-1");
     const data = {
       bounds: [-20, -40, 320, 40], backdrop: [],
       nodes: { a: [0, 0], b: [100, 0], c: [200, 0], d: [300, 0] },

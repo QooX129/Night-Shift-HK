@@ -22,9 +22,9 @@ export function drawHailBubble(context, text) {
   context.fillText(text, centreX, centreY);
 }
 
-// +1 is the taxi's left-hand normal (-sin, cos) in map coordinates; -1 is the opposite side.
+// Map Y points down: +1 (-sin, cos) is right; -1 is the taxi's left.
 export function doorSide(state, car) {
-  if (state.boarding?.alighting) return 1;
+  if (state.boarding?.alighting) return -1;
   const point = state.boarding?.point;
   if (!point) return 1;
   const dx = point[0] - car.x, dy = point[1] - car.y;

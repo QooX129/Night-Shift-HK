@@ -702,8 +702,8 @@ class Game:
                 session.dialogue = "arrival"
                 offset = self.roads.radius(self.roads.edges[session.edge]) + .8
                 session.boarding = {
-                    "point": (session.point[0] - math.sin(session.heading) * offset,
-                              session.point[1] + math.cos(session.heading) * offset),
+                    "point": (session.point[0] + math.sin(session.heading) * offset,
+                              session.point[1] - math.cos(session.heading) * offset),
                     "starts": session.elapsed,
                     "ends": session.elapsed + 1.8,
                     "alighting": True,

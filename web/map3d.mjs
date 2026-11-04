@@ -1,10 +1,10 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=trip-lifecycle-1";
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=trip-lifecycle-1";
+import { MapView } from "./map.mjs?v=guide-left-exit-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=guide-left-exit-1";
 import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=trip-lifecycle-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=trip-lifecycle-1";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=guide-left-exit-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=guide-left-exit-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
@@ -66,7 +66,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=trip-lifecycle-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=guide-left-exit-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,
@@ -235,7 +235,7 @@ export class Map3DView {
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
     this.detailSize = 256;
-    this.detailScale = Math.min(16, this.renderer.capabilities.maxTextureSize / this.detailSize);
+    this.detailScale = Math.min(12, this.renderer.capabilities.maxTextureSize / this.detailSize);
     const detailTexture = new THREE.DataTexture();
     detailTexture.flipY = true;
     detailTexture.generateMipmaps = true;
@@ -1056,6 +1056,11 @@ export class Map3DView {
   }
   updateOverlays(state, approach, previewExit) {
     this.overlayLayers ??= new Map();
+    const suffixOffset = (original, ids) => {
+      const offset = original.length - ids.length;
+      return ids.length && offset >= 0 && ids.every((id, index) => id === original[offset + index])
+        ? offset : -1;
+    };
     const replaceLayer = (name, ids, color, height, geometry = null) => {
       const previous = this.overlayLayers.get(name);
       if (previous) {
@@ -1075,11 +1080,14 @@ export class Map3DView {
       this.readyRoute = null;
       if (pending && ready.request === pending.request) {
         // A newer state can arrive between the worker reply and this frame.
-        if (pending.key === JSON.stringify([state.route ?? [], state.phase === "pickup" ? "#24ca72" : "#f3c047"])) {
+        const offset = suffixOffset(pending.ids, state.route ?? []);
+        if (offset >= 0 && pending.color === (state.phase === "pickup" ? "#24ca72" : "#f3c047")) {
           const geometry = new THREE.BufferGeometry();
           for (const [name, attribute] of Object.entries(ready.attributes))
             geometry.setAttribute(name, new THREE.BufferAttribute(attribute.array, attribute.itemSize));
           geometry.userData.edgeStarts = ready.edgeStarts;
+          const start = ready.edgeStarts[offset];
+          geometry.setDrawRange(start, geometry.getAttribute("position").count - start);
           replaceLayer("route", pending.ids, pending.color, pending.height, geometry);
         }
         this.pendingRoute = null;
@@ -1094,7 +1102,8 @@ export class Map3DView {
     const updateLayer = (name, ids, color, width, height) => {
       const key = JSON.stringify([ids, color]);
       const previous = this.overlayLayers.get(name);
-      if (name === "route" && this.pendingRoute?.key !== key) {
+      if (name === "route" && this.pendingRoute
+          && (this.pendingRoute.color !== color || suffixOffset(this.pendingRoute.ids, ids) < 0)) {
         this.pendingRoute = null;
         this.readyRoute = null;
       }
@@ -1102,9 +1111,10 @@ export class Map3DView {
         if (name === "route") previous.mesh.geometry.setDrawRange(0, Infinity);
         return;
       }
+      if (name === "route" && this.pendingRoute) return;
       if (name === "route" && this.elevation && previous?.color === color && ids.length) {
-        const offset = previous.ids.length - ids.length;
-        if (offset >= 0 && ids.every((id, index) => id === previous.ids[offset + index])) {
+        const offset = suffixOffset(previous.ids, ids);
+        if (offset >= 0) {
           const start = previous.mesh.geometry.userData.edgeStarts[offset];
           previous.mesh.geometry.setDrawRange(start, previous.mesh.geometry.getAttribute("position").count - start);
           return;

@@ -209,7 +209,7 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(response["phase"], "complete")
         self.assertTrue(response["boarding"]["alighting"])
         point = response["boarding"]["point"]
-        left = (-math.sin(self.session.heading), math.cos(self.session.heading))
+        left = (math.sin(self.session.heading), -math.cos(self.session.heading))
         self.assertGreater(sum((point[i] - self.session.point[i]) * left[i] for i in (0, 1)), 0)
         with self.assertRaisesRegex(RuleError, "boarding"):
             self.cmd("move", x=self.session.point[0] + 0.2, y=self.session.point[1], speed=1,
@@ -231,7 +231,7 @@ class OrderTests(unittest.TestCase):
         state = self.cmd("service")
         point = state["boarding"]["point"]
         dx, dy = point[0] - self.session.point[0], point[1] - self.session.point[1]
-        self.assertGreater(-math.sin(self.session.heading) * dx + math.cos(self.session.heading) * dy, 0)
+        self.assertGreater(math.sin(self.session.heading) * dx - math.cos(self.session.heading) * dy, 0)
         self.assertAlmostEqual(math.cos(self.session.heading) * dx + math.sin(self.session.heading) * dy, 0)
 
     def test_empty_tank_keeps_onboard_order_and_allows_stationary_updates_and_recovery(self):

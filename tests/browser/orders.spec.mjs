@@ -1,9 +1,53 @@
 import { test, expect } from "@playwright/test";
 
+test("alighting passenger and open door project to the taxi left in the 3D chase camera", async ({ page }) => {
+  await page.goto("/");
+  const results = await page.evaluate(async () => {
+    const [{ Map3DView }, THREE] = await Promise.all([
+      import("/map3d.mjs?v=guide-left-exit-1"), import("/vendor/three/three.module.min.js"),
+    ]);
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data: { driving: { taxi_width: 1.7 } },
+      nodes: { a: [-100, 0], b: [100, 0] },
+      edges: new Map([["road", { id: "road", a: "a", b: "b" }]]),
+      stops: [], scene: new THREE.Scene(), taxi: new THREE.Group(), resources: [],
+    });
+    view.buildCitizens();
+    try {
+      return [0, Math.PI / 2, Math.PI, -Math.PI / 2].map(heading => {
+        const car = { x: 0, y: 0, heading, edge: "road" };
+        const forward = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
+        const camera = new THREE.PerspectiveCamera(60, 1, .1, 100);
+        camera.position.copy(forward).multiplyScalar(-20).add(new THREE.Vector3(0, 12, 0));
+        camera.lookAt(forward.clone().multiplyScalar(10));
+        camera.updateMatrixWorld();
+        view.taxi.rotation.y = -heading;
+        view.updateCitizens({ citizens: [], elapsed: 1.2,
+          boarding: { point: [Math.sin(heading) * 6, -Math.cos(heading) * 6],
+            starts: 0, ends: 2, alighting: true } }, car);
+        view.taxi.updateMatrixWorld(true);
+        const centre = new THREE.Vector3(0, 1, 0).project(camera).x;
+        const door = view.door.getWorldPosition(new THREE.Vector3()).project(camera).x;
+        const passenger = view.people.find(person => person.id === "alighting")
+          .group.position.clone().project(camera).x;
+        return { doorLeft: door < centre, passengerLeft: passenger < centre };
+      });
+    } finally {
+      for (const resource of view.resources) resource.dispose();
+      view.door.geometry.dispose();
+      view.door.material.dispose();
+    }
+  });
+  for (const result of results) {
+    expect(result.doorLeft).toBe(true);
+    expect(result.passengerLeft).toBe(true);
+  }
+});
+
 test("citizens and passengers stand on their road level after elevation is enabled", async ({ page }) => {
   await page.goto("/");
   const heights = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const ground = { id: "ground", a: "a", b: "b" };
     const bridge = { id: "bridge", a: "c", b: "d" };
@@ -270,7 +314,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
+    const { MapView } = await import("/map.mjs?v=guide-left-exit-1");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -302,7 +346,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=trip-lifecycle-1`);
+      const module = await import(`/${path}?v=guide-left-exit-1`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

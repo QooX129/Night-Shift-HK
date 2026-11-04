@@ -95,7 +95,8 @@ refreshing starts a new shift.
   `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
   `CITIZEN_HAIL_DURATION = (45, 120)` controls the waving timeout range.
   Drop-off animations always use the taxi's left door relative to its heading;
-  pickup doors still use the passenger's side.
+  pickup doors still use the passenger's side. Map Y points down, so the left
+  offset is `(sin(heading), -cos(heading))`, not the mathematical left normal.
   `CITIZEN_RADIUS` limits spawning to 220 metres around the taxi, matching the
   normal 3D driving fog distance (not the zoomed-out overview). Citizens leaving
   that radius are removed and replaced locally. Their original 80–150 second
@@ -385,6 +386,9 @@ the new guide without retriangulating roads already used by the same view.
 In the elevated view, new GPS geometry is prepared in the terrain worker so
 first-time routes do not block acceleration after pickup. The previous guide
 stays visible until its replacement arrives; obsolete worker replies are ignored.
+Advancing along the same route while its worker build is pending keeps that
+request alive. Its completed geometry is trimmed to the latest remaining legs,
+so crossing short road segments cannot repeatedly cancel and hide the guide.
 Elevated collision outlines share static vertices in 80 m tiles; off-screen
 and distant tiles are culled instead of submitting the entire district each
 frame. This does not rebuild geometry or change collision rules.

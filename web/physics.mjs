@@ -1,4 +1,4 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=trip-lifecycle-1";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=guide-left-exit-1";
 import { roadWidth } from "./road-width.mjs";
 
 export function angleDifference(a, b) {
