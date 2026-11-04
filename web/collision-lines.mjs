@@ -1,4 +1,4 @@
-import { RoadNetwork, project } from "./physics.mjs?v=citizen-motion-2";
+import { RoadNetwork, project } from "./physics.mjs?v=trip-lifecycle-1";
 import { surfacePose, surfaceSegments } from "./elevation.mjs";
 
 const mapLines = new WeakMap();

@@ -4,6 +4,34 @@ import { readFileSync } from "node:fs";
 import { RoadNetwork, stepCar } from "../web/physics.mjs";
 import { surfacePose, surfaceSegments, slopeSpeedLimit, terrainHeight } from "../web/elevation.mjs";
 
+test("side roads conform across the main-road width with continuous blending and accurate grades", () => {
+  const roads = { nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
+    elevation: { node_heights: { a: 0, b: 5, c: 10, d: 15 },
+      road_profiles: { ab: [.05, .05], bc: [.05, .05], bd: [0, .1] },
+      road_junctions: { bd: [
+        { id: "ab", node: "b", a: "a", b: "b", profile: [.05, .05], radius: 8, priority: 4 },
+        { id: "bc", node: "b", a: "b", b: "c", profile: [.05, .05], radius: 8, priority: 4 },
+      ] } } };
+  const edge = { id: "bd", a: "b", b: "d", width: 8 };
+  const at = (x, y, heading = 0) => surfacePose(roads, edge, { x, y }, heading);
+  for (const x of [-4, -2, 0, 2, 4]) for (const y of [0, 2, 4, 6, 8]) {
+    assert.ok(Math.abs(at(x, y).height - (5 + .05 * x)) < 1e-10);
+    assert.ok(Math.abs(at(x, y).grade - .05) < 1e-10);
+  }
+  for (const y of [8.2, 16.2]) {
+    assert.ok(Math.abs(at(2, y - 1e-5).height - at(2, y + 1e-5).height) < 1e-4);
+    assert.ok(Math.abs(at(2, y - 1e-5, Math.PI / 2).grade - at(2, y + 1e-5, Math.PI / 2).grade) < 1e-4);
+  }
+  assert.ok(Math.abs(at(2, 12, Math.PI / 2).grade
+    - (at(2, 12.00001).height - at(2, 11.99999).height) / .00002) < 1e-7);
+  for (const [a, b] of surfaceSegments(roads, edge)) {
+    for (const x of [-4, 0, 4]) for (const t of [.25, .5, .75]) {
+      const y = a[1] + (b[1] - a[1]) * t;
+      assert.ok(Math.abs(at(x, y).height - at(x, a[1]).height * (1 - t) - at(x, b[1]).height * t) <= .0021);
+    }
+  }
+});
+
 test("smooth vertical ramp matches server equations and has continuous endpoint pitch", () => {
   const roads = {
     nodes: { a: [0, 0], b: [100, 0], c: [200, 0], d: [300, 0] },

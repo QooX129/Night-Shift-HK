@@ -55,6 +55,9 @@ refreshing starts a new shift.
   estimated fares, and distance to pickup. Offers arrive every random **45–180
   seconds** and disappear after **30–180 seconds**, with no offer cap or visible
   countdown. One initial offer is available when the shift starts.
+  If no legal passenger trip is reachable when a scheduled offer is due,
+  dispatch logs the deferral and tries again after 45–180 seconds; driving
+  continues without rejecting the movement update.
 - Accept a phone order, then stop at its **green** pickup marker. The customer
   waits waving at the curb and walks into the taxi automatically once you stop.
   **Accepted** stores the current pickup and any waiting order.
@@ -69,19 +72,30 @@ refreshing starts a new shift.
   Only the normal **3D view** can trigger a new street hail: a citizen must be
   inside its screen bounds and within **80 m** of an empty taxi. Buildings do not
   block this eligibility check; overview, 2D and the minimap never trigger it.
-  Each eligible citizen gets a **20%** chance per **300 seconds** of simulation
+  Accepted phone orders prevent new street hails; existing hails and curb
+  approaches continue. Each eligible citizen gets a **5%** chance per **300 seconds** of simulation
   time. There are no hails at spawn. Successful citizens walk to a validated
-  roadside curb before stopping and waving. **Orange** hailing
-  citizens can be picked up by stopping alongside on the same road, then using
+  roadside curb before stopping and waving for a random **45–120 seconds**.
+  Uncollected hails then stop, enter a **300-second** cooldown, and walk back
+  to their original sidewalk path. These timers use simulation time and pause
+  with the game. **Orange** hailing
+  citizens show a floating **Taxi! / 的士！** speech bubble in the main 2D and
+  3D views (the minimap keeps its orange markers).
+  Bubble arrow tips stay anchored above their citizens when resized, and 3D
+  bubbles render over the red road-boundary lines.
+  Hailing citizens can be picked up by stopping alongside on the same road, then using
   **Open door / E**. A short boarding animation holds the taxi still; the street
   passenger's destination appears only after boarding. Phone pickups do not
   require the door button. In 3D, citizens and waiting, boarding, and alighting
   passengers follow their road's elevation rather than the flat map plane.
   Citizen population is configured in `game.py`: `Game.create` starts
   with 60 citizens, and `Game.advance_city` adds one every 8–16 seconds while
-  fewer than 100 remain. `CITIZEN_HAIL_PROBABILITY = 0.20` controls the passenger
+  fewer than 100 remain. `CITIZEN_HAIL_PROBABILITY = 0.05` controls the passenger
   chance; `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
   `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
+  `CITIZEN_HAIL_DURATION = (45, 120)` controls the waving timeout range.
+  Drop-off animations always use the taxi's left door relative to its heading;
+  pickup doors still use the passenger's side.
   `CITIZEN_RADIUS` limits spawning to 220 metres around the taxi, matching the
   normal 3D driving fog distance (not the zoomed-out overview). Citizens leaving
   that radius are removed and replaced locally. Their original 80–150 second
@@ -132,6 +146,10 @@ refreshing starts a new shift.
   body uses the same dimensions, including its outline, and scales with map zoom.
   The current metric footprint is 4.7 m long by 1.7 m wide.
   Normal movement and reverse keep the full body within connected road corridors.
+  Collision checks and red outlines follow the same connected road-surface union.
+  The local junction search includes short connector segments just outside the
+  taxi footprint, so a slip-road boundary cannot block an overlapping main road.
+  Disconnected crossings and separate road levels remain isolated.
   Manual steering is not cancelled by wall contact: rotation may overlap
   the boundary. An overlapping taxi can slide along the wall or drive/reverse
   back onto the road, but movement deeper into the wall remains blocked.
@@ -202,6 +220,9 @@ refreshing starts a new shift.
   **not a verified Toyota specification or a legal road speed limit**.
 - If stuck or out of fuel, pause and use **Return to rest stop**. Recovery costs up
   to $20, adds emergency fuel, and does not complete the passenger trip.
+  Reaching zero fuel stops the taxi without rejecting subsequent stationary
+  updates or losing the onboard passenger. Buffered browser movement is discarded
+  when the server confirms the empty tank.
 - **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
 - **3D / 2D:** switch between the experimental chase-camera view and the original
   top-down map without restarting your shift. Zoom changes chase distance in 3D;
@@ -266,9 +287,16 @@ Slope gravity affects acceleration/braking in both views; client and server shar
 the same surface and slope-speed-limit equations. Connected road heights use
 monotone cubic vertical profiles: ramps and crests blend their slopes instead
 of changing taxi pitch abruptly. Ordinary two-segment continuations share
-endpoint grades; multi-road junctions and sharp bends flatten at the shared node.
-Endpoint heights, horizontal road layout, turn controls and disconnected levels
-are preserved. The estimated source profiles limit average segment grades to 12%;
+endpoint grades. At mixed-class junctions, the main road keeps its grade and
+side roads conform across its full width, easing back to their own profile over
+8 m beyond the main curb. Priority is motorway, trunk, primary, secondary,
+tertiary, unclassified, residential, then service; link roads yield to their
+parent class. Short connected side-road pieces share the adjustment so their
+endpoints do not split apart. Equal-class multi-road junctions and sharp bends
+still flatten at the shared node. Main-road source heights, horizontal road layout,
+turn controls and disconnected levels are preserved; minor-road heights near
+the junction may adjust to meet the main surface.
+The estimated source profiles limit average segment grades to 12%;
 local curved grades can be steeper, with the speed penalty still capped at 12%.
 Road decks, bridge/tunnel shells, markings, collision outlines and GPS guides
 sample the same profile. Curved decks use at most 2 m steps, refined where needed

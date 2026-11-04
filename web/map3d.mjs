@@ -1,9 +1,10 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=citizen-motion-2";
-import { doorSide, peopleOnMap } from "./citizens.mjs?v=citizen-motion-2";
+import { MapView } from "./map.mjs?v=trip-lifecycle-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=trip-lifecycle-1";
+import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=citizen-motion-2";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=trip-lifecycle-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=trip-lifecycle-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
@@ -65,7 +66,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=citizen-motion-2", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=trip-lifecycle-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,
@@ -317,7 +318,7 @@ export class Map3DView {
     if (this.directionLines && !this.elevation) this.updateDirections(x, y);
   }
   buildRoadSurfaces() {
-    const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeGrades = new Map();
+    const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeSurfaces = new Map();
     const triangle = (array, a, b, c) => array.push(...a, ...b, ...c);
     const quad = (array, a, b, c, d) => { triangle(array, a, b, c); triangle(array, a, c, d); };
     for (const edge of this.groundMap.unique) {
@@ -325,7 +326,10 @@ export class Map3DView {
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
       const r = roadWidth(this.data.driving, edge) / 2;
       const nx = -(b[1] - a[1]) / length, ny = (b[0] - a[0]) / length;
-      const point = (p, z, side) => [p[0] + nx * r * side, z, p[1] + ny * r * side];
+      const point = (p, side) => {
+        const x = p[0] + nx * r * side, y = p[1] + ny * r * side;
+        return [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
+      };
       const key = `${Math.floor((a[0] + b[0]) / 400)}:${Math.floor((a[1] + b[1]) / 400)}`;
       if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [], markings: [] });
       const tile = tiles.get(key);
@@ -333,10 +337,14 @@ export class Map3DView {
       const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
       const upper = p => [p[0], p[1] + WORLD_SCALE.tunnelClearance, p[2]];
       for (const [start, end] of surfaceSegments(this, edge)) {
-        const height = p => surfacePose(this, edge, { x: p[0], y: p[1] }, 0).height + .08;
-        const al = point(start, height(start), -1), ar = point(start, height(start), 1),
-          bl = point(end, height(end), -1), br = point(end, height(end), 1);
-        quad(bridge ? tile.elevatedDeck : tile.deck, al, ar, br, bl);
+        const al = point(start, -1), ar = point(start, 1),
+          bl = point(end, -1), br = point(end, 1);
+        const strips = this.elevation.road_junctions?.[edge.id] ? Math.ceil(r * 2) : 1;
+        for (let i = 0; i < strips; i++) {
+          const left = -1 + 2 * i / strips, right = -1 + 2 * (i + 1) / strips;
+          quad(bridge ? tile.elevatedDeck : tile.deck,
+            point(start, left), point(start, right), point(end, right), point(end, left));
+        }
         if (bridge && !(this.elevation.node_quality?.[edge.a] && this.elevation.node_quality?.[edge.b])) {
           quad(tile.shell, lower(al), lower(bl), lower(br), lower(ar));
           quad(tile.shell, al, bl, lower(bl), lower(al));
@@ -350,32 +358,31 @@ export class Map3DView {
       }
       for (const node of [edge.a, edge.b]) {
         nodeRadii.set(node, Math.max(nodeRadii.get(node) ?? 0, r));
-        const [x, y] = this.nodes[node], z = this.elevation.node_heights[node] + .08;
-        const gx = surfacePose(this, edge, { x, y }, 0).grade,
-          gy = surfacePose(this, edge, { x, y }, Math.PI / 2).grade;
-        nodeGrades.set(node, [gx, gy]);
+        const [x, y] = this.nodes[node], z = surfacePose(this, edge, { x, y }, 0).height + .08;
+        const owners = this.elevation.road_junctions?.[edge.id];
+        if (!nodeSurfaces.has(node) || owners?.some(owner => owner.node === node)) nodeSurfaces.set(node, edge);
         if (!bridge) continue;
         elevatedNodes.add(node);
         const rim = angle => {
           const dx = r * Math.cos(angle), dy = r * Math.sin(angle);
-          return [x + dx, z + gx * dx + gy * dy, y + dy];
+          return [x + dx, surfacePose(this, edge, { x: x + dx, y: y + dy }, 0).height + .08, y + dy];
         };
         for (let i = 0; i < 16; i++) triangle(tile.elevatedDeck, [x, z, y],
           rim(i * Math.PI / 8), rim((i + 1) * Math.PI / 8));
       }
       const stripe = (start, end, buffer) => {
-        const q = (p, z, side) => [p[0] + nx * side * WORLD_SCALE.markingWidth / 2, z + .04,
-          p[1] + ny * side * WORLD_SCALE.markingWidth / 2];
+        const q = (p, side) => {
+          const x = p[0] + nx * side * WORLD_SCALE.markingWidth / 2,
+            y = p[1] + ny * side * WORLD_SCALE.markingWidth / 2;
+          return [x, surfacePose(this, edge, { x, y }, 0).height + .12, y];
+        };
         const at = distance => {
           const t = distance / length;
-          const point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-          return [point, surfacePose(this, edge, { x: point[0], y: point[1] }, 0).height + .08];
+          return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
         };
-        const [p] = at(start), [qPoint] = at(end);
+        const p = at(start), qPoint = at(end);
         for (const [a, b] of surfaceSegments(this, edge, p, qPoint)) {
-          const z = surfacePose(this, edge, { x: a[0], y: a[1] }, 0).height + .08;
-          const qHeight = surfacePose(this, edge, { x: b[0], y: b[1] }, 0).height + .08;
-          quad(buffer, q(a, z, -1), q(a, z, 1), q(b, qHeight, 1), q(b, qHeight, -1));
+          quad(buffer, q(a, -1), q(a, 1), q(b, 1), q(b, -1));
         }
       };
       if (r * 2 >= 5.5) {
@@ -435,25 +442,25 @@ export class Map3DView {
       this.structures.push({ mesh, material, faded });
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
-    const geometry = new THREE.CircleGeometry(1, 12);
-    geometry.rotateX(-Math.PI / 2);
     const material = new THREE.MeshBasicMaterial({ color: "#46545a", side: THREE.DoubleSide });
-    const jointTiles = new Map(), pose = new THREE.Object3D();
+    const jointTiles = new Map();
     for (const [node, radius] of nodeRadii) {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
       if (!jointTiles.has(key)) jointTiles.set(key, []);
-      jointTiles.get(key).push([x, this.elevation.node_heights[node] + .08, y, radius, ...nodeGrades.get(node)]);
+      const edge = nodeSurfaces.get(node), positions = jointTiles.get(key);
+      const centre = [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
+      const rim = angle => {
+        const px = x + radius * Math.cos(angle), py = y + radius * Math.sin(angle);
+        return [px, surfacePose(this, edge, { x: px, y: py }, 0).height + .08, py];
+      };
+      for (let i = 0; i < 32; i++) triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
     }
-    for (const nodes of jointTiles.values()) {
-      const joints = new THREE.InstancedMesh(geometry, material, nodes.length);
-      for (const [index, [x, z, y, radius, gx, gy]] of nodes.entries()) {
-        pose.position.set(x, z, y); pose.scale.set(radius, 1, radius); pose.updateMatrix();
-        pose.matrix.elements[1] = gx * radius;
-        pose.matrix.elements[9] = gy * radius;
-        joints.setMatrixAt(index, pose.matrix);
-      }
-      joints.computeBoundingSphere();
+    for (const positions of jointTiles.values()) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+      const joints = new THREE.Mesh(geometry, material);
       joints.name = "continuous-shared-node-road-joints";
       this.scene.add(joints);
     }
@@ -846,6 +853,20 @@ export class Map3DView {
   }
   buildCitizens() {
     this.people = [];
+    this.bubbleScene = new THREE.Scene();
+    this.bubbleScene.fog = this.scene.fog;
+    this.hailBubbles = Object.fromEntries(Object.entries({ en, zh }).map(([lang, messages]) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = HAIL_BUBBLE.canvasWidth * 2; canvas.height = HAIL_BUBBLE.canvasHeight * 2;
+      const context = canvas.getContext("2d");
+      context.scale(2, 2);
+      drawHailBubble(context, messages.hailTaxi);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      const material = new THREE.SpriteMaterial({ map: texture, depthWrite: false, depthTest: false });
+      this.resources.push(texture, material);
+      return [lang, material];
+    }));
     this.personBody = new THREE.CylinderGeometry(0.3, 0.25, 0.8, 6);
     this.personHead = new THREE.SphereGeometry(0.25, 6, 6);
     this.personLimb = new THREE.CylinderGeometry(0.08, 0.08, 0.7, 5);
@@ -861,7 +882,7 @@ export class Map3DView {
     this.door.visible = false;
     this.taxi.add(this.door);
   }
-  updateCitizens(state, car) {
+  updateCitizens(state, car, lang = "en") {
     const people = peopleOnMap(state, car);
     this.door.visible = Boolean(state.boarding);
     if (state.boarding) {
@@ -879,17 +900,24 @@ export class Map3DView {
       const otherArm = new THREE.Mesh(this.personLimb, this.personMaterial);
       otherArm.position.set(0, 1, -0.45); otherArm.rotation.x = -0.3;
       group.add(body, head, arm, otherArm);
+      const bubble = new THREE.Sprite(this.hailBubbles[lang]);
+      bubble.center.set((HAIL_BUBBLE.x + HAIL_BUBBLE.width / 2) / HAIL_BUBBLE.canvasWidth,
+        1 - (HAIL_BUBBLE.y + HAIL_BUBBLE.height + HAIL_BUBBLE.tailHeight) / HAIL_BUBBLE.canvasHeight);
+      bubble.scale.set(6, 3, 1); //width, height, depth
+      this.bubbleScene.add(bubble);
       const legs = [-0.16, 0.16].map(z => {
         const leg = new THREE.Mesh(this.personLimb, this.personMaterial);
         leg.position.set(0, 0.35, z); group.add(leg); return leg;
       });
       this.scene.add(group);
-      this.people.push({ group, body, arm, otherArm, legs });
+      this.people.push({ group, body, arm, otherArm, legs, bubble });
     }
     this.people.forEach((item, index) => {
       const person = people[index];
       item.group.visible = Boolean(person);
+      item.bubble.visible = Boolean(person?.hailing && person.id !== "customer" && !person.boarding && !this.overview);
       if (!person) return;
+      item.bubble.material = this.hailBubbles[lang];
       let height = 0;
       if (this.elevation) {
         const edgeId = person.boarding ? car.edge
@@ -899,6 +927,7 @@ export class Map3DView {
           { x: person.point[0], y: person.point[1] }, 0).height + .1;
       }
       item.group.position.set(person.point[0], height, person.point[1]);
+      item.bubble.position.set(person.point[0], height + 2.3, person.point[1]);
       if (item.id !== person.id) {
         item.id = person.id;
         item.heading = person.heading ?? 0;
@@ -1193,7 +1222,7 @@ export class Map3DView {
         && sphere.center.distanceTo(position) < distance + sphere.radius ? faded : material;
     }
     if (state) {
-      this.updateCitizens(state, car);
+      this.updateCitizens(state, car, lang);
       this.updateOverlays(state, approach, previewExit);
       let activeLabel = null;
       for (const item of this.markers) {
@@ -1229,6 +1258,7 @@ export class Map3DView {
     this.renderer.render(this.outputScene, this.outputCamera);
     this.renderer.autoClear = false;
     this.renderer.render(this.boundaryScene, this.lens);
+    this.renderer.render(this.bubbleScene, this.lens);
     this.renderer.autoClear = true;
   }
   dispose() {
@@ -1245,6 +1275,7 @@ export class Map3DView {
       if (object.geometry) geometries.add(object.geometry);
       if (object.material) materials.add(object.material);
     });
+    this.bubbleScene.clear();
     geometries.forEach(geometry => geometry.dispose());
     if (this.cityMaterial) materials.add(this.cityMaterial);
     if (this.fadedCityMaterial) materials.add(this.fadedCityMaterial);

@@ -5,7 +5,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
+    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-300, -300, 300, 300],
@@ -168,7 +168,7 @@ for (const density of [1, 2]) {
     test("renders the city at screen resolution with multisampled silhouettes", async ({ page }) => {
       await page.goto("/");
       const result = await page.evaluate(async () => {
-        const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
+        const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
         const { DEFAULT_SETTINGS } = await import("/settings.mjs");
         const THREE = await import("/vendor/three/three.module.min.js");
         const data = {
@@ -246,7 +246,7 @@ for (const density of [1, 2, 3]) {
       await page.locator("#start").click();
       await expect(page.locator("#welcome")).not.toBeVisible();
       const results = await page.evaluate(async () => {
-        const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+        const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
         const data = await (await fetch("/api/map")).json();
         const view = new MapView(document.createElement("canvas"), data, []);
         const [left, top, right, bottom] = data.bounds;

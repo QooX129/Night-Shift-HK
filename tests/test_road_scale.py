@@ -12,6 +12,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoadScaleTests(unittest.TestCase):
+    def test_waterloo_short_slip_road_cannot_block_main_road(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        side = roads.edges["102640421:1:6357916725"]
+        main = roads.edges["1212555896:1:6357916726"]
+        point = (448.7525, -274.046)
+        heading = roads.angle(main)
+        self.assertTrue(roads.body_fits(point, heading, main))
+        self.assertTrue(roads.body_fits(point, heading, side))
+        match = roads.corridor_match(point, heading, side)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.edge.way, main.way)
+
     def test_width_tags_and_lane_estimates(self):
         self.assertEqual(tagged_width({"highway": "primary", "lanes": "2"}), (6, "estimated-osm-lanes-times-3m"))
         self.assertEqual(tagged_width({"highway": "residential", "lanes": "1", "oneway": "yes"})[0], 3)

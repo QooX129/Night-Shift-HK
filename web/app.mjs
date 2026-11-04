@@ -1,6 +1,6 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=citizen-motion-2";
-import { MapView } from "./map.mjs?v=citizen-motion-2";
-import { en, zh } from "./i18n.mjs?v=junction-toggle-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=trip-lifecycle-1";
+import { MapView } from "./map.mjs?v=trip-lifecycle-1";
+import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
 
@@ -52,6 +52,10 @@ function applyState(next, resetPosition = false) {
     elapsed = 0; trail = [];
     inFlightElapsed = 0;
     visualElapsed = next.elapsed;
+  } else if (next.fuel <= 0) {
+    // Discard motion predicted while the fuel-exhausting request was in flight.
+    car = { x: next.x, y: next.y, speed: 0, heading: next.heading, edge: next.edge };
+    trail = [];
   }
   updateUI();
 }
@@ -483,7 +487,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=citizen-motion-2");
+      const { Map3DView } = await import("./map3d.mjs?v=trip-lifecycle-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }

@@ -1,4 +1,5 @@
 export const zh = {
+  hailTaxi:"的士！",
   phoneToggle:"開啟或隱藏接單電話", phoneClose:"隱藏電話", phoneTabs:"訂單清單",
   availableTab:"可接訂單", acceptedTab:"已接訂單", noOffers:"暫時冇新單，可以留意街邊揚手乘客。",
   noAccepted:"暫時冇已接訂單。", pendingOrder:"等候接載", toPickup:"距離上車點",
@@ -54,6 +55,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  hailTaxi:"Taxi!",
   phoneToggle:"Toggle dispatch phone", phoneClose:"Hide phone", phoneTabs:"Order lists",
   availableTab:"Available", acceptedTab:"Accepted", noOffers:"No offers right now. Watch for street hails.",
   noAccepted:"No accepted orders.", pendingOrder:"Waiting pickup", toPickup:"to pickup",

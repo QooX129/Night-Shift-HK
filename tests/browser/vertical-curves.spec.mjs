@@ -1,10 +1,49 @@
 import { test, expect } from "@playwright/test";
 
+test("main-road decks own the whole junction surface without side-road penetration", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const edges = [
+      { id: "ab", a: "a", b: "b", kind: "primary", width: 16, bridge: "no", tunnel: "no" },
+      { id: "bc", a: "b", b: "c", kind: "primary", width: 16, bridge: "no", tunnel: "no" },
+      { id: "bd", a: "b", b: "d", kind: "residential", width: 8, bridge: "no", tunnel: "no" },
+    ];
+    const elevation = { node_heights: { a: 0, b: 5, c: 10, d: 15 },
+      road_profiles: { ab: [.05, .05], bc: [.05, .05], bd: [0, .1] },
+      road_junctions: { bd: [
+        { id: "ab", node: "b", a: "a", b: "b", profile: [.05, .05], radius: 8, priority: 4 },
+        { id: "bc", node: "b", a: "b", b: "c", profile: [.05, .05], radius: 8, priority: 4 },
+      ] }, pilot: {} };
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
+      elevation, data: { driving: { widths: {} } }, groundMap: { unique: edges },
+      scene: new THREE.Scene(), resources: [],
+    });
+    view.buildRoadSurfaces();
+    view.scene.updateMatrixWorld(true);
+    const ray = new THREE.Raycaster(), samples = [];
+    for (const x of [-3, -1, 0, 1, 3]) for (const y of [.5, 2, 4, 6, 7.5]) {
+      ray.set(new THREE.Vector3(x, 100, y), new THREE.Vector3(0, -1, 0));
+      const hits = ray.intersectObjects(view.scene.children).filter(hit =>
+        hit.object.name === "level-separated-solid-road-decks"
+        || hit.object.name === "continuous-shared-node-road-joints");
+      samples.push({ count: hits.length, error: Math.max(...hits.map(hit =>
+        Math.abs(hit.point.y - (5 + .05 * x + .08)))) });
+    }
+    view.scene.traverse(object => { object.geometry?.dispose(); object.material?.dispose(); });
+    return samples;
+  });
+  expect(result.every(sample => sample.count >= 2)).toBe(true);
+  expect(Math.max(...result.map(sample => sample.error))).toBeLessThan(.005);
+});
+
 test("first passenger routes build in the worker without blocking launch or applying stale replies", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
-    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=citizen-motion-2");
+    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=trip-lifecycle-1");
     const data = await (await fetch("/api/map")).json();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
@@ -85,7 +124,7 @@ test("first passenger routes build in the worker without blocking launch or appl
 test("rerouted guides reuse sampled roads without changing attributes or partial starts", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
+    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
       elevation: { node_heights: { a: 0, b: 2, c: 2 }, road_profiles: { ab: [0, 0], bc: [0, 0] } },
@@ -127,9 +166,9 @@ test("curved road decks, guides, taxi pose and speed physics share the vertical 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
-    const { RoadNetwork } = await import("/physics.mjs?v=citizen-motion-2");
-    const { surfacePose } = await import("/elevation.mjs");
+    const { Map3DView } = await import("/map3d.mjs?v=trip-lifecycle-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=trip-lifecycle-1");
+    const { surfacePose } = await import("/elevation.mjs?v=trip-lifecycle-1");
     const data = {
       bounds: [-20, -40, 320, 40], backdrop: [],
       nodes: { a: [0, 0], b: [100, 0], c: [200, 0], d: [300, 0] },

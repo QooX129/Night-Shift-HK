@@ -9,7 +9,7 @@ import math
 import warnings
 from pathlib import Path
 from typing import TypedDict
-from elevation import road_profiles, surface_pose, slope_speed_limit
+from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
 
 
 Point = tuple[float, float]
@@ -112,10 +112,13 @@ class RoadMap:
                 reverse = replace(edge, id=f"~{edge.id}", a=edge.b, b=edge.a, wrongway=True)
                 self.edges[reverse.id] = reverse
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
+        self.max_radius = max(self.radius(edge) for edge in self.edges.values())
         if self.elevation:
             self.elevation["road_profiles"] = road_profiles(self.nodes, self.elevation["node_heights"], list(self.edges.values()))
+            self.elevation["road_junctions"] = road_junctions(
+                self.nodes, list(self.edges.values()), self.elevation["road_profiles"], DRIVING["widths"])
         self.document["driving"] = DRIVING
-        self.version += "-manual-3" + ("-elevation-curves-1" if self.elevation else "") + width_version
+        self.version += "-manual-3" + ("-elevation-junctions-2" if self.elevation else "") + width_version
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -141,7 +144,8 @@ class RoadMap:
 
     def surface(self, edge: Edge, point: Point, heading: float) -> dict:
         return surface_pose(self.nodes, self.elevation["node_heights"] if self.elevation else None,
-                            edge, point, heading, self.elevation.get("road_profiles") if self.elevation else None)
+                            edge, point, heading, self.elevation.get("road_profiles") if self.elevation else None,
+                            self.elevation.get("road_junctions") if self.elevation else None)
 
     def speed_limit(self, edge: Edge, point: Point, heading: float) -> float:
         return slope_speed_limit(DRIVING["max_speed"], self.surface(edge, point, heading)["grade"])
@@ -208,24 +212,30 @@ class RoadMap:
         """Join nearby shared nodes or overlapping same-level connected surfaces."""
         found = {previous.id: previous}
         stack = [previous]
+        reach = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
+        # Traverse short connectors outside the body neighbourhood to reach
+        # overlapping main-road surfaces, but never unrelated road crossings.
+        junction_reach = reach + self.max_radius
         while stack:
             edge = stack.pop()
-            reach = math.hypot(DRIVING["taxi_length"], DRIVING["taxi_width"]) / 2
-            on_surface = project(point, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + reach
+            on_surface = project(point, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + junction_reach
             for node in (edge.a, edge.b):
                 near_node = math.dist(point, self.nodes[node]) <= self.radius(edge) + reach
                 for nxt in self.outgoing.get(node, []):
+                    if nxt.id in found:
+                        continue
                     if node == selected_junction and nxt.id != selected_exit:
                         continue
                     if not near_node and not (
                         on_surface
                         and (edge.layer, edge.bridge, edge.tunnel) == (nxt.layer, nxt.bridge, nxt.tunnel)
-                        and project(point, self.nodes[nxt.a], self.nodes[nxt.b])[1] <= self.radius(nxt) + reach
+                        and project(point, self.nodes[nxt.a], self.nodes[nxt.b])[1] <= self.radius(nxt) + junction_reach
                     ):
                         continue
-                    if nxt.id not in found:
-                        found[nxt.id] = nxt
-                        stack.append(nxt)
+                    found[nxt.id] = nxt
+                    stack.append(nxt)
+        found = {key: edge for key, edge in found.items() if key == previous.id
+                 or project(point, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + reach}
         # Opposite directions share one physical segment even far from its endpoints.
         for edge in self.outgoing.get(previous.b, []):
             if edge.a == selected_junction and edge.id != selected_exit:

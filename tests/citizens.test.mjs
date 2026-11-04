@@ -1,8 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { doorSide, peopleOnMap } from "../web/citizens.mjs";
+import { doorSide, peopleOnMap, drawHailBubble } from "../web/citizens.mjs";
 
 const near = (actual, expected) => assert.ok(Math.hypot(actual[0] - expected[0], actual[1] - expected[1]) < 1e-9, ` != ${expected}`);
+
+test("hail text and pointer are centred on the bubble body", () => {
+  let body, label;
+  const pointer = [];
+  const context = {
+    beginPath() {}, fill() {}, stroke() {},
+    roundRect(...args) { body = args; },
+    moveTo(...args) { pointer.push(args); },
+    lineTo(...args) { pointer.push(args); },
+    fillText(...args) { label = args; },
+  };
+  drawHailBubble(context, "Taxi!");
+  const [x, y, width, height] = body;
+  assert.deepEqual(label, ["Taxi!", x + width / 2, y + height / 2]);
+  assert.equal(context.textAlign, "center");
+  assert.equal(context.textBaseline, "middle");
+  assert.equal(pointer[1][0], x + width / 2);
+  assert.equal((pointer[0][0] + pointer[2][0]) / 2, x + width / 2);
+});
 
 test("walking continuously samples safe paths and reverses without overshooting", () => {
   const citizen = { id: "walker", point: [9, 0], hailing: false,
@@ -76,6 +95,27 @@ test("alighting grows out of the door and walks to the curb", () => {
   assert.ok(render(1.2).point[1] > 1.2 && render(1.2).point[1] < 6);
   near(render(2).point, [0, 6]);
   assert.equal(render(2).scale, 1);
+});
+
+test("alighting always uses the taxi left door at every heading", () => {
+  for (const heading of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const car = { x: 4, y: 5, heading };
+    const point = [car.x - Math.sin(heading) * 6, car.y + Math.cos(heading) * 6];
+    const state = { elapsed: .4, boarding: { point, starts: 0, ends: 2, alighting: true } };
+    assert.equal(doorSide(state, car), 1);
+    near(peopleOnMap(state, car)[0].point,
+      [car.x - Math.sin(heading) * 1.2, car.y + Math.cos(heading) * 1.2]);
+  }
+});
+
+test("returning hails walk back smoothly and clamp at the original sidewalk", () => {
+  const person = { id: "returning", point: [0, 0],
+    motion: { points: [[0, 0], [4, 0]], distance: 4, direction: -1,
+      speed: 1, returning_to_walk: true } };
+  const at = elapsed => peopleOnMap({ citizens: [person], citizens_at: 0, elapsed }, {})[0];
+  near(at(1).point, [3, 0]);
+  near(at(10).point, [0, 0]);
+  assert.equal(at(1).heading, -Math.PI);
 });
 
 test("boarding door follows the taxi heading and absent city data is safe", () => {

@@ -2,15 +2,63 @@ import math
 from pathlib import Path
 import unittest
 
-from elevation import road_profiles, surface_pose, slope_speed_limit
+from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
 from game import Game, RuleError, Session
-from roads import DRIVING, Edge, RoadMap
+from roads import DRIVING, Edge, RoadMap, project
 from tools.prepare_elevation import building_height
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ElevationTests(unittest.TestCase):
+    def junction(self):
+        nodes = {"a": (-100, 0), "b": (0, 0), "c": (100, 0), "d": (0, 100)}
+        heights = {"a": 0, "b": 5, "c": 10, "d": 15}
+        edges = [Edge(key, a, b, way, 100, "", "", kind, False, "0", "no", "no", width=width)
+                 for key, a, b, way, kind, width in [
+                     ("ab", "a", "b", 1, "primary", 16), ("bc", "b", "c", 1, "primary", 16),
+                     ("bd", "b", "d", 2, "residential", 8)]]
+        profiles = road_profiles(nodes, heights, edges)
+        junctions = road_junctions(nodes, edges, profiles, DRIVING["widths"])
+        return nodes, heights, edges, profiles, junctions
+
+    def test_main_road_keeps_grade_and_side_road_matches_entire_overlap(self):
+        nodes, heights, edges, profiles, junctions = self.junction()
+        self.assertEqual(profiles["ab"], [.05, .05])
+        self.assertEqual(profiles["bc"], [.05, .05])
+        self.assertNotIn("ab", junctions)
+        self.assertNotIn("bc", junctions)
+        for x in (-4, -2, 0, 2, 4):
+            main = edges[0] if x < 0 else edges[1]
+            for y in (0, 2, 4, 6, 8):
+                a = surface_pose(nodes, heights, main, (x, y), 0, profiles, junctions)
+                b = surface_pose(nodes, heights, edges[2], (x, y), 0, profiles, junctions)
+                self.assertAlmostEqual(a["height"], b["height"])
+                self.assertAlmostEqual(a["grade"], b["grade"])
+        at = lambda y: surface_pose(nodes, heights, edges[2], (2, y), math.pi / 2, profiles, junctions)
+        for y in (8.2, 16.2):
+            self.assertLess(abs(at(y - 1e-5)["height"] - at(y + 1e-5)["height"]), 1e-4)
+            self.assertLess(abs(at(y - 1e-5)["grade"] - at(y + 1e-5)["grade"]), 1e-4)
+        y, h = 12, 1e-5
+        self.assertAlmostEqual(at(y)["grade"], (at(y + h)["height"] - at(y - h)["height"]) / (2 * h), places=7)
+        self.assertEqual(junctions, road_junctions(nodes, list(reversed(edges)), profiles, DRIVING["widths"]))
+
+    def test_priority_blends_respect_actual_width_reverse_edges_and_separate_levels(self):
+        from dataclasses import replace
+        nodes, heights, edges, profiles, _ = self.junction()
+        reverse = replace(edges[2], id="db", a="d", b="b")
+        nodes.update({"u": nodes["b"], "v": nodes["d"]})
+        heights.update({"u": 30, "v": 40})
+        deck = replace(edges[2], id="bridge", a="u", b="v", way=3, bridge="yes", layer="1")
+        all_edges = [*edges, reverse, deck]
+        profiles = road_profiles(nodes, heights, all_edges)
+        junctions = road_junctions(nodes, all_edges, profiles, DRIVING["widths"])
+        self.assertNotIn("bridge", junctions)
+        for y in (0, 4, 8, 12, 16, 20, 50):
+            self.assertAlmostEqual(
+                surface_pose(nodes, heights, edges[2], (2, y), 0, profiles, junctions)["height"],
+                surface_pose(nodes, heights, reverse, (2, y), 0, profiles, junctions)["height"])
+
     def test_smooth_ramp_preserves_heights_and_continuous_grade(self):
         nodes = {"a": (0, 0), "b": (100, 0), "c": (200, 0), "d": (300, 0)}
         heights = {"a": 0, "b": 0, "c": 10, "d": 10}
@@ -63,18 +111,24 @@ class ElevationTests(unittest.TestCase):
         for value in ("NaN", "-1", "bad", "10000"):
             self.assertEqual(building_height({"height": value}), (18, "estimated-default-18m"))
 
-    def test_packaged_curves_preserve_endpoint_heights_without_overshoot(self):
+    def test_packaged_curves_preserve_unblended_heights_and_all_junctions_connect(self):
         roads = RoadMap(ROOT / "data/district.json")
+        node_surfaces = {}
         for edge in roads.edges.values():
             a, b = roads.nodes[edge.a], roads.nodes[edge.b]
             low, high = sorted(roads.elevation["node_heights"][node] for node in (edge.a, edge.b))
             for t in (0, .1, .25, .5, .75, .9, 1):
                 point = tuple(a[i] + (b[i] - a[i]) * t for i in range(2))
                 height = roads.surface(edge, point, 0)["height"]
-                self.assertGreaterEqual(height, low - 1e-9, edge.id)
-                self.assertLessEqual(height, high + 1e-9, edge.id)
-            self.assertAlmostEqual(roads.surface(edge, a, 0)["height"], roads.elevation["node_heights"][edge.a])
-            self.assertAlmostEqual(roads.surface(edge, b, 0)["height"], roads.elevation["node_heights"][edge.b])
+                self.assertTrue(math.isfinite(height), edge.id)
+                if edge.id not in roads.elevation["road_junctions"]:
+                    self.assertGreaterEqual(height, low - 1e-9, edge.id)
+                    self.assertLessEqual(height, high + 1e-9, edge.id)
+            for node, point in ((edge.a, a), (edge.b, b)):
+                height = roads.surface(edge, point, 0)["height"]
+                self.assertAlmostEqual(height, node_surfaces.setdefault(node, height), places=6, msg=node)
+                if edge.id not in roads.elevation["road_junctions"]:
+                    self.assertAlmostEqual(height, roads.elevation["node_heights"][node])
 
     def test_connected_forks_require_compatible_surface_heights(self):
         roads = RoadMap(ROOT / "data/district.json")
@@ -88,6 +142,32 @@ class ElevationTests(unittest.TestCase):
         self.assertEqual(match.edge.id, "ground")
         self.assertEqual(roads.surface(ground, (100, 0), 0)["height"],
                          roads.surface(deck, (100, 0), 0)["height"])
+
+    def test_packaged_side_road_overlaps_match_the_highest_priority_surface(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        samples = 0
+        for key, owners in roads.elevation["road_junctions"].items():
+            if key.startswith("~"):
+                continue
+            edge = roads.edges[key]
+            a, b = roads.nodes[edge.a], roads.nodes[edge.b]
+            length = math.dist(a, b)
+            for t in (0, .025, .05, .1, .25, .5, .75, .9, .95, .975, 1):
+                for side in (-.45, 0, .45):
+                    offset = (edge.width or 10) * side / length
+                    point = (a[0] + (b[0] - a[0]) * t - (b[1] - a[1]) * offset,
+                             a[1] + (b[1] - a[1]) * t + (b[0] - a[0]) * offset)
+                    covering = [owner for owner in owners if project(
+                        point, roads.nodes[owner["a"]], roads.nodes[owner["b"]])[1] <= owner["radius"]]
+                    if not covering:
+                        continue
+                    owner = min(covering, key=lambda o: (o["priority"], project(
+                        point, roads.nodes[o["a"]], roads.nodes[o["b"]])[1] - o["radius"], o["id"]))
+                    difference = abs(roads.surface(edge, point, 0)["height"] -
+                                     roads.surface(roads.edges[owner["id"]], point, 0)["height"])
+                    self.assertLessEqual(difference, .005, (key, owner["id"], point))
+                    samples += 1
+        self.assertGreater(samples, 10000)
 
     def test_pilot_level_and_server_speed_validation(self):
         roads = RoadMap(ROOT / "data/district.json")

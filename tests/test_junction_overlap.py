@@ -10,6 +10,7 @@ class JunctionOverlapTests(unittest.TestCase):
         narrow = Edge("narrow", "a", "b", 1, 100, "", "", "residential", False, "0", "no", "no", width=3)
         wide = Edge("wide", "d" if separated else "a", "c", 2, 104.4, "", "", "primary", False, "0", "no", "no", width=12)
         roads.edges = {edge.id: edge for edge in (narrow, wide)}
+        roads.max_radius = max(roads.radius(edge) for edge in roads.edges.values())
         roads.outgoing = {"a": [narrow] + ([] if separated else [wide]), "d": [wide] if separated else []}
         roads.bounds = [-200, -200, 200, 200]
         roads.elevation = None

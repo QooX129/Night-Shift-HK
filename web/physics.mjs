@@ -1,4 +1,4 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=trip-lifecycle-1";
 import { roadWidth } from "./road-width.mjs";
 
 export function angleDifference(a, b) {
@@ -20,6 +20,7 @@ export class RoadNetwork {
     this.edges = new Map(data.edges.map(e => [e.id, e]));
     this.driving = data.driving;
     this.bounds = data.bounds;
+    this.maxRadius = Math.max(...data.edges.map(edge => this.radius(edge)));
     this.branchLevels = data.branch_levels;
     this.outgoing = new Map();
     for (const edge of this.edges.values()) {
@@ -79,24 +80,34 @@ export class RoadNetwork {
   }
   candidates(point, previous, selectedExit = null, selectedJunction = null) {
     const found = new Map([[previous.id, previous]]), stack = [previous];
+    const reach = this.driving.taxi_length
+      ? Math.hypot(this.driving.taxi_length, this.driving.taxi_width) / 2 : 1;
+    // Search one road half-width beyond the body. Short connector pieces can
+    // leave the body neighbourhood before joining a main road that covers it.
+    const junctionReach = reach + this.maxRadius;
     while (stack.length) {
       const edge = stack.pop();
-      const reach = this.driving.taxi_length
-        ? Math.hypot(this.driving.taxi_length, this.driving.taxi_width) / 2 : 1;
-      const onSurface = project(point, this.nodes[edge.a], this.nodes[edge.b]).distance <= this.radius(edge) + reach;
+      const onSurface = project(point, this.nodes[edge.a], this.nodes[edge.b]).distance <= this.radius(edge) + junctionReach;
       for (const node of [edge.a, edge.b]) {
         const [x, y] = this.nodes[node];
         const nearNode = Math.hypot(point.x - x, point.y - y) <= this.radius(edge) + reach;
         for (const next of this.outgoing.get(node) || []) {
+          if (found.has(next.id)) continue;
           if (node === selectedJunction && next.id !== selectedExit) continue;
           // Acute and unequal-width junction openings extend beyond the node's
           // radius. Join their overlapping surfaces, not unrelated crossings.
           if (!nearNode && !(onSurface
               && ["layer", "bridge", "tunnel"].every(tag => edge[tag] === next[tag])
-              && project(point, this.nodes[next.a], this.nodes[next.b]).distance <= this.radius(next) + reach)) continue;
-          if (!found.has(next.id)) { found.set(next.id, next); stack.push(next); }
+              && project(point, this.nodes[next.a], this.nodes[next.b]).distance <= this.radius(next) + junctionReach)) continue;
+          found.set(next.id, next);
+          stack.push(next);
         }
       }
+    }
+    for (const [id, edge] of found) {
+      if (id !== previous.id
+          && project(point, this.nodes[edge.a], this.nodes[edge.b]).distance > this.radius(edge) + reach)
+        found.delete(id);
     }
     for (const edge of this.outgoing.get(previous.b) || []) {
       if (edge.a === selectedJunction && edge.id !== selectedExit) continue;

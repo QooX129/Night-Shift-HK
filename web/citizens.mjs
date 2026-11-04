@@ -1,5 +1,30 @@
+export const HAIL_BUBBLE = {
+  x: 2, y: 0, width: 80, height: 42, radius: 12,
+  tailWidth: 20, tailHeight: 12, canvasWidth: 128, canvasHeight: 64,
+};
+
+export function drawHailBubble(context, text) {
+  const { x, y, width, height, radius, tailWidth, tailHeight } = HAIL_BUBBLE;
+  const centreX = x + width / 2, centreY = y + height / 2;
+  const bottom = y + height;
+  context.fillStyle = "#ffe8c0dc";
+  context.strokeStyle = "#ec6630";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.roundRect(x, y, width, height, radius);
+  context.moveTo(centreX - tailWidth / 2, bottom);
+  context.lineTo(centreX, bottom + tailHeight);
+  context.lineTo(centreX + tailWidth / 2, bottom);
+  context.fill(); context.stroke();
+  context.fillStyle = "#382515da";
+  context.font = "bold 22px system-ui";
+  context.textAlign = "center"; context.textBaseline = "middle";
+  context.fillText(text, centreX, centreY);
+}
+
 // +1 is the taxi's left-hand normal (-sin, cos) in map coordinates; -1 is the opposite side.
 export function doorSide(state, car) {
+  if (state.boarding?.alighting) return 1;
   const point = state.boarding?.point;
   if (!point) return 1;
   const dx = point[0] - car.x, dy = point[1] - car.y;
@@ -16,7 +41,8 @@ export function peopleOnMap(state, car) {
     if (!length) return person;
     const travel = Math.max(0, state.elapsed - state.citizens_at) * motion.speed;
     let distance = motion.distance, direction = motion.direction;
-    if (motion.seeking_curb) distance = Math.min(length, distance + travel);
+    if (motion.returning_to_walk) distance = Math.max(0, distance - travel);
+    else if (motion.seeking_curb) distance = Math.min(length, distance + travel);
     else if (motion.speed > 0) {
       const phase = ((direction > 0 ? distance : 2 * length - distance) + travel) % (2 * length);
       distance = phase < length ? phase : 2 * length - phase;

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import app, game as api_game
-from game import CITIZEN_RADIUS, Citizen, Game, RuleError
+from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, RuleError
 from roads import RoadMap
 
 
@@ -84,6 +84,35 @@ class OrderTests(unittest.TestCase):
         self.assertNotIn(old, self.session.offers)
         with self.assertRaisesRegex(RuleError, "no longer available"):
             self.cmd("accept", order=old.id)
+
+    def test_unreachable_scheduled_offer_does_not_reject_or_repeat_movement(self):
+        self.session.paused = False
+        self.session.next_offer = .1
+        self.session.next_citizen = math.inf
+        before = self.session.elapsed
+        payload = dict(x=self.session.point[0], y=self.session.point[1],
+                       heading=self.session.heading, speed=0, dt=.3)
+        with patch.object(self.game.roads, "route", return_value=None), self.assertLogs("game", level="WARNING") as logs:
+            state = self.cmd("move", **payload)
+        self.assertIn("Scheduled passenger offer deferred", logs.output[0])
+        self.assertAlmostEqual(state["elapsed"], before + .3)
+        self.assertEqual(state["seq"], 1)
+        self.assertFalse(state["paused"])
+        self.assertTrue(45 <= self.session.next_offer - self.session.elapsed <= 180)
+        self.assertEqual(self.game.command(self.session.id, 1, "move", payload), state)
+        self.assertAlmostEqual(self.session.elapsed, before + .3)
+        self.session.elapsed = self.session.next_offer
+        self.game.advance_city(self.session, 0)
+        self.assertGreater(len(self.session.offers), 0)
+
+    def test_explicit_trip_failure_and_unexpected_dispatch_errors_still_surface(self):
+        with patch.object(self.game.roads, "route", return_value=None):
+            with self.assertRaisesRegex(RuleError, "No reachable passenger trip"):
+                self.game.make_order(self.session)
+        self.session.next_offer = 0
+        with patch.object(self.game, "offer", side_effect=RuleError("Unexpected dispatch error")):
+            with self.assertRaisesRegex(RuleError, "Unexpected dispatch error"):
+                self.game.advance_city(self.session, 0)
 
     def test_no_arbitrary_offer_cap_and_no_countdowns_in_snapshot(self):
         for _ in range(7):
@@ -179,7 +208,9 @@ class OrderTests(unittest.TestCase):
         response = self.cmd("service")
         self.assertEqual(response["phase"], "complete")
         self.assertTrue(response["boarding"]["alighting"])
-        self.assertEqual(response["boarding"]["point"], self.game.curb_point(destination))
+        point = response["boarding"]["point"]
+        left = (-math.sin(self.session.heading), math.cos(self.session.heading))
+        self.assertGreater(sum((point[i] - self.session.point[i]) * left[i] for i in (0, 1)), 0)
         with self.assertRaisesRegex(RuleError, "boarding"):
             self.cmd("move", x=self.session.point[0] + 0.2, y=self.session.point[1], speed=1,
                      heading=self.session.heading, dt=0.1)
@@ -191,6 +222,37 @@ class OrderTests(unittest.TestCase):
         self.advance(1.8)
         self.assertIsNone(self.session.boarding)
         self.assertEqual(self.session.phase, "pickup")
+
+    def test_dropoff_uses_taxi_left_even_when_facing_against_destination_edge(self):
+        self.phone_pickup()
+        self.at_stop(self.session.destination)
+        self.session.heading += math.pi
+        self.session.paused = False
+        state = self.cmd("service")
+        point = state["boarding"]["point"]
+        dx, dy = point[0] - self.session.point[0], point[1] - self.session.point[1]
+        self.assertGreater(-math.sin(self.session.heading) * dx + math.cos(self.session.heading) * dy, 0)
+        self.assertAlmostEqual(math.cos(self.session.heading) * dx + math.sin(self.session.heading) * dy, 0)
+
+    def test_empty_tank_keeps_onboard_order_and_allows_stationary_updates_and_recovery(self):
+        self.phone_pickup()
+        order = self.session.order
+        self.session.paused = False
+        self.session.fuel = .00001
+        edge = self.game.roads.edges[self.session.edge]
+        x, y = self.session.point
+        heading = self.game.roads.angle(edge)
+        state = self.cmd("move", x=x + .1 * math.cos(heading), y=y + .1 * math.sin(heading),
+                         heading=heading, speed=.5, dt=.3)
+        self.assertEqual(state["fuel"], 0)
+        self.assertEqual(state["speed"], 0)
+        state = self.cmd("move", x=state["x"], y=state["y"], heading=heading, speed=0, dt=.3)
+        self.assertEqual(state["phase"], "onboard")
+        self.assertIs(self.session.order, order)
+        self.cmd("recover")
+        self.assertIs(self.session.order, order)
+        self.assertEqual(self.session.phase, "onboard")
+        self.assertEqual(self.session.fuel, 12)
 
     def test_one_pending_order_during_trip_then_promoted_after_dropoff(self):
         self.phone_pickup()
@@ -386,6 +448,60 @@ class OrderTests(unittest.TestCase):
             self.game.advance_city(self.session, 0, [citizen.id])
             self.assertEqual(roll.call_count, 2)
 
+    def test_accepted_phone_order_blocks_new_hails_but_keeps_existing_hails(self):
+        self.cmd("accept", order=self.session.offers[0].id)
+        citizen = self.nearby_walker()
+        with patch.object(self.session.rng, "random", return_value=0) as roll:
+            self.game.advance_city(self.session, 0, [citizen.id])
+        roll.assert_not_called()
+        self.assertFalse(citizen.seeking_curb)
+        citizen.hailing = True
+        self.game.advance_city(self.session, 0, [citizen.id])
+        self.assertTrue(citizen.hailing)
+
+    def test_waiting_phone_order_also_blocks_new_hails(self):
+        order = self.session.offers.pop()
+        self.session.queue = [order]
+        citizen = self.nearby_walker()
+        with patch.object(self.session.rng, "random", return_value=0) as roll:
+            self.game.advance_city(self.session, 0, [citizen.id])
+        roll.assert_not_called()
+        self.assertFalse(citizen.seeking_curb)
+
+    def test_hail_timeout_starts_at_curb_then_cools_down_and_returns_to_original_walk(self):
+        citizen = self.nearby_walker()
+        path, distance, direction = citizen.path, citizen.distance, citizen.direction
+        with patch.object(self.session.rng, "random", return_value=0):
+            self.game.advance_city(self.session, 0, [citizen.id])
+        self.assertTrue(citizen.seeking_curb)
+        self.session.elapsed = 4
+        self.game.advance_city(self.session, 4)
+        self.assertTrue(citizen.hailing)
+        self.assertTrue(45 <= citizen.hail_until - self.session.elapsed <= 120)
+        end = citizen.hail_until
+        self.session.elapsed = end - .01
+        self.game.advance_city(self.session, 0)
+        self.assertTrue(citizen.hailing)
+        self.session.elapsed = end
+        point = self.game.citizen_point(citizen)
+        self.game.advance_city(self.session, 0, [citizen.id])
+        self.assertFalse(citizen.hailing)
+        self.assertEqual(self.game.citizen_point(citizen), point)
+        self.assertEqual(citizen.next_hail, end + CITIZEN_HAIL_COOLDOWN)
+        self.game.advance_city(self.session, 4, [citizen.id])
+        self.assertEqual(citizen.path, path)
+        self.assertEqual(citizen.direction, direction)
+        self.assertAlmostEqual(citizen.distance, distance)
+        self.assertFalse(citizen.seeking_curb)
+        with patch.object(self.session.rng, "random", return_value=0) as roll:
+            self.session.elapsed = citizen.next_hail - .01
+            self.game.advance_city(self.session, 0, [citizen.id])
+            roll.assert_not_called()
+            self.session.elapsed = citizen.next_hail
+            self.game.advance_city(self.session, 0, [citizen.id])
+            roll.assert_called_once()
+        self.assertTrue(citizen.seeking_curb)
+
     def test_successful_hail_walks_to_safe_curb_before_waving(self):
         # Pick an unobstructed curb approach from the actual local paths.
         for candidate in self.session.citizens:
@@ -404,7 +520,7 @@ class OrderTests(unittest.TestCase):
         else:
             self.fail("No safe local curb approach")
         citizen = self.nearby_walker()
-        with patch.object(self.session.rng, "random", return_value=.19):
+        with patch.object(self.session.rng, "random", return_value=0):
             self.game.advance_city(self.session, 0, [citizen.id])
         self.assertTrue(citizen.seeking_curb)
         self.assertFalse(citizen.hailing)
@@ -432,6 +548,37 @@ class OrderTests(unittest.TestCase):
 
 
 class OrderApiTests(unittest.TestCase):
+    def test_live_waterloo_dead_end_does_not_fail_scheduled_offer_move(self):
+        with TestClient(app) as client:
+            initial = client.post("/api/sessions").json()
+            session = api_game.sessions[initial["id"]]
+            session.edge = "1079194348:0:1152660823"
+            session.point = (764.8523060264388, -734.7486001717523)
+            session.heading = -2.5490806065887543
+            session.history = (api_game.roads.edges[session.edge].way,)
+            session.closed = {30150244}
+            session.elapsed = 165.01666666666722
+            session.next_offer = 0
+            session.next_citizen = math.inf
+            session.paused = False
+            with self.assertRaisesRegex(RuleError, "No reachable passenger trip"):
+                api_game.make_order(session)
+            url = f"/api/sessions/{session.id}/commands"
+            request = {"seq": 1, "command": {
+                "action": "move", "x": session.point[0], "y": session.point[1],
+                "heading": session.heading, "speed": 0, "dt": .3,
+            }}
+            with self.assertLogs("game", level="WARNING"):
+                moved = client.post(url, json=request)
+            self.assertEqual(moved.status_code, 200)
+            self.assertEqual(moved.json()["seq"], 1)
+            self.assertAlmostEqual(moved.json()["elapsed"], 165.31666666666722)
+            self.assertEqual(client.post(url, json=request).json(), moved.json())
+            request["seq"] = 2
+            continued = client.post(url, json=request)
+            self.assertEqual(continued.status_code, 200)
+            self.assertAlmostEqual(continued.json()["elapsed"], moved.json()["elapsed"] + .3)
+
     def test_move_visibility_reaches_hailing_logic_and_curb_arrival(self):
         with TestClient(app) as client:
             state = client.post("/api/sessions").json()
@@ -446,7 +593,7 @@ class OrderApiTests(unittest.TestCase):
             move = {"action": "move", "x": state["x"], "y": state["y"],
                     "heading": state["heading"], "speed": 0, "dt": 19 / 60,
                     "visible_citizens": visible}
-            with patch.object(api_game.sessions[state["id"]].rng, "random", return_value=.19):
+            with patch.object(api_game.sessions[state["id"]].rng, "random", return_value=0):
                 approach = client.post(url, json={"seq": 2, "command": move})
             self.assertEqual(approach.status_code, 200)
             approaching = [c["id"] for c in approach.json()["citizens"] if c["motion"]["seeking_curb"]]

@@ -1,5 +1,36 @@
 import { test, expect } from "@playwright/test";
 
+test("Waterloo main-road driving and outlines stay clear across a segmented slip-road opening", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  const result = await page.evaluate(async () => {
+    const [{ RoadNetwork, project, stepCar }, { CollisionLines }, data] = await Promise.all([
+      import("/physics.mjs?v=trip-lifecycle-1"),
+      import("/collision-lines.mjs?v=trip-lifecycle-1"),
+      fetch("/api/map").then(response => response.json()),
+    ]);
+    const roads = new RoadNetwork(data), outlines = new CollisionLines(data);
+    const main = roads.edges.get("1212555896:1:6357916726");
+    const car = { x: 449.6212089666092, y: -272.51195831972956,
+      edge: "102640421:1:6357916725", heading: roads.angle(main), speed: 0 };
+    const start = { ...car };
+    const innerWall = outlines.all().some(line =>
+      project({ x: 449.931558, y: -273.567937 }, line.a, line.b).distance < .2);
+    let blocked = 0;
+    const before = performance.now();
+    for (let frame = 0; frame < 120; frame++) {
+      if (stepCar(car, { gas: true }, 1 / 60, { roads }).blocked) blocked++;
+    }
+    return { innerWall, blocked, distance: Math.hypot(car.x - start.x, car.y - start.y),
+      way: roads.edges.get(car.edge).way, millisecondsPerStep: (performance.now() - before) / 120 };
+  });
+  expect(result.innerWall).toBe(false);
+  expect(result.blocked).toBe(0);
+  expect(result.distance).toBeGreaterThan(13);
+  expect(result.way).toBe(1212555896);
+  expect(result.millisecondsPerStep).toBeLessThan(5);
+});
+
 test("only collider outlines are light red at 80% opacity without tinting the road interior", async ({ page }, testInfo) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
@@ -58,7 +89,7 @@ test("narrow-road outlines mark physical boundaries independently of the old cir
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
     const { RoadNetwork } = await import("/physics.mjs");
     const results = [];
     for (const width of [8, 10, 16]) {
@@ -97,7 +128,7 @@ test("collider outline follows the joined junction perimeter without blocking it
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const pixels = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
     const data = {
       nodes: { a: [-20, 0], b: [0, 0], c: [20, 0], d: [0, 20] },
       edges: [["a", "b"], ["b", "c"], ["b", "d"]].map(([a, b], i) => ({
@@ -122,7 +153,7 @@ test("rendered taxi body and stroke use the collider dimensions at every zoom", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const results = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
     const { RoadNetwork } = await import("/physics.mjs");
     const data = {
       nodes: { a: [0, 0], b: [100, 0] },
@@ -165,7 +196,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const arrows = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
     const edges = [
       { a: "a", b: "b", way: 1, kind: "residential", length: 100 },
       { a: "b", b: "a", way: 1, kind: "residential", length: 100, wrongway: true },
@@ -196,7 +227,7 @@ test("2D guides keep routes and selected exits without normal road guidance", as
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const colors = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
+    const { MapView } = await import("/map.mjs?v=trip-lifecycle-1");
     const edges = [
       { id: "in", a: "a", b: "b", way: 1, kind: "residential", length: 100, name: "Local road", layer: "0" },
       { id: "exit", a: "b", b: "c", way: 2, kind: "residential", length: 100, name: "Local road", layer: "0" },

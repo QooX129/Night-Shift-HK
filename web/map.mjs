@@ -1,5 +1,6 @@
-import { doorSide, peopleOnMap } from "./citizens.mjs?v=citizen-motion-2";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=citizen-motion-2";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=trip-lifecycle-1";
+import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=trip-lifecycle-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
@@ -219,6 +220,16 @@ export class MapView {
       c.moveTo(0, 1); c.lineTo(.8, 2.5 - swing); c.stroke();
       c.beginPath(); c.arc(0, -1.6, 1, 0, Math.PI * 2); c.fill();
       c.restore();
+      if (person.hailing && person.id !== "customer" && !person.boarding && !this.compact && !this.overview) {
+        c.save();
+        const scale = 24 / HAIL_BUBBLE.canvasWidth / zoom;
+        const tipX = HAIL_BUBBLE.x + HAIL_BUBBLE.width / 2,
+          tipY = HAIL_BUBBLE.y + HAIL_BUBBLE.height + HAIL_BUBBLE.tailHeight;
+        c.translate(x - tipX * scale, y - 5 / zoom - tipY * scale);
+        c.scale(scale, scale);
+        drawHailBubble(c, (lang === "zh" ? zh : en).hailTaxi);
+        c.restore();
+      }
     }
     c.save(); c.translate(car.x, car.y); c.rotate(car.heading);
     const body = this.data.driving;

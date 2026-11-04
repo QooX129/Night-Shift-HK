@@ -50,6 +50,18 @@ test("disconnected overlapping crossing neither erases the wall nor adds another
   assert.equal(renderer.roads.bodyFits({ x: 20, y: 8 }, 0, renderer.roads.edges.get("1")), false);
 });
 
+test("a connection far from the crossing does not create a local junction opening", () => {
+  const data = fixture(false);
+  data.nodes.g = [100, 100];
+  for (const [a, b, id] of [["c", "g", "cg"], ["g", "f", "gf"]]) {
+    const edge = { id, a, b, way: 99, kind: "residential" };
+    data.edges.push(edge, { ...edge, id: `${id}r`, a: b, b: a });
+  }
+  const renderer = new CollisionLines(data), roads = renderer.roads;
+  assert.ok(near(renderer.all(), 20, 5));
+  assert.equal(roads.bodyFits({ x: 20, y: 8 }, 0, roads.edges.get("1")), false);
+});
+
 test("static geometry is shared across movement and covers the whole map", () => {
   const renderer = new CollisionLines(fixture()), car = { x: -24, y: 0, edge: "0" };
   const lines = renderer.all();
@@ -121,4 +133,31 @@ test("unequal-width fork openings remain connected beyond the shared-node radius
   assert.ok(roads.match(point, 0, previous));
   const selected = roads.candidates(point, previous, "narrow", "a");
   assert.ok(selected.every(edge => edge.id !== "wide"));
+});
+
+test("short Waterloo slip-road segments cannot leave walls or colliders inside the main road", () => {
+  const data = fixture(false);
+  data.nodes = {
+    j: [443.69, -266.22], s: [447.69, -269.55], t: [451.58, -273.03],
+    u: [454, -274.12], m: [446.54, -270.47], n: [461.29, -294.31],
+  };
+  data.bounds = [400, -320, 500, -240];
+  data.driving.taxi_length = 3.7;
+  data.driving.taxi_width = 1.7;
+  data.edges = [["j", "s", 3], ["s", "t", 3], ["t", "u", 3], ["j", "m", 6], ["m", "n", 6]]
+    .flatMap(([a, b, width], i) => {
+      const edge = { id: `${i}`, a, b, width, way: i < 3 ? 1 : 2,
+        kind: i < 3 ? "primary_link" : "primary", layer: "0" };
+      return [edge, { ...edge, id: `${i}r`, a: b, b: a }];
+    });
+  const renderer = new CollisionLines(data), roads = renderer.roads;
+  const side = roads.edges.get("1"), main = roads.edges.get("4");
+  const point = { x: 448.7525, y: -274.046 };
+  assert.ok(roads.bodyFits(point, roads.angle(main), main));
+  assert.ok(roads.bodyFits(point, roads.angle(main), side),
+    "switching to a nearby slip road must not remove the main-road corridor");
+  assert.ok(roads.match(point, roads.angle(main), side));
+  assert.ok(!near(renderer.all(), 449.931558, -273.567937, .2),
+    "the slip-road wall lies inside the main-road deck");
+  assert.ok(near(renderer.all(), 455, -289.5, 2), "outer road borders must remain");
 });
