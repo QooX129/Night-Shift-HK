@@ -237,7 +237,7 @@ export class Map3DView {
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
     this.detailSize = 256;
-    this.detailScale = Math.min(16, this.renderer.capabilities.maxTextureSize / this.detailSize);
+    this.detailScale = Math.min(14, this.renderer.capabilities.maxTextureSize / this.detailSize);
     const detailTexture = new THREE.DataTexture();
     detailTexture.flipY = true;
     detailTexture.generateMipmaps = true;
