@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=guide-left-exit-1";
-import { MapView } from "./map.mjs?v=guide-left-exit-1";
+import { Map3DView } from "./map3d.mjs?v=slope-guide-seams-1";
+import { MapView } from "./map.mjs?v=slope-guide-seams-1";
 
 let view;
 self.onmessage = ({ data }) => {

@@ -1,12 +1,14 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=guide-left-exit-1";
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=guide-left-exit-1";
+import { MapView } from "./map.mjs?v=slope-guide-seams-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=slope-guide-seams-1";
 import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=guide-left-exit-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=guide-left-exit-1";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=slope-guide-seams-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=slope-guide-seams-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
+import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
+import { project } from "./physics.mjs?v=slope-guide-seams-1";
 
 export class Map3DView {
   constructor(canvas, data, stops) {
@@ -66,7 +68,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=guide-left-exit-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=slope-guide-seams-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,
@@ -235,7 +237,7 @@ export class Map3DView {
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
     this.detailSize = 256;
-    this.detailScale = Math.min(12, this.renderer.capabilities.maxTextureSize / this.detailSize);
+    this.detailScale = Math.min(16, this.renderer.capabilities.maxTextureSize / this.detailSize);
     const detailTexture = new THREE.DataTexture();
     detailTexture.flipY = true;
     detailTexture.generateMipmaps = true;
@@ -578,10 +580,13 @@ export class Map3DView {
     if (lines === this.boundaryLines) return;
     this.boundaryLines = lines;
     const positions = [], coverage = [];
-    for (const { a, b, edge } of lines) {
+    for (const { a, b, edge, heights } of lines) {
       const vertex = (point, coord) => {
         const [x, y] = point;
-        positions.push(x, surfacePose(this, edge, { x, y }, 0).height + .14, y);
+        const height = heights
+          ? heights[0] + (heights[1] - heights[0]) * project({ x, y }, a, b).t
+          : surfacePose(this, edge, { x, y }, 0).height;
+        positions.push(x, height + .14, y);
         coverage.push(...coord);
       };
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -642,7 +647,7 @@ export class Map3DView {
       geometry.setDrawRange(0, 0);
     }
   }
-  lineGeometry(outlines) {
+  lineGeometry(outlines, solidJoins = []) {
     const hasHoles = outlines.some(polygon => polygon.length > 1);
     const contourSegments = hasHoles ? outlines.flatMap(polygon => polygon.flatMap(ring =>
       ring.slice(1).map((point, i) => [ring[i], point]))) : [];
@@ -689,6 +694,9 @@ export class Map3DView {
     const coordinates = [];
     const isContourEdge = (a, b) => {
       if (edgeCounts.get(key(a, b)) !== 1) return false;
+      if (solidJoins.some(([from, to]) =>
+        project({ x: positions.getX(a), y: -positions.getY(a) }, from, to).distance < .0002
+        && project({ x: positions.getX(b), y: -positions.getY(b) }, from, to).distance < .0002)) return false;
       if (!hasHoles) return true;
       const x = (positions.getX(a) + positions.getX(b)) / 2;
       const y = -(positions.getY(a) + positions.getY(b)) / 2;
@@ -986,13 +994,22 @@ export class Map3DView {
         edgeStarts.push(vertices);
         if (!edge) continue;
         const a = index === 0 && start ? [start.x, start.y] : this.nodes[edge.a], b = this.nodes[edge.b];
-        const key = JSON.stringify([edge.id, width, height]);
+        const joins = (previous, next) => previous && next && previous.b === next.a
+          && previous.way === next.way
+          && ["layer", "bridge", "tunnel", "width"].every(tag => previous[tag] === next[tag])
+          && straightJoin([this.nodes[previous.a], this.nodes[previous.b]], this.nodes[next.b]);
+        const startCap = !joins(edges[index - 1], edge), endCap = !joins(edge, edges[index + 1]);
+        const key = JSON.stringify([edge.id, width, height, startCap, endCap]);
         const partial = index === 0 && start;
         let cached = partial ? null : this.ribbonEdgeCache.get(key);
         if (!cached) {
           cached = [];
-          for (const segment of surfaceSegments(this, edge, a, b)) {
-            const geometry = this.roundLineGeometry([segment], width, height);
+          const segments = surfaceSegments(this, edge, a, b);
+          for (const [i, segment] of segments.entries()) {
+            const geometry = this.roundLineGeometry([segment], width, height, {
+              startCap: i === 0 ? startCap : !straightJoin(segments[i - 1], segment[1]),
+              endCap: i === segments.length - 1 ? endCap : !straightJoin(segment, segments[i + 1][1]),
+            });
             const positions = geometry.getAttribute("position");
             for (let i = 0; i < positions.count; i++) {
               const x = positions.getX(i), y = positions.getZ(i);
@@ -1035,22 +1052,26 @@ export class Map3DView {
     }
     return this.roundLineGeometry(segments, width, height);
   }
-  roundLineGeometry(segments, width, height) {
-    const polygons = [];
-    for (const [a, b] of segments) {
+  roundLineGeometry(segments, width, height, { startCap = true, endCap = true } = {}) {
+    const polygons = [], solidJoins = [];
+    const merged = mergeStraightSegments(segments.map(([a, b]) => ({ a, b })));
+    for (const { a, b } of merged) {
       const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (!length) continue;
       const angle = Math.atan2(b[1] - a[1], b[0] - a[0]), points = [];
-      for (const [centre, theta] of [[b, angle - Math.PI / 2], [a, angle + Math.PI / 2]]) {
-        for (let j = 0; j <= 16; j++) {
-          points.push([centre[0] + width / 2 * Math.cos(theta + j * Math.PI / 16),
-            centre[1] + width / 2 * Math.sin(theta + j * Math.PI / 16)]);
+      for (const [centre, theta, capped] of [[b, angle - Math.PI / 2, endCap], [a, angle + Math.PI / 2, startCap]]) {
+        const steps = capped ? 16 : 1;
+        for (let j = 0; j <= steps; j++) {
+          points.push([centre[0] + width / 2 * Math.cos(theta + j * Math.PI / steps),
+            centre[1] + width / 2 * Math.sin(theta + j * Math.PI / steps)]);
         }
       }
+      if (!endCap) solidJoins.push([points[0], points[1]]);
+      if (!startCap) solidJoins.push([points[points.length - 2], points[points.length - 1]]);
       points.push(points[0]);
       polygons.push([points]);
     }
-    const geometry = this.lineGeometry(polygons.length > 1 ? polygonClipping.union(...polygons) : polygons);
+    const geometry = this.lineGeometry(polygons.length > 1 ? polygonClipping.union(...polygons) : polygons, solidJoins);
     geometry.translate(0, height, 0);
     return geometry;
   }

@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("citizen screen eligibility ignores occlusion but excludes overview, distant and offscreen people", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const lens = new THREE.PerspectiveCamera(48, 1, .3, 5000);
     lens.position.set(0, 20, 30);
@@ -45,7 +45,7 @@ test("citizen screen eligibility ignores occlusion but excludes overview, distan
 test("3D walking moves continuously, alternates limbs and eases a reversal", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } }, scene: new THREE.Scene(),
@@ -83,9 +83,9 @@ test("3D walking moves continuously, alternates limbs and eases a reversal", asy
 test("hailing bubbles follow citizens, switch language and disappear after hailing", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
-    const { MapView } = await import("/map.mjs?v=guide-left-exit-1");
-    const { HAIL_BUBBLE } = await import("/citizens.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { MapView } = await import("/map.mjs?v=slope-guide-seams-1");
+    const { HAIL_BUBBLE } = await import("/citizens.mjs?v=slope-guide-seams-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: {} }, scene: new THREE.Scene(), taxi: new THREE.Group(), resources: [],
@@ -145,7 +145,7 @@ test("hailing bubbles follow citizens, switch language and disappear after haili
 test("hailing bubbles render over red boundary lines in the final native-resolution pass", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true });
     renderer.setSize(128, 128);

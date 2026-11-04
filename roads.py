@@ -13,6 +13,24 @@ from elevation import road_profiles, road_junctions, surface_pose, slope_speed_l
 
 
 Point = tuple[float, float]
+STRAIGHT_ANGLE = math.pi / 180
+STRAIGHT_DEVIATION = .01
+
+
+def straight_join(points: list[Point], nxt: Point) -> bool:
+    a, b = points[0], points[-1]
+    angle = math.atan2(b[1] - points[-2][1], b[0] - points[-2][0])
+    turn = math.atan2(nxt[1] - b[1], nxt[0] - b[0]) - angle
+    if abs(math.atan2(math.sin(turn), math.cos(turn))) > STRAIGHT_ANGLE:
+        return False
+    dx, dy = nxt[0] - a[0], nxt[1] - a[1]
+    length = math.hypot(dx, dy)
+    return length > 0 and all(
+        abs(dx * (p[1] - a[1]) - dy * (p[0] - a[0])) / length <= STRAIGHT_DEVIATION
+        for p in points[1:]
+    )
+
+
 class DrivingConfig(TypedDict):
     taxi_radius: float
     taxi_length: float
@@ -159,13 +177,15 @@ class RoadMap:
         half_length, half_width = DRIVING["taxi_length"] / 2 + padding, DRIVING["taxi_width"] / 2 + padding
         cosine, sine = math.cos(heading), math.sin(heading)
         edges = self.corridor_edges(point, previous)
+        colliders = self.collider_segments(edges)
         left, top, right, bottom = self.bounds
 
         def world(x: float, y: float) -> Point:
             return (point[0] + x * cosine - y * sine, point[1] + x * sine + y * cosine)
 
-        def inside(p: Point, edge: Edge) -> bool:
-            return project(p, self.nodes[edge.a], self.nodes[edge.b])[1] <= self.radius(edge) + allowance + 1e-6
+        def inside(p: Point, collider: tuple[Point, Point, float]) -> bool:
+            a, b, radius = collider
+            return project(p, a, b)[1] <= radius + allowance + 1e-6
 
         def covered(x0: float, y0: float, x1: float, y1: float, depth: int) -> bool:
             corners = [world(x0, y0), world(x1, y0), world(x1, y1), world(x0, y1)]
@@ -173,15 +193,60 @@ class RoadMap:
                         and top - allowance <= p[1] <= bottom + allowance) for p in corners):
                 return False
             # Convex road capsules cover the whole cell when they cover its corners.
-            if any(all(inside(p, edge) for p in corners) for edge in edges):
+            if any(all(inside(p, collider) for p in corners) for collider in colliders):
                 return True
-            if depth == 0 or any(not any(inside(p, edge) for edge in edges) for p in corners):
+            if depth == 0 or any(not any(inside(p, collider) for collider in colliders) for p in corners):
                 return False
             x, y = (x0 + x1) / 2, (y0 + y1) / 2
             return (covered(x0, y0, x, y, depth - 1) and covered(x, y0, x1, y, depth - 1)
                     and covered(x0, y, x, y1, depth - 1) and covered(x, y, x1, y1, depth - 1))
 
         return covered(-half_length, -half_width, half_length, half_width, 6)
+
+    def collider_segments(self, edges: list[Edge]) -> list[tuple[Point, Point, float]]:
+        cache = getattr(self, "_collider_cache", None)
+        if cache is None:
+            cache = self._collider_cache = {}
+        key = tuple(sorted(edge.id for edge in edges))
+        if key in cache:
+            return cache[key]
+        unique = {}
+        for edge in edges:
+            physical = (edge.way, *sorted((edge.a, edge.b)), self.radius(edge),
+                        edge.layer, edge.bridge, edge.tunnel)
+            unique.setdefault(physical, edge)
+        remaining = dict.fromkeys(unique.values())
+        result = []
+        while remaining:
+            edge = next(iter(remaining))
+            del remaining[edge]
+            points = [self.nodes[edge.a], self.nodes[edge.b]]
+            first, last = edge.a, edge.b
+            radius = self.radius(edge)
+            for reverse in (False, True):
+                if reverse:
+                    points.reverse()
+                    first, last = last, first
+                while True:
+                    following = [candidate for candidate in remaining
+                                 if last in (candidate.a, candidate.b) and candidate.way == edge.way
+                                 and self.radius(candidate) == radius
+                                 and (candidate.layer, candidate.bridge, candidate.tunnel)
+                                 == (edge.layer, edge.bridge, edge.tunnel)]
+                    if len(following) != 1:
+                        break
+                    candidate = following[0]
+                    node = candidate.b if candidate.a == last else candidate.a
+                    if not straight_join(points, self.nodes[node]):
+                        break
+                    points.append(self.nodes[node])
+                    last = node
+                    del remaining[candidate]
+            result.append((points[0], points[-1], radius))
+        if len(cache) >= 512:
+            del cache[next(iter(cache))]
+        cache[key] = result
+        return result
 
     def penetration(self, point: Point, heading: float, previous: Edge) -> float:
         if self.body_fits(point, heading, previous):

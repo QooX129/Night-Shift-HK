@@ -33,7 +33,7 @@ test("sustained 3D driving has no application-wide freezes", async ({ page }, te
     window.freezeFrame = requestAnimationFrame(sample);
   });
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const refresh = Map3DView.prototype.refreshGroundDetail;
     Map3DView.prototype.refreshGroundDetail = function (...args) {
       const start = performance.now();
@@ -131,7 +131,7 @@ for (const offscreen of [true, false]) {
     }
     await page.goto("/");
     const result = await page.evaluate(async () => {
-      const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+      const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
       const [data, stops] = await Promise.all(["/api/map", "/api/stops"].map(url =>
         fetch(url).then(response => response.json())));
       data.elevation = null; // The elevation path uses static culled geometry, not this legacy texture worker.

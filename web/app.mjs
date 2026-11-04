@@ -1,5 +1,5 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=guide-left-exit-1";
-import { MapView } from "./map.mjs?v=guide-left-exit-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=slope-guide-seams-1";
+import { MapView } from "./map.mjs?v=slope-guide-seams-1";
 import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
@@ -487,7 +487,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=guide-left-exit-1");
+      const { Map3DView } = await import("./map3d.mjs?v=slope-guide-seams-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }

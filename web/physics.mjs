@@ -1,5 +1,6 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=guide-left-exit-1";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=slope-guide-seams-1";
 import { roadWidth } from "./road-width.mjs";
+import { colliderSegments } from "./straight-lines.mjs";
 
 export function angleDifference(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
@@ -41,16 +42,24 @@ export class RoadNetwork {
     const halfLength = this.driving.taxi_length / 2 + padding, halfWidth = this.driving.taxi_width / 2 + padding;
     const cos = Math.cos(heading), sin = Math.sin(heading);
     const edges = this.candidates(point, previous);
+    this.colliderCache ??= new Map();
+    const key = edges.map(edge => edge.id).sort().join(",");
+    let colliders = this.colliderCache.get(key);
+    if (!colliders) {
+      colliders = colliderSegments(this, edges);
+      if (this.colliderCache.size >= 512) this.colliderCache.delete(this.colliderCache.keys().next().value);
+      this.colliderCache.set(key, colliders);
+    }
     const [left, top, right, bottom] = this.bounds;
     const world = (x, y) => ({ x: point.x + x * cos - y * sin, y: point.y + x * sin + y * cos });
-    const inside = (p, edge) => project(p, this.nodes[edge.a], this.nodes[edge.b]).distance <= this.radius(edge) + allowance + 1e-6;
+    const inside = (p, collider) => project(p, collider.a, collider.b).distance <= collider.radius + allowance + 1e-6;
     const covered = (x0, y0, x1, y1, depth) => {
       const corners = [world(x0, y0), world(x1, y0), world(x1, y1), world(x0, y1)];
       if (corners.some(p => p.x < left - allowance || p.x > right + allowance
           || p.y < top - allowance || p.y > bottom + allowance)) return false;
       // A road capsule is convex: covering all four corners covers the whole cell.
-      if (edges.some(edge => corners.every(p => inside(p, edge)))) return true;
-      if (depth === 0 || corners.some(p => !edges.some(edge => inside(p, edge)))) return false;
+      if (colliders.some(collider => corners.every(p => inside(p, collider)))) return true;
+      if (depth === 0 || corners.some(p => !colliders.some(collider => inside(p, collider)))) return false;
       const x = (x0 + x1) / 2, y = (y0 + y1) / 2;
       return covered(x0, y0, x, y, depth - 1) && covered(x, y0, x1, y, depth - 1)
         && covered(x0, y, x, y1, depth - 1) && covered(x, y, x1, y1, depth - 1);

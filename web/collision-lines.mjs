@@ -1,5 +1,6 @@
-import { RoadNetwork, project } from "./physics.mjs?v=guide-left-exit-1";
+import { RoadNetwork, project } from "./physics.mjs?v=slope-guide-seams-1";
 import { surfacePose, surfaceSegments } from "./elevation.mjs";
+import { straightJoin } from "./straight-lines.mjs";
 
 const mapLines = new WeakMap();
 export const COLLISION_LINE_WIDTH = .25;
@@ -134,8 +135,49 @@ export class CollisionLines {
         for (const [low, high] of clipped) add(pointAt(start, end, low), pointAt(start, end, high), edge, true);
       }
     }
-    this.lines = lines;
-    return lines;
+    const endpoint = p => p.map(value => Math.round(value * 1e6)).join(",");
+    const starts = new Map();
+    for (const line of lines) {
+      const key = endpoint(line.a);
+      if (!starts.has(key)) starts.set(key, []);
+      starts.get(key).push(line);
+    }
+    const removed = new Set();
+    for (const line of lines) {
+      if (removed.has(line)) continue;
+      const points = [line.a, line.b];
+      const samples = [];
+      while (true) {
+        const next = (starts.get(endpoint(line.b)) ?? []).filter(candidate =>
+          candidate !== line && !removed.has(candidate) && candidate.edge.way === line.edge.way
+          && roads.radius(candidate.edge) === roads.radius(line.edge)
+          && ["layer", "bridge", "tunnel"].every(tag => candidate.edge[tag] === line.edge[tag])
+          && straightJoin(points, candidate.b));
+        if (next.length !== 1) break;
+        const candidate = next[0];
+        const height = (edge, p) => surfacePose(roads, edge, { x: p[0], y: p[1] }, 0).height;
+        const h0 = line.heights?.[0] ?? height(line.edge, line.a);
+        const h1 = line.heights?.[1] ?? height(line.edge, line.b);
+        const h2 = height(candidate.edge, candidate.b);
+        const length = Math.hypot(candidate.b[0] - line.a[0], candidate.b[1] - line.a[1]);
+        const fraction = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]) / length;
+        if (!samples.length) samples.push([line.a, h0], [pointAt(line.a, line.b, .5),
+          height(line.edge, pointAt(line.a, line.b, .5))], [line.b, h1]);
+        if (Math.abs(h1 - height(candidate.edge, candidate.a)) > .001
+            || Math.abs(h1 - (h0 + (h2 - h0) * fraction)) > .001
+            || samples.some(([p, h]) => Math.abs(h - (h0 + (h2 - h0)
+              * project({ x: p[0], y: p[1] }, line.a, candidate.b).t)) > .001)
+            || Math.abs(height(candidate.edge, pointAt(candidate.a, candidate.b, .5))
+              - (h1 + h2) / 2) > .001) break;
+        line.b = candidate.b;
+        line.heights = [h0, h2];
+        points.push(candidate.b);
+        samples.push([candidate.b, h2]);
+        removed.add(candidate);
+      }
+    }
+    this.lines = lines.filter(line => !removed.has(line));
+    return this.lines;
   }
 }
 

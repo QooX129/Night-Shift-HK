@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from roads import DRIVING, RoadMap
+from roads import DRIVING, RoadMap, straight_join
 from tools.prepare_map import xy
 from tools.prepare_road_widths import GAP, MIN_WIDTH, parallel_spacing, prepare, tagged_width
 
@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoadScaleTests(unittest.TestCase):
+    def test_straight_merge_tolerance_and_real_collider_deduplication(self):
+        self.assertTrue(straight_join([(0, 0), (1, 0)], (2, .01)))
+        self.assertFalse(straight_join([(0, 0), (1, 0)], (2, .04)))
+        self.assertFalse(straight_join([(0, 0), (100, 0)], (200, 1)))
+        roads = RoadMap(ROOT / "data/district.json")
+        duplicates = [next(iter(roads.edges.values()))] * 3
+        self.assertEqual(len(roads.collider_segments(duplicates)), 1)
+        edges = list(roads.edges.values())
+        self.assertLess(len(roads.collider_segments(edges)), len(edges) / 2)
+
     def test_waterloo_short_slip_road_cannot_block_main_road(self):
         roads = RoadMap(ROOT / "data/district.json")
         side = roads.edges["102640421:1:6357916725"]

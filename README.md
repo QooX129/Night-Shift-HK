@@ -148,6 +148,11 @@ refreshing starts a new shift.
   The current metric footprint is 4.7 m long by 1.7 m wide.
   Normal movement and reverse keep the full body within connected road corridors.
   Collision checks and red outlines follow the same connected road-surface union.
+  Connected straight sections with matching way, width and road level share
+  collider geometry instead of repeating opposing-direction capsules.
+  `STRAIGHT_ANGLE` (1 degree) and `STRAIGHT_DEVIATION` (0.01 metre) in
+  `roads.py` and `web/straight-lines.mjs` limit merging; both sides must match.
+  Routing nodes, closures and junction selection remain unchanged.
   The local junction search includes short connector segments just outside the
   taxi footprint, so a slip-road boundary cannot block an overlapping main road.
   Disconnected crossings and separate road levels remain isolated.
@@ -381,6 +386,11 @@ the selected/pickup/yellow drawing priority remains unchanged.
 GPS, traffic, closure, and selected-turn overlays are cached independently.
 Following an elevated GPS route hides completed segments with a draw range;
 it does not rebuild the route or unrelated traffic geometry at each road.
+Straight GPS sections omit duplicate internal round caps and retain per-road
+draw offsets. Height curves keep their sampled subdivisions, and red outlines
+only merge when their elevations also align.
+Internal GPS subdivision joins stay opaque: anti-aliasing applies only to
+the exposed perimeter, preventing faded seams along sloped roads.
 Reroutes reuse a bounded cache of 512 sampled road-segment shapes, assembling
 the new guide without retriangulating roads already used by the same view.
 In the elevated view, new GPS geometry is prepared in the terrain worker so

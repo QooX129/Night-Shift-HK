@@ -1,9 +1,103 @@
 import { test, expect } from "@playwright/test";
 
+test("sloped GPS subdivisions do not fade across internal joins", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
+      elevation: { node_heights: { a: 0, b: 4, c: 4 },
+        road_profiles: { ab: [0, 0], bc: [0, 0] } },
+    });
+    const edges = [{ id: "ab", a: "a", b: "b", way: 1 },
+      { id: "bc", a: "b", b: "c", way: 1 }];
+    const geometry = view.ribbonGeometry(edges, .8, .22);
+    try {
+      const positions = geometry.getAttribute("position"), coverage = geometry.getAttribute("boundaryCoord");
+      let seams = 0, sides = 0;
+      for (let i = 0; i < positions.count; i += 3) {
+        for (let j = 0; j < 3; j++) {
+          const a = i + (j + 1) % 3, b = i + (j + 2) % 3;
+          if (coverage.array[a * 3 + j] !== 0 || coverage.array[b * 3 + j] !== 0) continue;
+          const x = positions.getX(a);
+          if (Math.abs(x - positions.getX(b)) < 1e-6 && x > .01 && x < 39.99
+              && Math.abs(positions.getZ(a) - positions.getZ(b)) > .7) seams++;
+          if (Math.abs(positions.getZ(a) - positions.getZ(b)) < 1e-6) sides++;
+        }
+      }
+      const renderer = new THREE.WebGLRenderer();
+      const target = new THREE.WebGLRenderTarget(420, 80);
+      const material = new THREE.ShaderMaterial({
+        vertexShader: `attribute vec3 boundaryCoord; varying vec3 coverage;
+          void main() { coverage = boundaryCoord; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `varying vec3 coverage;
+          void main() { vec3 c = smoothstep(vec3(0.0), max(fwidth(coverage), vec3(0.00001)), coverage);
+          gl_FragColor = vec4(vec3(min(c.x, min(c.y, c.z))), 1.0); }`,
+        side: THREE.DoubleSide,
+      });
+      try {
+        const scene = new THREE.Scene();
+        scene.add(new THREE.Mesh(geometry, material));
+        const camera = new THREE.OrthographicCamera(-21, 21, 4, -4, .1, 200);
+        camera.position.set(20, 100, 0);
+        camera.up.set(0, 0, -1);
+        camera.lookAt(20, 0, 0);
+        renderer.setRenderTarget(target);
+        renderer.render(scene, camera);
+        const pixels = new Uint8Array(420 * 4);
+        renderer.readRenderTargetPixels(target, 0, 40, 420, 1, pixels);
+        const minimumCentreCoverage = Math.min(...Array.from({ length: 380 }, (_, i) => pixels[(i + 20) * 4]));
+        return { seams, sides, vertices: positions.count, minimumCentreCoverage };
+      } finally {
+        material.dispose();
+        target.dispose();
+        renderer.dispose();
+        renderer.forceContextLoss();
+      }
+    } finally { geometry.dispose(); }
+  });
+  expect(result.vertices).toBeGreaterThan(100);
+  expect(result.seams).toBe(0);
+  expect(result.sides).toBeGreaterThan(0);
+  expect(result.minimumCentreCoverage).toBeGreaterThan(245);
+});
+
+test("straight GPS sections share a strip without duplicate internal round caps", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const nodes = { a: [0, 0], b: [10, 0], c: [20, 0], d: [30, 0] };
+    const edges = [["a", "b"], ["b", "c"], ["c", "d"]].map(([a, b], i) => ({
+      id: String(i), a, b, way: 1, width: 6, layer: "0", bridge: "no", tunnel: "no",
+    }));
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      nodes, data: { nodes }, elevation: { node_heights: { a: 0, b: 0, c: 0, d: 0 } },
+    });
+    const joined = view.ribbonGeometry(edges, .8, .22);
+    const singles = edges.map(edge => view.ribbonGeometry([edge], .8, .22));
+    const positions = joined.getAttribute("position");
+    const result = {
+      joinedVertices: positions.count,
+      separateVertices: singles.reduce((sum, geometry) => sum + geometry.getAttribute("position").count, 0),
+      edgeStarts: joined.userData.edgeStarts,
+      heightCorrect: Array.from({ length: positions.count }, (_, i) => positions.getY(i))
+        .every(height => Math.abs(height - .3) < 1e-6),
+    };
+    for (const geometry of [joined, ...singles]) geometry.dispose();
+    return result;
+  });
+  expect(result.joinedVertices).toBeLessThan(result.separateVertices * .5);
+  expect(result.edgeStarts).toHaveLength(3);
+  expect(result.edgeStarts[1]).toBeGreaterThan(0);
+  expect(result.edgeStarts[2]).toBeGreaterThan(result.edgeStarts[1]);
+  expect(result.heightCorrect).toBe(true);
+});
+
 test("main-road decks own the whole junction surface without side-road penetration", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edges = [
       { id: "ab", a: "a", b: "b", kind: "primary", width: 16, bridge: "no", tunnel: "no" },
@@ -42,8 +136,8 @@ test("main-road decks own the whole junction surface without side-road penetrati
 test("first passenger routes build in the worker without blocking launch or applying stale replies", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
-    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=slope-guide-seams-1");
     const data = await (await fetch("/api/map")).json();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
@@ -139,7 +233,7 @@ test("first passenger routes build in the worker without blocking launch or appl
 test("rerouted guides reuse sampled roads without changing attributes or partial starts", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
       elevation: { node_heights: { a: 0, b: 2, c: 2 }, road_profiles: { ab: [0, 0], bc: [0, 0] } },
@@ -150,8 +244,11 @@ test("rerouted guides reuse sampled roads without changing attributes or partial
     const round = view.roundLineGeometry;
     let builds = 0;
     view.roundLineGeometry = function (...args) { builds++; return round.apply(this, args); };
+    const variant = view.ribbonGeometry([...edges].reverse(), .8, .22);
+    variant.dispose();
+    const variantBuilds = builds;
     const rerouted = view.ribbonGeometry([...edges].reverse(), .8, .22);
-    const reused = builds === 0;
+    const reused = builds === variantBuilds;
     const reference = Object.assign(Object.create(Map3DView.prototype), {
       nodes: view.nodes, elevation: view.elevation,
     }).ribbonGeometry([...edges].reverse(), .8, .22);
@@ -181,9 +278,9 @@ test("curved road decks, guides, taxi pose and speed physics share the vertical 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=guide-left-exit-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=guide-left-exit-1");
-    const { surfacePose } = await import("/elevation.mjs?v=guide-left-exit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=slope-guide-seams-1");
+    const { surfacePose } = await import("/elevation.mjs?v=slope-guide-seams-1");
     const data = {
       bounds: [-20, -40, 320, 40], backdrop: [],
       nodes: { a: [0, 0], b: [100, 0], c: [200, 0], d: [300, 0] },
