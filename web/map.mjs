@@ -1,5 +1,5 @@
-import { doorSide, peopleOnMap } from "./citizens.mjs?v=orders-terrain-merge-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=orders-terrain-merge-1";
+import { doorSide, peopleOnMap } from "./citizens.mjs?v=citizen-motion-2";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=citizen-motion-2";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
@@ -211,8 +211,12 @@ export class MapView {
       c.strokeStyle = person.hailing ? "#ffac6e" : "#c3d1dc";
       c.fillStyle = person.boarding ? "#92d7b6" : person.hailing ? "#ffac6e" : "#c3d1dc";
       c.lineWidth = 1; c.lineCap = "round";
+      const swing = person.walking
+        ? Math.sin(state.elapsed * (person.walkSpeed ?? 1.1) * 7) * .6 : 0;
       c.beginPath(); c.moveTo(0, -0.5); c.lineTo(0, 1.5);
-      c.moveTo(-1.5, 1); c.lineTo(0, 0); c.lineTo(2, person.hailing ? -3 : 1); c.stroke();
+      c.moveTo(-1.5, 1 + swing); c.lineTo(0, 0); c.lineTo(2, person.hailing ? -3 : 1 - swing);
+      c.moveTo(0, 1); c.lineTo(-.8, 2.5 + swing);
+      c.moveTo(0, 1); c.lineTo(.8, 2.5 - swing); c.stroke();
       c.beginPath(); c.arc(0, -1.6, 1, 0, Math.PI * 2); c.fill();
       c.restore();
     }

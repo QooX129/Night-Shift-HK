@@ -34,6 +34,7 @@ class Move(Position):
     speed: float = Field(ge=-4, le=DRIVING["max_speed"], allow_inf_nan=False)
     dt: float = Field(ge=0, le=4, allow_inf_nan=False)
     trail: list[Position] = Field(default_factory=list, max_length=240)
+    visible_citizens: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(default_factory=list, max_length=100)
 
 
 class Pause(StrictModel):

@@ -7,6 +7,13 @@ import time
 from uuid import uuid4
 
 from roads import DRIVING, Edge, Point, RoadMap, project
+from pedestrians import Sidewalks, advance_walk, path_pose
+
+
+CITIZEN_RADIUS = 220
+CITIZEN_HAIL_PROBABILITY = 0.10
+CITIZEN_HAIL_COOLDOWN = 300
+CITIZEN_HAIL_DISTANCE = 80
 
 
 class RuleError(ValueError):
@@ -44,6 +51,12 @@ class Citizen:
     expires: float
     hailing: bool
     approached: bool = False
+    path: tuple[Point, ...] = ()
+    distance: float = 0
+    speed: float = 1.1
+    side: int = 1
+    next_hail: float = 0
+    seeking_curb: bool = False
 
 
 @dataclass
@@ -127,6 +140,7 @@ PASSENGERS = [
 class Game:
     def __init__(self, roads: RoadMap):
         self.roads = roads
+        self.sidewalks = Sidewalks(roads)
         self.sessions: dict[str, Session] = {}
         anchors = [
             ("market", "Near Yau Ma Tei market", "油麻地街市附近", 22.3102, 114.1702),
@@ -211,7 +225,7 @@ class Game:
             session.traffic[way] = 0.48
         self.offer(session)
         session.next_offer = session.rng.uniform(120, 180)
-        for _ in range(40):
+        for _ in range(60):
             self.spawn_citizen(session)
         session.next_citizen = session.rng.uniform(8, 16)
         self.sessions[session.id] = session
@@ -279,16 +293,28 @@ class Game:
                 self.display_order(session, session.offers[0], "available", "offer")
 
     def spawn_citizen(self, session: Session) -> None:
-        stop = session.rng.choice(self.street_stops)
+        candidates = self.sidewalks.nearby(session.point, CITIZEN_RADIUS)
+        if not candidates:
+            return
+        edge, side, path, low, high = session.rng.choices(
+            candidates, weights=[high - low for _, _, _, low, high in candidates], k=1
+        )[0]
+        key = f"pedestrian-{edge.id}"
+        if key not in self.stops:
+            self.stops[key] = Stop(key, edge.name, edge.zh, edge.id, self.midpoint(edge))
         session.citizens.append(
             Citizen(
                 uuid4().hex,
-                stop.id,
-                session.rng.uniform(0.2, 0.8),
+                key,
+                0.5,
                 session.rng.choice([-1, 1]),
                 session.rng.randrange(len(PASSENGERS)),
                 session.elapsed + session.rng.uniform(80, 150),
-                session.rng.random() < 0.25,
+                False,
+                path=path,
+                distance=session.rng.uniform(low, high),
+                speed=session.rng.uniform(.85, 1.35),
+                side=side,
             )
         )
 
@@ -303,9 +329,11 @@ class Game:
         )
 
     def citizen_point(self, citizen: Citizen) -> Point:
+        if citizen.path:
+            return path_pose(citizen.path, citizen.distance)
         return self.curb_point(self.stops[citizen.stop], citizen.fraction)
 
-    def advance_city(self, session: Session, dt: float) -> None:
+    def advance_city(self, session: Session, dt: float, visible_citizens: list[str] | None = None) -> None:
         session.offers = [o for o in session.offers if o.expires > session.elapsed]
         expired = [
             o
@@ -325,29 +353,57 @@ class Game:
         if session.elapsed >= session.next_offer:
             self.offer(session)
             session.next_offer = session.elapsed + session.rng.uniform(45, 180)
-        session.citizens = [c for c in session.citizens if c.expires > session.elapsed]
         if session.elapsed >= session.next_citizen:
-            if len(session.citizens) < 60:
+            if len(session.citizens) < 100:
                 self.spawn_citizen(session)
             session.next_citizen = session.elapsed + session.rng.uniform(8, 16)
         for citizen in session.citizens:
             if not citizen.hailing:
+                if citizen.path:
+                    length = sum(math.dist(a, b) for a, b in zip(citizen.path, citizen.path[1:]))
+                    if citizen.seeking_curb:
+                        citizen.distance = min(length, citizen.distance + dt * citizen.speed)
+                        if citizen.distance >= length:
+                            citizen.hailing, citizen.seeking_curb = True, False
+                    else:
+                        citizen.distance, citizen.direction = advance_walk(
+                            citizen.distance, citizen.direction, dt * citizen.speed, length
+                        )
+                else:
+                    edge = self.roads.edges[self.stops[citizen.stop].edge]
+                    citizen.fraction += citizen.direction * dt * citizen.speed / edge.length
+                    if not 0.15 <= citizen.fraction <= 0.85:
+                        citizen.fraction = max(0.15, min(0.85, citizen.fraction))
+                        citizen.direction *= -1
+        nearby = [
+            c for c in session.citizens
+            if math.dist(session.point, self.citizen_point(c)) <= CITIZEN_RADIUS
+        ]
+        removed = len(session.citizens) - len(nearby)
+        session.citizens = nearby
+        for _ in range(removed):
+            self.spawn_citizen(session)
+        if not session.paused and not session.boarding and session.phase not in {"onboard", "boarding"}:
+            visible = set(visible_citizens or ())
+            for citizen in session.citizens:
+                point = self.citizen_point(citizen)
+                if (citizen.id not in visible or citizen.hailing or citizen.seeking_curb
+                        or session.elapsed < citizen.next_hail
+                        or math.dist(session.point, point) > CITIZEN_HAIL_DISTANCE):
+                    continue
+                citizen.next_hail = session.elapsed + CITIZEN_HAIL_COOLDOWN
+                if session.rng.random() >= CITIZEN_HAIL_PROBABILITY:
+                    continue
                 edge = self.roads.edges[self.stops[citizen.stop].edge]
-                citizen.fraction += citizen.direction * dt * 1.1 / edge.length
-                if not 0.15 <= citizen.fraction <= 0.85:
-                    citizen.fraction = max(0.15, min(0.85, citizen.fraction))
-                    citizen.direction *= -1
-            distance = math.dist(session.point, self.citizen_point(citizen))
-            if distance > 70:
-                citizen.approached = False
-            elif (
-                distance < 45
-                and not citizen.approached
-                and session.phase not in {"onboard", "boarding"}
-            ):
-                citizen.approached = True
-                if session.rng.random() < 0.35:
-                    citizen.hailing = True
+                centre = project(point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[0]
+                angle = self.roads.angle(edge)
+                offset = (edge.width or DRIVING["widths"].get(edge.kind, 10)) / 2 + .8
+                curb = (centre[0] - math.sin(angle) * offset * citizen.side,
+                        centre[1] + math.cos(angle) * offset * citizen.side)
+                if not self.sidewalks.safe(point, curb):
+                    continue
+                citizen.path = (point, curb)
+                citizen.distance, citizen.direction, citizen.seeking_curb = 0, 1, True
         if session.boarding and session.elapsed >= session.boarding["ends"]:
             alighting = session.boarding.get("alighting")
             session.boarding = None
@@ -522,7 +578,7 @@ class Game:
                 session.closed = {choices[(session.incident - 1) % len(choices)]}
                 session.route_key = None
                 session.dialogue = "traffic"
-        self.advance_city(session, elapsed)
+        self.advance_city(session, elapsed, payload.get("visible_citizens"))
 
     def command(self, session_id: str, seq: int, action: str, payload: dict) -> dict:
         session = self.sessions.get(session_id)
@@ -770,7 +826,7 @@ class Game:
             "speed": session.speed,
             "edge": session.edge,
             "paused": session.paused,
-            "elapsed": round(session.elapsed, 1),
+            "elapsed": session.elapsed,
             "fuel": round(session.fuel, 3),
             "money": session.money,
             "trips": session.trips,
@@ -815,10 +871,16 @@ class Game:
                     "point": self.citizen_point(c),
                     "edge": self.stops[c.stop].edge,
                     "hailing": c.hailing,
+                    "motion": {
+                        "points": c.path, "distance": c.distance, "direction": c.direction,
+                        "speed": 0 if c.hailing else c.speed, "seeking_curb": c.seeking_curb,
+                    } if c.path else None,
                     "ready": session.phase not in {"onboard", "boarding"}
                     and not session.boarding
                     and self.citizen_ready(session, c),
                 }
                 for c in session.citizens
             ],
+            "citizens_at": session.elapsed,
+            "citizen_hailing_distance": CITIZEN_HAIL_DISTANCE,
         }

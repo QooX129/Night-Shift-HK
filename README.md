@@ -32,6 +32,11 @@ live geocoding, external fonts, or third-party requests from the game page.
 An internet connection is only needed to install dependencies, refresh the
 source map, or access a remotely hosted game.
 To stop the server, press **Ctrl+C** in the terminal.
+Safe citizen walking paths are prepared once at startup, which can take several
+seconds; entering new streets does not build this geometry during driving.
+After a code update, restart the backend and refresh the browser to load the
+matching scripts. An already-open page keeps its old scripts until refreshed;
+refreshing starts a new shift.
 
 ## Play
 
@@ -44,7 +49,8 @@ To stop the server, press **Ctrl+C** in the terminal.
 - Tap the phone tab on the right edge or press **Tab** to slide the dispatch
   phone in or out (Shift+Tab still moves keyboard focus); swipe left/right on
   touchscreens. Its badge counts available offers. Opening
-  the phone does not pause driving.
+  the phone does not pause driving. Each time it opens, it starts on **Available**;
+  accepting an order still switches to **Accepted** to show the trip.
 - **Available** lists fictional customers, reachable street pickups/destinations,
   estimated fares, and distance to pickup. Offers arrive every random **45–180
   seconds** and disappear after **30–180 seconds**, with no offer cap or visible
@@ -55,13 +61,35 @@ To stop the server, press **Ctrl+C** in the terminal.
   Carry one passenger per trip; while carrying one, you can accept **one pending
   phone order**. Waiting accepted customers cancel after **120–300 seconds**,
   without a money penalty. The timer stops applying once they board.
-- Citizens walk along streets without blocking the taxi. Some already hail;
-  others may raise a hand when an empty taxi approaches. **Orange** hailing
+- Citizens walk along safe roadside paths on both sides of nearby ground-level
+  streets, never through road surfaces or building footprints. Blocked paths
+  turn back rather than cutting through buildings or across junction roads.
+  Movement is sampled continuously between server updates, with varied walking
+  speeds, alternating arms/legs, and eased facing changes.
+  Only the normal **3D view** can trigger a new street hail: a citizen must be
+  inside its screen bounds and within **80 m** of an empty taxi. Buildings do not
+  block this eligibility check; overview, 2D and the minimap never trigger it.
+  Each eligible citizen gets a **20%** chance per **300 seconds** of simulation
+  time. There are no hails at spawn. Successful citizens walk to a validated
+  roadside curb before stopping and waving. **Orange** hailing
   citizens can be picked up by stopping alongside on the same road, then using
   **Open door / E**. A short boarding animation holds the taxi still; the street
   passenger's destination appears only after boarding. Phone pickups do not
   require the door button. In 3D, citizens and waiting, boarding, and alighting
   passengers follow their road's elevation rather than the flat map plane.
+  Citizen population is configured in `game.py`: `Game.create` starts
+  with 60 citizens, and `Game.advance_city` adds one every 8–16 seconds while
+  fewer than 100 remain. `CITIZEN_HAIL_PROBABILITY = 0.20` controls the passenger
+  chance; `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
+  `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
+  `CITIZEN_RADIUS` limits spawning to 220 metres around the taxi, matching the
+  normal 3D driving fog distance (not the zoomed-out overview). Citizens leaving
+  that radius are removed and replaced locally. Their original 80–150 second
+  expiry timer does not remove citizens while they remain nearby. If no safe
+  roadside path is nearby, the population can temporarily be lower. Walking
+  and existing orange hailing markers remain visible in 2D and the minimap.
+  Phone orders and trip stops are not
+  restricted to this radius.
 - Street pickups can temporarily put an accepted phone pickup on hold; its
   original waiting deadline still applies. Stop at the **yellow** destination
   marker and use **Drop off passenger / E** to earn the fare. The passenger

@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=orders-terrain-merge-1";
-import { MapView } from "./map.mjs?v=orders-terrain-merge-1";
+import { Map3DView } from "./map3d.mjs?v=citizen-motion-2";
+import { MapView } from "./map.mjs?v=citizen-motion-2";
 
 let view;
 self.onmessage = ({ data }) => {

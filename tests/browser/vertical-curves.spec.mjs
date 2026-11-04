@@ -3,8 +3,8 @@ import { test, expect } from "@playwright/test";
 test("first passenger routes build in the worker without blocking launch or applying stale replies", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
-    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=orders-terrain-merge-1");
+    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=citizen-motion-2");
     const data = await (await fetch("/api/map")).json();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
@@ -85,7 +85,7 @@ test("first passenger routes build in the worker without blocking launch or appl
 test("rerouted guides reuse sampled roads without changing attributes or partial starts", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
       elevation: { node_heights: { a: 0, b: 2, c: 2 }, road_profiles: { ab: [0, 0], bc: [0, 0] } },
@@ -127,8 +127,8 @@ test("curved road decks, guides, taxi pose and speed physics share the vertical 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=orders-terrain-merge-1");
+    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
+    const { RoadNetwork } = await import("/physics.mjs?v=citizen-motion-2");
     const { surfacePose } = await import("/elevation.mjs");
     const data = {
       bounds: [-20, -40, 320, 40], backdrop: [],

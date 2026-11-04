@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("citizens and passengers stand on their road level after elevation is enabled", async ({ page }) => {
   await page.goto("/");
   const heights = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=orders-terrain-merge-1");
+    const { Map3DView } = await import("/map3d.mjs?v=citizen-motion-2");
     const THREE = await import("/vendor/three/three.module.min.js");
     const ground = { id: "ground", a: "a", b: "b" };
     const bridge = { id: "bridge", a: "c", b: "d" };
@@ -195,16 +195,48 @@ test("Tab toggles the phone while Shift+Tab keeps focus navigation", async ({ pa
   const toggle = page.locator("#phone-toggle");
   await page.keyboard.press("Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
+  await page.locator("#accepted-tab").click();
   await page.keyboard.press("Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#phone-available")).toBeVisible();
+  await expect(page.locator("#phone-accepted")).toBeHidden();
+  await page.locator("#accepted-tab").click();
+  await page.locator("#phone-close").click();
+  await toggle.click();
+  await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
+  await page.locator("#phone-close").click();
   await page.keyboard.press("Shift+Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("only normal empty-taxi 3D view reports visible walkers for hailing", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.citizens = [{
+    id: "visible-walker", point: [65, 7], edge: "road", hailing: false, ready: false,
+    motion: { points: [[65, 7], [70, 7]], distance: 0, direction: 1, speed: 1, seeking_curb: false },
+  }];
+  fixture.state.citizens_at = 0;
+  await expect.poll(() => fixture.commands.filter(command => command.action === "move").length).toBeGreaterThan(1);
+  expect(fixture.commands.filter(command => command.action === "move")
+    .every(command => command.visible_citizens.length === 0)).toBe(true);
+  await page.locator("#view-mode").click();
+  await expect(page.locator("#map-3d")).toBeVisible();
+  await expect.poll(() => fixture.commands.some(command =>
+    command.visible_citizens?.includes("visible-walker"))).toBe(true);
+  await page.locator("#overview").click();
+  fixture.commands.length = 0;
+  await expect.poll(() => fixture.commands.filter(command => command.action === "move").length).toBeGreaterThan(1);
+  expect(fixture.commands.filter(command => command.action === "move")
+    .every(command => command.visible_citizens.length === 0)).toBe(true);
 });
 
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=orders-terrain-merge-1");
+    const { MapView } = await import("/map.mjs?v=citizen-motion-2");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -236,7 +268,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=orders-terrain-merge-1`);
+      const module = await import(`/${path}?v=citizen-motion-2`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

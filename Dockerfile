@@ -2,7 +2,7 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py game.py roads.py ./
+COPY app.py game.py roads.py pedestrians.py ./
 COPY data ./data
 COPY web ./web
 RUN useradd --create-home taxi

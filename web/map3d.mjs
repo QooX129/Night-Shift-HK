@@ -1,9 +1,9 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=orders-terrain-merge-1";
-import { doorSide, peopleOnMap } from "./citizens.mjs?v=orders-terrain-merge-1";
+import { MapView } from "./map.mjs?v=citizen-motion-2";
+import { doorSide, peopleOnMap } from "./citizens.mjs?v=citizen-motion-2";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=orders-terrain-merge-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=citizen-motion-2";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
@@ -65,7 +65,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=route-stream-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=citizen-motion-2", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,
@@ -884,7 +884,7 @@ export class Map3DView {
         leg.position.set(0, 0.35, z); group.add(leg); return leg;
       });
       this.scene.add(group);
-      this.people.push({ group, body, arm, legs });
+      this.people.push({ group, body, arm, otherArm, legs });
     }
     this.people.forEach((item, index) => {
       const person = people[index];
@@ -899,14 +899,46 @@ export class Map3DView {
           { x: person.point[0], y: person.point[1] }, 0).height + .1;
       }
       item.group.position.set(person.point[0], height, person.point[1]);
+      if (item.id !== person.id) {
+        item.id = person.id;
+        item.heading = person.heading ?? 0;
+        item.lastElapsed = state.elapsed;
+      }
+      const delta = Math.max(0, Math.min(.1, state.elapsed - item.lastElapsed));
+      item.lastElapsed = state.elapsed;
+      const heading = person.heading ?? item.heading;
+      item.heading += Math.atan2(Math.sin(heading - item.heading), Math.cos(heading - item.heading))
+        * (1 - Math.exp(-10 * delta));
+      item.group.rotation.y = -item.heading;
       item.group.scale.setScalar(person.scale ?? 1);
       item.body.material = person.hailing ? this.hailMaterial : this.personMaterial;
       item.arm.position.set(0, person.hailing ? 1.7 : 1, 0.5);
-      item.arm.rotation.x = person.hailing ? -0.7 : 0.3;
+      const walking = person.walking ?? !person.hailing;
+      const swing = walking ? Math.sin(state.elapsed * (person.walkSpeed ?? 1.1) * 7 + index) * .45 : 0;
+      item.arm.rotation.x = person.hailing ? -.7 + Math.sin(state.elapsed * 5 + index) * .25 : 0;
+      item.arm.rotation.z = person.hailing ? 0 : -swing;
+      item.otherArm.rotation.z = swing;
       item.legs.forEach((leg, side) => {
-        leg.rotation.z = person.hailing ? 0 : Math.sin(state.elapsed * 7 + index + side * Math.PI) * 0.3;
+        leg.rotation.z = side ? swing : -swing;
       });
     });
+  }
+  visibleCitizens(state, car) {
+    if (this.overview || state.boarding || ["onboard", "boarding"].includes(state.phase)) return [];
+    this.lens.updateMatrixWorld();
+    const point = new THREE.Vector3();
+    const result = [];
+    for (const person of peopleOnMap(state, car)) {
+      if (!person.motion || person.hailing || person.motion.seeking_curb
+          || Math.hypot(person.point[0] - car.x, person.point[1] - car.y)
+            > (state.citizen_hailing_distance ?? 80)) continue;
+      const height = surfacePose(this, this.edges.get(person.edge),
+        { x: person.point[0], y: person.point[1] }, 0).height;
+      point.set(person.point[0], height + 1, person.point[1]).project(this.lens);
+      if (Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1 && point.z >= -1 && point.z <= 1)
+        result.push(person.id);
+    }
+    return result;
   }
   ribbon(edges, color, width, height, start = null) {
     const geometry = this.ribbonGeometry(edges, width, height, start);

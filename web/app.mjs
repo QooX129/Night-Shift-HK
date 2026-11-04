@@ -1,5 +1,5 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=orders-terrain-merge-1";
-import { MapView } from "./map.mjs?v=orders-terrain-merge-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=citizen-motion-2";
+import { MapView } from "./map.mjs?v=citizen-motion-2";
 import { en, zh } from "./i18n.mjs?v=junction-toggle-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
@@ -103,7 +103,10 @@ async function flush() {
   inFlightElapsed = dt;
   moving = true;
   try {
-    await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples });
+    const visible_citizens = view === map3d && map3d
+      ? map3d.visibleCitizens({ ...state, elapsed: visualElapsed }, car) : [];
+    await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples,
+      visible_citizens });
     if (!busy && !paused && !state.boarding && state.phase === "pickup" && state.service_ready && Math.abs(car.speed) <= 0.6) {
       await send("service");
     }
@@ -320,6 +323,7 @@ function closeSettings() {
   $(`${settingsOrigin === "welcome" ? "welcome" : "pause"}-settings`).focus();
 }
 function setPhoneOpen(open) {
+  if (open && !$("phone").classList.contains("open")) selectPhoneTab("available");
   $("phone").classList.toggle("open", open);
   $("phone-toggle").setAttribute("aria-expanded", String(open));
   if (!open && $("phone-screen").contains(document.activeElement)) $("phone-toggle").focus();
@@ -479,7 +483,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=orders-terrain-merge-1");
+      const { Map3DView } = await import("./map3d.mjs?v=citizen-motion-2");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }

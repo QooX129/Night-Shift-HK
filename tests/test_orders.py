@@ -2,11 +2,12 @@ import copy
 import math
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app import app
-from game import Citizen, Game, RuleError
+from app import app, game as api_game
+from game import CITIZEN_RADIUS, Citizen, Game, RuleError
 from roads import RoadMap
 
 
@@ -295,7 +296,7 @@ class OrderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuleError, "current passenger"):
             self.cmd("door", citizen=citizen.id)
 
-    def test_citizens_walk_spawn_and_expire_without_colliding(self):
+    def test_citizens_walk_spawn_and_stay_alive_while_nearby(self):
         citizen = self.citizen(hailing=False)
         self.session.point = (self.session.point[0] + 100, self.session.point[1])
         point = self.game.citizen_point(citizen)
@@ -306,22 +307,159 @@ class OrderTests(unittest.TestCase):
         self.assertTrue(8 <= self.session.next_citizen - self.session.elapsed <= 16)
         citizen.expires = self.session.elapsed
         self.advance(0)
-        self.assertNotIn(citizen, self.session.citizens)
+        self.assertIn(citizen, self.session.citizens)
 
-    def test_approaching_empty_taxi_can_trigger_hail(self):
+    def test_initial_and_relocated_citizens_stay_in_driving_visible_range(self):
+        count = len(self.session.citizens)
+        self.assertGreater(count, 0)
+        for citizen in self.session.citizens:
+            self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS)
+        original_ids = {c.id for c in self.session.citizens}
+        self.at_stop("mongkok")
+        self.session.next_citizen = math.inf
+        self.session.next_offer = math.inf
+        self.advance(0)
+        self.assertEqual(len(self.session.citizens), count)
+        self.assertNotEqual(original_ids, {c.id for c in self.session.citizens})
+        for citizen in self.session.citizens:
+            self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS)
+
+    def test_citizen_spawning_has_no_distant_fallback(self):
+        self.session.point = (100000, 100000)
+        self.session.next_citizen = 0
+        self.session.next_offer = math.inf
+        self.advance(0)
+        self.assertEqual(self.session.citizens, [])
+
+    def test_spawns_use_safe_paths_both_curbs_and_no_initial_hails(self):
+        self.session.citizens = []
+        for _ in range(100):
+            self.game.spawn_citizen(self.session)
+        self.assertEqual({c.side for c in self.session.citizens}, {-1, 1})
+        self.assertGreater(len({c.stop for c in self.session.citizens}), 5)
+        for citizen in self.session.citizens:
+            self.assertFalse(citizen.hailing)
+            self.assertTrue(self.game.sidewalks.safe(*citizen.path))
+            self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS + 1e-9)
+
+    def test_walking_beyond_visible_range_removes_citizen(self):
         citizen = self.citizen(hailing=False)
-        for seed in range(20):
-            self.session.rng.seed(seed)
-            citizen.approached = False
-            self.advance(0)
-            if citizen.hailing:
+        citizen.fraction = 0.5
+        citizen.direction = 1
+        point = self.game.citizen_point(citizen)
+        edge = self.game.roads.edges[self.game.stops[citizen.stop].edge]
+        angle = self.game.roads.angle(edge)
+        self.session.point = (
+            point[0] - (CITIZEN_RADIUS - 0.1) * math.cos(angle),
+            point[1] - (CITIZEN_RADIUS - 0.1) * math.sin(angle),
+        )
+        self.session.next_citizen = self.session.next_offer = math.inf
+        self.advance(1)
+        self.assertNotIn(citizen, self.session.citizens)
+        for nearby in self.session.citizens:
+            self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(nearby)), CITIZEN_RADIUS)
+
+    def nearby_walker(self):
+        citizen = self.session.citizens[0]
+        self.session.citizens = [citizen]
+        self.session.point = self.game.citizen_point(citizen)
+        self.session.paused = False
+        self.session.next_citizen = self.session.next_offer = math.inf
+        return citizen
+
+    def test_only_visible_empty_taxi_rolls_hail_and_respects_cooldown(self):
+        citizen = self.nearby_walker()
+        with patch.object(self.session.rng, "random", return_value=.9) as roll:
+            self.game.advance_city(self.session, 0)
+            roll.assert_not_called()
+            self.game.advance_city(self.session, 0, [citizen.id])
+            self.assertEqual(roll.call_count, 1)
+            self.assertEqual(citizen.next_hail, 300)
+            self.session.elapsed = 299
+            self.game.advance_city(self.session, 0, [citizen.id])
+            self.assertEqual(roll.call_count, 1)
+            self.session.elapsed = 300
+            self.game.advance_city(self.session, 0, [citizen.id])
+            self.assertEqual(roll.call_count, 2)
+            self.session.elapsed = 600
+            self.session.phase = "onboard"
+            self.game.advance_city(self.session, 0, [citizen.id])
+            self.assertEqual(roll.call_count, 2)
+
+    def test_successful_hail_walks_to_safe_curb_before_waving(self):
+        # Pick an unobstructed curb approach from the actual local paths.
+        for candidate in self.session.citizens:
+            edge = self.game.roads.edges[self.game.stops[candidate.stop].edge]
+            point = self.game.citizen_point(candidate)
+            centre = self.game.roads.nodes[edge.a]
+            angle = self.game.roads.angle(edge)
+            from roads import project
+            centre = project(point, centre, self.game.roads.nodes[edge.b])[0]
+            offset = (edge.width or 10) / 2 + .8
+            curb = (centre[0] - math.sin(angle) * offset * candidate.side,
+                    centre[1] + math.cos(angle) * offset * candidate.side)
+            if self.game.sidewalks.safe(point, curb):
+                self.session.citizens = [candidate]
                 break
+        else:
+            self.fail("No safe local curb approach")
+        citizen = self.nearby_walker()
+        with patch.object(self.session.rng, "random", return_value=.19):
+            self.game.advance_city(self.session, 0, [citizen.id])
+        self.assertTrue(citizen.seeking_curb)
+        self.assertFalse(citizen.hailing)
+        self.assertTrue(self.game.sidewalks.safe(*citizen.path))
+        self.game.advance_city(self.session, 4)
         self.assertTrue(citizen.hailing)
-        self.assertTrue(citizen.approached)
-        self.assertTrue(self.game.citizen_ready(self.session, citizen))
+        self.assertFalse(citizen.seeking_curb)
+
+    def test_hail_is_rejected_outside_80_metres_and_while_paused(self):
+        citizen = self.nearby_walker()
+        self.session.point = (self.session.point[0] + 81, self.session.point[1])
+        with patch.object(self.session.rng, "random") as roll:
+            self.game.advance_city(self.session, 0, [citizen.id, "unknown"])
+            roll.assert_not_called()
+            self.session.point = self.game.citizen_point(citizen)
+            self.session.paused = True
+            self.game.advance_city(self.session, 0, [citizen.id])
+            roll.assert_not_called()
+
+    def test_snapshot_clock_matches_citizen_motion_without_rounding(self):
+        self.session.elapsed = 19 / 60
+        state = self.game.snapshot(self.session)
+        self.assertEqual(state["elapsed"], self.session.elapsed)
+        self.assertEqual(state["elapsed"], state["citizens_at"])
 
 
 class OrderApiTests(unittest.TestCase):
+    def test_move_visibility_reaches_hailing_logic_and_curb_arrival(self):
+        with TestClient(app) as client:
+            state = client.post("/api/sessions").json()
+            url = f"/api/sessions/{state['id']}/commands"
+            visible = [c["id"] for c in state["citizens"]
+                       if math.dist(c["point"], (state["x"], state["y"])) <= 80]
+            self.assertTrue(visible)
+            resumed = client.post(url, json={
+                "seq": 1, "command": {"action": "pause", "paused": False},
+            })
+            self.assertEqual(resumed.status_code, 200)
+            move = {"action": "move", "x": state["x"], "y": state["y"],
+                    "heading": state["heading"], "speed": 0, "dt": 19 / 60,
+                    "visible_citizens": visible}
+            with patch.object(api_game.sessions[state["id"]].rng, "random", return_value=.19):
+                approach = client.post(url, json={"seq": 2, "command": move})
+            self.assertEqual(approach.status_code, 200)
+            approaching = [c["id"] for c in approach.json()["citizens"] if c["motion"]["seeking_curb"]]
+            self.assertTrue(approaching)
+            self.assertFalse(any(c["hailing"] for c in approach.json()["citizens"]))
+            self.assertEqual(approach.json()["elapsed"], approach.json()["citizens_at"])
+            arrived = client.post(url, json={
+                "seq": 3, "command": {**move, "dt": 2, "visible_citizens": []},
+            })
+            self.assertEqual(arrived.status_code, 200)
+            hailing = [c for c in arrived.json()["citizens"] if c["id"] in approaching]
+            self.assertTrue(all(c["hailing"] and c["motion"]["speed"] == 0 for c in hailing))
+
     def test_explicit_offer_id_and_new_door_schema(self):
         with TestClient(app) as client:
             response = client.post("/api/sessions")

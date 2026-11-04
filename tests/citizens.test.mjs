@@ -4,6 +4,40 @@ import { doorSide, peopleOnMap } from "../web/citizens.mjs";
 
 const near = (actual, expected) => assert.ok(Math.hypot(actual[0] - expected[0], actual[1] - expected[1]) < 1e-9, ` != ${expected}`);
 
+test("walking continuously samples safe paths and reverses without overshooting", () => {
+  const citizen = { id: "walker", point: [9, 0], hailing: false,
+    motion: { points: [[0, 0], [10, 0]], distance: 9, direction: 1, speed: 1, seeking_curb: false } };
+  const at = elapsed => peopleOnMap({ citizens: [citizen], elapsed, citizens_at: 0 }, {})[0];
+  near(at(.5).point, [9.5, 0]);
+  near(at(1.5).point, [9.5, 0]);
+  assert.equal(Math.abs(at(1.5).heading), Math.PI);
+  near(at(12).point, [1, 0]);
+  assert.deepEqual(citizen.point, [9, 0]);
+});
+
+test("curb approach clamps at the safe target and hailing citizens do not drift", () => {
+  const citizen = { id: "walker", point: [0, 2], hailing: false,
+    motion: { points: [[0, 2], [0, 1]], distance: 0, direction: 1, speed: 1, seeking_curb: true } };
+  const at = elapsed => peopleOnMap({ citizens: [citizen], elapsed, citizens_at: 0 }, {})[0];
+  near(at(.5).point, [0, 1.5]);
+  near(at(5).point, [0, 1]);
+  assert.equal(at(5).walking, false);
+  citizen.motion.speed = 0;
+  citizen.motion.distance = 1;
+  citizen.hailing = true;
+  near(at(100).point, [0, 1]);
+});
+
+test("walking does not jump when a server snapshot acknowledges a reversal", () => {
+  const motion = { points: [[0, 0], [10, 0]], distance: 9, direction: 1, speed: 1, seeking_curb: false };
+  const citizen = { id: "walker", point: [9, 0], motion };
+  const predicted = peopleOnMap({ citizens: [citizen], elapsed: 2, citizens_at: 0 }, {})[0];
+  const acknowledged = { ...citizen, point: [9.5, 0], motion: { ...motion, distance: 9.5, direction: -1 } };
+  const updated = peopleOnMap({ citizens: [acknowledged], elapsed: 2, citizens_at: 1.5 }, {})[0];
+  near(updated.point, predicted.point);
+  assert.equal(updated.heading, predicted.heading);
+});
+
 test("boarding animation walks to the taxi door then shrinks inside without mutating citizens", () => {
   const citizens = [{ id: "waiting", point: [30, 2], hailing: true }];
   const boarding = { point: [10, 4], starts: 0, ends: 2 };
