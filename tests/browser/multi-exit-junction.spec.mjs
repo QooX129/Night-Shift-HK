@@ -35,7 +35,7 @@ test("junctions with three exits offer the GPS-recommended road for selection", 
     { id: "pickup", name: "Pickup", zh: "上車", edge: "straight", point: [90, 0] },
     { id: "destination", name: "Destination", zh: "落車", edge: "right", point: [60, 30] },
   ];
-  await page.route("**/api/map", route => route.fulfill({ json: map }));
+  await page.route("**/api/map*", route => route.fulfill({ json: map }));
   await page.route("**/api/stops", route => route.fulfill({ json: stops }));
   await page.route("**/api/sessions", route => route.fulfill({ json: state }));
   await page.route("**/api/sessions/multi-exit/commands", async route => {

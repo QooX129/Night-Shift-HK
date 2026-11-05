@@ -3,20 +3,24 @@ import mimetypes
 from threading import RLock
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from game import Game, RuleError
 from roads import DRIVING, RoadMap
+from map_streaming import VisualMap
 
 ROOT = Path(__file__).resolve().parent
 mimetypes.add_type("text/javascript", ".mjs")
 roads = RoadMap(ROOT / "data" / "district.json")
 game = Game(roads)
 game_lock = RLock()
+visual_map = VisualMap(roads.document)
 app = FastAPI(title="Night Shift HK", docs_url=None, redoc_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 class StrictModel(BaseModel):
@@ -78,9 +82,29 @@ def health() -> dict:
     return {"status": "ok", "dataset": roads.version}
 
 
+def cached_map_response(request: Request, content: bytes, tag: str, immutable: bool = False) -> Response:
+    headers = {"ETag": f'W/"{tag}"', "Vary": "Accept-Encoding",
+               "Cache-Control": "public, max-age=31536000, immutable" if immutable else "no-cache"}
+    if request.headers.get("if-none-match") == headers["ETag"]:
+        return Response(status_code=304, headers=headers)
+    return Response(content, media_type="application/json", headers=headers)
+
+
 @app.get("/api/map")
-def map_data() -> dict:
+def map_data(request: Request, stream: bool = False):
+    if stream:
+        return cached_map_response(request, visual_map.core, visual_map.version)
     return roads.document
+
+
+@app.get("/api/map/chunks/{version}/{x}/{y}")
+def map_chunk(request: Request, version: str, x: int, y: int) -> Response:
+    if version != visual_map.version:
+        raise HTTPException(status_code=409, detail="Map dataset changed. Refresh to load the new map.")
+    key = f"{x}:{y}"
+    if key not in visual_map.chunks:
+        raise HTTPException(status_code=404, detail="Unknown visual map chunk.")
+    return cached_map_response(request, visual_map.chunks[key], f"{version}:{key}", immutable=True)
 
 
 @app.get("/api/source")

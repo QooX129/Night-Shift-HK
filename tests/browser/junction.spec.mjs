@@ -32,7 +32,7 @@ test("stacked selection previews the exit and waits until arrival to snap", asyn
     { id: "pickup", name: "Pickup", zh: "上車", edge: "upper", point: [90, 0] },
     { id: "dest", name: "Destination", zh: "落車", edge: "surface", point: [60, 30] },
   ];
-  await page.route("**/api/map", route => route.fulfill({ json: map }));
+  await page.route("**/api/map*", route => route.fulfill({ json: map }));
   await page.route("**/api/stops", route => route.fulfill({ json: stops }));
   await page.route("**/api/sessions", route => route.fulfill({ json: state }));
   await page.route("**/api/sessions/fixture/commands", async route => {
@@ -59,7 +59,7 @@ test("stacked selection previews the exit and waits until arrival to snap", asyn
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
+    const { MapView } = await import("/map.mjs?v=streaming-map-1");
     const render = MapView.prototype.render, highlight = MapView.prototype.highlightExit;
     MapView.prototype.render = function (...args) {
       window.renderedCar = { ...args[0] };

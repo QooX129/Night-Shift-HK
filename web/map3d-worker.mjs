@@ -1,9 +1,11 @@
-import { Map3DView } from "./map3d.mjs?v=local-map-popup-1";
-import { MapView } from "./map.mjs?v=taxi-map-icons-1";
+import { Map3DView } from "./map3d.mjs?v=streaming-map-1";
+import { MapView } from "./map.mjs?v=streaming-map-1";
 
 let view;
+let revision = 0;
 self.onmessage = ({ data }) => {
   if (data.type === "init") {
+    revision = data.revision ?? 0;
     view = Object.create(Map3DView.prototype);
     view.data = data.map;
     view.nodes = data.map.nodes;
@@ -27,6 +29,11 @@ self.onmessage = ({ data }) => {
       console.warn("OffscreenCanvas 2D unavailable; 3D road textures will refresh on the main thread.");
     }
     view.directionLines = { geometry: { dispose() {} } };
+    return;
+  }
+  if (data.type === "visuals") {
+    view.data.backdrop = data.backdrop;
+    revision = data.revision;
     return;
   }
   if (data.type === "route") {
@@ -62,7 +69,7 @@ self.onmessage = ({ data }) => {
     position: geometry.getAttribute("position").array,
     boundaryCoord: geometry.getAttribute("boundaryCoord").array,
   }));
-  self.postMessage({ x: data.x, y: data.y, buffers, image, mipmaps },
+  self.postMessage({ x: data.x, y: data.y, buffers, image, mipmaps, revision },
     [...(image ? [image.data.buffer] : []), ...mipmaps.map(image => image.data.buffer),
       ...buffers.flatMap(attributes => Object.values(attributes).map(array => array.buffer))]);
 };

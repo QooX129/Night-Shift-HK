@@ -4,7 +4,7 @@ import { toggleDrivingView } from "./driving-view.mjs";
 test("taxi markers retain readable map and minimap sizes across zoom levels", async ({ page }) => {
   await page.goto("/");
   const sizes = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
+    const { MapView, TAXI_ICON_MIN_LENGTH } = await import("/map.mjs?v=streaming-map-1");
     const data = {
       bounds: [-100, -100, 100, 100], nodes: {}, edges: [], backdrop: [],
       driving: { taxi_length: 4.7, taxi_width: 1.7 },
@@ -18,7 +18,9 @@ test("taxi markers retain readable map and minimap sizes across zoom levels", as
       const roundRect = view.ctx.roundRect.bind(view.ctx);
       view.ctx.roundRect = (x, y, width, height, radius) => {
         const transform = view.ctx.getTransform();
-        sizes.push({ mode, zoom: view.zoom, length: width * Math.hypot(transform.a, transform.b) / view.ratio });
+        sizes.push({ mode, zoom: view.zoom, expected: Math.max(mode === "minimap"
+          ? TAXI_ICON_MIN_LENGTH.minimap : TAXI_ICON_MIN_LENGTH.map, 4.7 * 26 / 27 * view.zoom),
+        length: width * Math.hypot(transform.a, transform.b) / view.ratio });
         roundRect(x, y, width, height, radius);
       };
       for (const zoom of [.1, .9, 3.5]) {
@@ -31,7 +33,7 @@ test("taxi markers retain readable map and minimap sizes across zoom levels", as
   });
   expect(sizes).toHaveLength(9);
   for (const size of sizes) {
-    expect(size.length).toBeCloseTo(size.mode === "minimap" ? 24 : 32, 5);
+    expect(size.length).toBeCloseTo(size.expected, 5);
   }
 });
 
@@ -48,7 +50,7 @@ test("map popup keeps 3D driving live and supports keyboard, wheel zoom and drag
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#map-3d")).toBeVisible();
   const before = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
+    const { MapView } = await import("/map.mjs?v=streaming-map-1");
     const original = MapView.prototype.render;
     window.mapPopupProbe = { original, frames: 0 };
     MapView.prototype.render = function (car, state, ...args) {
@@ -106,7 +108,7 @@ test("map popup keeps 3D driving live and supports keyboard, wheel zoom and drag
     await expect(page.locator("#map-3d")).toBeVisible();
   } finally {
     await page.evaluate(async () => {
-      const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
+      const { MapView } = await import("/map.mjs?v=streaming-map-1");
       MapView.prototype.render = window.mapPopupProbe.original;
       delete window.mapPopupProbe;
     });

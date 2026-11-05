@@ -1,4 +1,4 @@
-import { RoadNetwork, project } from "./physics.mjs?v=local-map-popup-1";
+import { RoadNetwork, project } from "./physics.mjs?v=streaming-map-1";
 import { surfacePose, surfaceSegments } from "./elevation.mjs";
 import { straightJoin } from "./straight-lines.mjs";
 

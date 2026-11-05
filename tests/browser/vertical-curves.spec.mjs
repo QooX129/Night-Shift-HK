@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("sloped GPS subdivisions do not fade across internal joins", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
@@ -66,7 +66,7 @@ test("sloped GPS subdivisions do not fade across internal joins", async ({ page 
 test("straight GPS sections share a strip without duplicate internal round caps", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
     const nodes = { a: [0, 0], b: [10, 0], c: [20, 0], d: [30, 0] };
     const edges = [["a", "b"], ["b", "c"], ["c", "d"]].map(([a, b], i) => ({
       id: String(i), a, b, way: 1, width: 6, layer: "0", bridge: "no", tunnel: "no",
@@ -97,7 +97,7 @@ test("straight GPS sections share a strip without duplicate internal round caps"
 test("main-road decks own the whole junction surface without side-road penetration", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edges = [
       { id: "ab", a: "a", b: "b", kind: "primary", width: 16, bridge: "no", tunnel: "no" },
@@ -136,8 +136,8 @@ test("main-road decks own the whole junction surface without side-road penetrati
 test("first passenger routes build in the worker without blocking launch or applying stale replies", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=streaming-map-1");
     const data = await (await fetch("/api/map")).json();
     const canvas = document.createElement("canvas");
     document.body.append(canvas);
@@ -233,7 +233,7 @@ test("first passenger routes build in the worker without blocking launch or appl
 test("rerouted guides reuse sampled roads without changing attributes or partial starts", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: { a: [0, 0], b: [20, 0], c: [40, 0] },
       elevation: { node_heights: { a: 0, b: 2, c: 2 }, road_profiles: { ab: [0, 0], bc: [0, 0] } },
@@ -278,9 +278,9 @@ test("curved road decks, guides, taxi pose and speed physics share the vertical 
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=local-map-popup-1");
-    const { surfacePose } = await import("/elevation.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=streaming-map-1");
+    const { surfacePose } = await import("/elevation.mjs?v=streaming-map-1");
     const data = {
       bounds: [-20, -40, 320, 40], backdrop: [],
       nodes: { a: [0, 0], b: [100, 0], c: [200, 0], d: [300, 0] },

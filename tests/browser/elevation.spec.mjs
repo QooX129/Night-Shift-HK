@@ -6,7 +6,7 @@ test.use({ trace: "off" });
 test("elevation preview retains the same-machine legacy renderer frame budget", async ({ page }) => {
   const rates = {};
   for (const mode of ["legacy", "elevation"]) {
-    await page.route("**/api/map", async route => {
+    await page.route("**/api/map*", async route => {
       const response = await route.fetch(), data = await response.json();
       if (mode === "legacy") data.elevation = null;
       await route.fulfill({ response, json: data });
@@ -29,7 +29,7 @@ test("elevation preview retains the same-machine legacy renderer frame budget", 
       requestAnimationFrame(frame);
     }));
     await page.keyboard.up("w");
-    await page.unroute("**/api/map");
+    await page.unroute("**/api/map*");
   }
   console.log(`Same-machine renderer FPS ${JSON.stringify(rates)}`);
   expect(rates.elevation / rates.legacy).toBeGreaterThanOrEqual(.7);
@@ -39,8 +39,8 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=streaming-map-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
       [RoadNetwork.prototype, "constrain"], [RoadNetwork.prototype, "bodyFits"]]) {
@@ -76,8 +76,8 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { surfacePose } = await import("/elevation.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { surfacePose } = await import("/elevation.mjs?v=streaming-map-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();
     const canvas = document.createElement("canvas");

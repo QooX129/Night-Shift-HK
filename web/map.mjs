@@ -1,10 +1,14 @@
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=local-map-popup-1";
-import { en, zh } from "./i18n.mjs?v=local-map-popup-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=local-map-popup-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=streaming-map-1";
+import { en, zh } from "./i18n.mjs?v=streaming-map-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=streaming-map-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
+import { visualStream } from "./map-stream.mjs";
+import { SpatialGrid, pointBounds } from "./spatial-grid.mjs";
 
 export const TAXI_ICON_MIN_LENGTH = { map: 20, minimap: 20 };
+export const MAP_TILE_PIXELS = 256;
+export const MAP_TILE_CACHE_LIMIT = 128;
 
 export class MapView {
   constructor(canvas, data, stops, { compact = false, interactive = false } = {}) {
@@ -13,6 +17,8 @@ export class MapView {
     this.interactive = interactive;
     this.ctx = canvas.getContext("2d");
     this.data = data;
+    this.stream = visualStream(data);
+    this.tileCache = new Map();
     this.collisionLines = staticCollisionLines(data);
     this.edges = new Map(data.edges.map(e => [e.id, e]));
     this.stops = stops;
@@ -29,6 +35,26 @@ export class MapView {
     this.resize();
     window.addEventListener("resize", () => this.resize());
   }
+  spatialIndexes() {
+    if (this.indexedRoads !== this.unique) {
+      this.indexedRoads = this.unique;
+      this.roadIndex = new SpatialGrid(this.unique,
+        edge => pointBounds([this.data.nodes[edge.a], this.data.nodes[edge.b]], 24));
+    }
+    if (this.indexedShapes !== this.data.backdrop) {
+      this.indexedShapes = this.data.backdrop;
+      this.shapeIndex = new SpatialGrid(this.data.backdrop, shape => pointBounds(shape.points));
+      this.loadedShapeIds = new Set(this.data.backdrop.map(shape => shape.id));
+    }
+    if (this.data.overview && !this.overviewIndex)
+      this.overviewIndex = new SpatialGrid(this.data.overview, shape => pointBounds(shape.points));
+    if (this.collisionLines && !this.collisionIndex)
+      this.collisionIndex = new SpatialGrid(this.collisionLines.all(), line => pointBounds([line.a, line.b], 1));
+    this.legalDirections ??= this.data.edges.filter(edge => !edge.wrongway);
+    this.directionKeys ??= new Set(this.legalDirections.map(edge => `${edge.way}:${edge.a}:${edge.b}`));
+    this.directionIndex ??= new SpatialGrid(this.legalDirections,
+      edge => pointBounds([this.data.nodes[edge.a], this.data.nodes[edge.b]], 10));
+  }
   resize() {
     this.width = this.compact ? this.canvas.clientWidth : innerWidth;
     this.height = this.compact ? this.canvas.clientHeight : innerHeight;
@@ -37,6 +63,7 @@ export class MapView {
     this.canvas.height = Math.ceil(this.height * this.ratio);
   }
   buildBackdrop(bounds, s) {
+    this.spatialIndexes();
     const [left, top, right, bottom] = bounds;
     this.backdropBounds = bounds;
     this.backdropScale = s;
@@ -46,7 +73,9 @@ export class MapView {
     c.fillStyle = "#1a2c30"; c.fillRect(0, 0, this.backdrop.width, this.backdrop.height);
     c.scale(s, s); c.translate(-left, -top);
     c.lineWidth = 0.5;
-    for (const shape of this.data.backdrop) {
+    const shapes = this.shapeIndex.query(bounds);
+    const overview = (this.overviewIndex?.query(bounds) ?? []).filter(shape => !this.loadedShapeIds.has(shape.id));
+    for (const shape of [...overview, ...shapes]) {
       c.beginPath();
       shape.points.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y));
       c.closePath();
@@ -56,7 +85,7 @@ export class MapView {
     }
     c.lineCap = "round"; c.lineJoin = "round";
     for (const border of [true, false]) {
-      for (const e of this.unique) {
+      for (const e of this.roadIndex.query(bounds)) {
         const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
         const major = ["primary", "secondary"].includes(e.kind);
         c.lineWidth = roadWidth(this.data.driving, e) + (border ? .2 : 0);
@@ -64,11 +93,13 @@ export class MapView {
         c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
       }
     }
-    this.drawCollisionLines(c);
-    this.drawRoadDirections(c);
+    this.drawCollisionLines(c, bounds);
+    this.drawRoadDirections(c, bounds);
     const labelled = new Set();
     const occupied = new Set();
-    for (const e of [...this.unique].sort((a, b) => b.length - a.length)) {
+    const localLabels = this.roadIndex.query(bounds.map((v, i) => v + (i < 2 ? -80 : 80)))
+      .sort((a, b) => b.length - a.length);
+    for (const e of localLabels) {
       if (e.length < 36 || e.name === "Local road") continue;
       const a = this.data.nodes[e.a], b = this.data.nodes[e.b], x = (a[0] + b[0]) / 2, y = (a[1] + b[1]) / 2;
       const cell = `${Math.round(x / 90)},${Math.round(y / 60)}`;
@@ -87,17 +118,22 @@ export class MapView {
   roadPath(c, e) {
     c.moveTo(...this.data.nodes[e.a]); c.lineTo(...this.data.nodes[e.b]);
   }
-  drawCollisionLines(c) {
+  drawCollisionLines(c, bounds) {
     c.save();
     c.strokeStyle = "#f15e5e"; c.globalAlpha = .8; c.lineWidth = COLLISION_LINE_WIDTH; c.lineCap = "round";
     c.beginPath();
-    for (const { a, b } of this.collisionLines.all()) { c.moveTo(...a); c.lineTo(...b); }
+    if (!this.collisionIndex) this.collisionIndex = new SpatialGrid(this.collisionLines.all(),
+      line => pointBounds([line.a, line.b], 1));
+    for (const { a, b } of bounds ? this.collisionIndex.query(bounds) : this.collisionLines.all()) { c.moveTo(...a); c.lineTo(...b); }
     c.stroke(); c.restore();
   }
-  *directionArrows() {
-    const legal = this.data.edges.filter(edge => !edge.wrongway);
-    const directions = new Set(legal.map(edge => `${edge.way}:${edge.a}:${edge.b}`));
-    for (const edge of legal) {
+  *directionArrows(bounds) {
+    this.legalDirections ??= this.data.edges.filter(edge => !edge.wrongway);
+    this.directionKeys ??= new Set(this.legalDirections.map(edge => `${edge.way}:${edge.a}:${edge.b}`));
+    const legal = this.legalDirections, directions = this.directionKeys;
+    if (bounds && !this.directionIndex) this.directionIndex = new SpatialGrid(legal,
+      edge => pointBounds([this.data.nodes[edge.a], this.data.nodes[edge.b]], 10));
+    for (const edge of bounds ? this.directionIndex.query(bounds) : legal) {
       if (edge.length < 16) continue;
       const a = this.data.nodes[edge.a], b = this.data.nodes[edge.b];
       const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
@@ -111,9 +147,9 @@ export class MapView {
       }
     }
   }
-  drawRoadDirections(c) {
+  drawRoadDirections(c, bounds) {
     c.save(); c.strokeStyle = "#c2d0bf"; c.lineWidth = WORLD_SCALE.markingWidth;
-    for (const { x, y, angle } of this.directionArrows()) {
+    for (const { x, y, angle } of this.directionArrows(bounds)) {
       c.save(); c.translate(x, y); c.rotate(angle);
       const tip = WORLD_SCALE.arrowLength / 2, halfWidth = WORLD_SCALE.arrowWidth / 2;
       c.beginPath(); c.moveTo(-tip, 0); c.lineTo(tip, 0);
@@ -121,6 +157,52 @@ export class MapView {
       c.restore();
     }
     c.restore();
+  }
+  drawTiles(c, bounds, zoom) {
+    const revision = this.stream?.revision ?? 0;
+    const rasterScale = 2 ** (Math.round(Math.log2(zoom * this.ratio) * 2) / 2);
+    const span = MAP_TILE_PIXELS / rasterScale, gutter = 2 / rasterScale;
+    const scales = [...new Set([...this.tileCache.keys()].map(key => Number(key.split(":")[0])))];
+    const fallback = scales.filter(scale => scale !== rasterScale)
+      .sort((a, b) => Math.abs(Math.log2(a / rasterScale)) - Math.abs(Math.log2(b / rasterScale)))[0];
+    if (fallback) {
+      const fallbackSpan = MAP_TILE_PIXELS / fallback;
+      for (const [key, tile] of this.tileCache) {
+        const [scale, x, y] = key.split(":").map(Number);
+        if (scale !== fallback || (x + 1) * fallbackSpan < bounds[0] || x * fallbackSpan > bounds[2]
+            || (y + 1) * fallbackSpan < bounds[1] || y * fallbackSpan > bounds[3]) continue;
+        c.drawImage(tile.canvas, 2, 2, MAP_TILE_PIXELS, MAP_TILE_PIXELS,
+          x * fallbackSpan, y * fallbackSpan, fallbackSpan, fallbackSpan);
+      }
+    }
+    let budget = 2;
+    const tiles = [];
+    for (let x = Math.floor(bounds[0] / span); x <= Math.floor(bounds[2] / span); x++)
+      for (let y = Math.floor(bounds[1] / span); y <= Math.floor(bounds[3] / span); y++)
+        tiles.push({ x, y });
+    const cx = (bounds[0] + bounds[2]) / 2, cy = (bounds[1] + bounds[3]) / 2;
+    tiles.sort((a, b) => Math.hypot((a.x + .5) * span - cx, (a.y + .5) * span - cy)
+      - Math.hypot((b.x + .5) * span - cx, (b.y + .5) * span - cy));
+    this.spatialIndexes();
+    for (const { x, y } of tiles) {
+      const key = `${rasterScale}:${x}:${y}`;
+      let tile = this.tileCache.get(key);
+      if ((!tile || tile.revision !== revision) && budget > 0) {
+        const painter = Object.create(this);
+        painter.backdrop = document.createElement("canvas");
+        painter.buildBackdrop([x * span - gutter, y * span - gutter,
+          (x + 1) * span + gutter, (y + 1) * span + gutter], rasterScale);
+        tile = { canvas: painter.backdrop, revision };
+        this.tileCache.set(key, tile); budget--;
+      }
+      if (tile) {
+        this.tileCache.delete(key); this.tileCache.set(key, tile);
+        c.drawImage(tile.canvas, 2, 2, MAP_TILE_PIXELS, MAP_TILE_PIXELS, x * span, y * span, span, span);
+      }
+    }
+    while (this.tileCache.size > MAP_TILE_CACHE_LIMIT) this.tileCache.delete(this.tileCache.keys().next().value);
+    this.backdropBounds = bounds;
+    this.backdropScale = zoom * this.ratio;
   }
   render(car, state, lang, approach, previewExit = null) {
     const ratio = this.compact ? Math.max(2, devicePixelRatio || 1) : devicePixelRatio || 1;
@@ -145,25 +227,13 @@ export class MapView {
     const visibleTop = Math.max(top, this.camera.y - cy / zoom);
     const visibleRight = Math.min(right, this.camera.x + (w - cx) / zoom);
     const visibleBottom = Math.min(bottom, this.camera.y + (h - cy) / zoom);
+    if (this.stream && zoom >= .5) {
+      const radius = Math.min(384, Math.max(w, h) / (2 * zoom) + 128);
+      this.stream.interest(this.interactive ? "popup" : this.compact ? "minimap" : "map",
+        [this.camera.x - radius, this.camera.y - radius, this.camera.x + radius, this.camera.y + radius]);
+    }
     if (visibleRight > visibleLeft && visibleBottom > visibleTop) {
-      const scale = zoom * this.ratio;
-      const cached = this.backdropBounds;
-      if (!cached || this.backdropScale !== scale ||
-          visibleLeft < cached[0] || visibleTop < cached[1] ||
-          visibleRight > cached[2] || visibleBottom > cached[3]) {
-        // Cache a small offscreen margin so driving does not redraw the map every frame.
-        const margin = 128 / zoom;
-        this.buildBackdrop([
-          Math.max(left, visibleLeft - margin), Math.max(top, visibleTop - margin),
-          Math.min(right, visibleRight + margin), Math.min(bottom, visibleBottom + margin),
-        ], scale);
-      }
-      const [cacheLeft, cacheTop] = this.backdropBounds;
-      c.drawImage(
-        this.backdrop, (visibleLeft - cacheLeft) * scale, (visibleTop - cacheTop) * scale,
-        (visibleRight - visibleLeft) * scale, (visibleBottom - visibleTop) * scale,
-        visibleLeft, visibleTop, visibleRight - visibleLeft, visibleBottom - visibleTop,
-      );
+      this.drawTiles(c, [visibleLeft, visibleTop, visibleRight, visibleBottom], zoom);
     }
     c.lineWidth = 1 / zoom; c.strokeStyle = "#f5c65a55"; c.setLineDash([6 / zoom, 5 / zoom]);
     c.strokeRect(left, top, right - left, bottom - top); c.setLineDash([]);

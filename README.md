@@ -38,6 +38,45 @@ After a code update, restart the backend and refresh the browser to load the
 matching scripts. An already-open page keeps its old scripts until refreshed;
 refreshing starts a new shift.
 
+## Map loading and larger districts
+
+The browser starts with `/api/map?stream=true`: the complete road graph,
+restrictions, driving parameters and road/terrain heights remain available before
+driving starts. Detailed building footprints and their height/base metadata are
+not in this bootstrap. A coarse footprint overview covers unloaded areas and
+district-scale maps. `/api/map` still provides the complete document for tools.
+
+- `map_streaming.py` partitions building/park visuals into **256 m chunks**.
+  Footprints crossing a boundary are included in every intersected chunk and
+  deduplicated by their original ID in the browser.
+- `web/map-stream.mjs` shares downloads across driving, the map popup and the
+  minimap. It prioritizes a **384 m player buffer**, prefetches up to **160 m**
+  ahead, downloads at most **two chunks at once**, and retains at most
+  **64 chunks** using an LRU cache. Detailed popup requests follow its camera;
+  zoomed-out views use the overview rather than downloading the whole district.
+- Chunk URLs contain a dataset-content version, support ETag revalidation and
+  immutable browser caching, and responses support gzip compression. Mixed
+  dataset versions are rejected. Failed downloads show an alert and retry after
+  five seconds; missing visuals never remove road collision protection.
+- `web/map.mjs` indexes primitives spatially and caches up to **128 raster tiles**
+  per map at half-octave zoom levels. Tiles are **256 raster pixels**, with a
+  two-pixel gutter to avoid seams; at most two are built per render. Existing
+  tiles remain visible while updated tiles are prepared.
+- `web/map3d.mjs` constructs nearby building groups progressively, using a
+  four-millisecond scheduling budget and a maximum of eight building steps per
+  render. Building meshes outside the buffered area are disposed; chunk data
+  can remain cached for revisits. Road deck tiles are built nearest-first with
+  a separate four-millisecond scheduling budget. These are cooperative budgets,
+  not hard execution limits for a single polygon. Terrain texture refreshes
+  still use a worker and progressive GPU uploads.
+
+To extend the map, rebuild the packaged district/elevation data with the existing
+tools and restart the backend. Chunk manifests and content versions are generated
+automatically. This is runtime visual streaming, not development hot reload:
+an existing shift must be refreshed after a dataset change. The road graph,
+height grid, terrain mesh initialization and server sidewalk preparation still
+scale with the whole district; this pipeline does not stream gameplay topology.
+
 ## Play
 
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to

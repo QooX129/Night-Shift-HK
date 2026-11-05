@@ -1,8 +1,9 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=local-map-popup-1";
-import { MapView } from "./map.mjs?v=taxi-map-icons-1";
-import { en, zh } from "./i18n.mjs?v=local-map-popup-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=streaming-map-1";
+import { MapView } from "./map.mjs?v=streaming-map-1";
+import { en, zh } from "./i18n.mjs?v=streaming-map-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
-import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=local-map-popup-1";
+import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=streaming-map-1";
+import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
 
 const $ = id => document.getElementById(id);
 const loadedPreferences = loadSettings();
@@ -10,6 +11,7 @@ let preferences = loadedPreferences.settings;
 let lang = preferences.language, state = null, view = null, mapData, stops;
 let map2d = null, map3d = null, changingView = false, viewError = null;
 let popupMap = null, mapDrag = null;
+let mapStream = null, mapStreamFailure = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
@@ -456,6 +458,8 @@ function updateViewUI() {
   $("view-status").textContent = t(changingView ? "loading3d" : "preview3d");
   $("view-error").hidden = !viewError;
   $("view-error").textContent = viewError ? `${t(viewError.key)} ${viewError.detail}` : "";
+  $("map-stream-error").hidden = !mapStreamFailure;
+  $("map-stream-error").textContent = mapStreamFailure ? `${t("mapStreamError")} ${mapStreamFailure.message}` : "";
 }
 function setMapOpen(open) {
   const popup = $("map-popup");
@@ -506,7 +510,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=local-map-popup-1");
+      const { Map3DView } = await import("./map3d.mjs?v=streaming-map-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }
@@ -570,6 +574,15 @@ function frame(timestamp) {
     }
   }
   if (view && state) {
+    if (mapStream) {
+      const ahead = Math.min(160, Math.abs(car.speed) * 3);
+      const direction = car.speed < 0 ? -1 : 1;
+      const x = car.x + Math.cos(car.heading) * ahead * direction;
+      const y = car.y + Math.sin(car.heading) * ahead * direction;
+      mapStream.interest("player", [Math.min(car.x, x) - VISUAL_STREAM_RADIUS,
+        Math.min(car.y, y) - VISUAL_STREAM_RADIUS, Math.max(car.x, x) + VISUAL_STREAM_RADIUS,
+        Math.max(car.y, y) + VISUAL_STREAM_RADIUS]);
+    }
     const approach = roads.preview(car, new Set(state.closed));
     const preview = $("junction").open ? previewExit : null;
     visualElapsed = Math.max(visualElapsed, state.elapsed + inFlightElapsed + elapsed);
@@ -838,7 +851,15 @@ applyPreferenceEffects();
 openDialog("welcome");
 requestAnimationFrame(frame);
 try {
-  [mapData, stops] = await Promise.all([fetchJSON("/api/map"), fetchJSON("/api/stops")]);
+  [mapData, stops] = await Promise.all([fetchJSON("/api/map?stream=true"), fetchJSON("/api/stops")]);
+  mapStream = visualStream(mapData, {
+    onError: error => {
+      console.error("Visual map streaming failed", error);
+      mapStreamFailure = error;
+      updateViewUI();
+    },
+    onRecovery: () => { if (mapStreamFailure) { mapStreamFailure = null; updateViewUI(); } },
+  });
   roads = new RoadNetwork(mapData);
   map2d = new MapView($("map"), mapData, stops);
   view = map2d;

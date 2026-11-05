@@ -5,9 +5,9 @@ test.use({ trace: "off" });
 test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=local-map-popup-1");
+    const { MapView } = await import("/map.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=streaming-map-1");
     const data = {
       bounds: [-10, -20, 110, 30], backdrop: [
         { kind: "building", points: [[10.37, 15], [20.37, 15], [20.37, 23], [10.37, 23], [10.37, 15]] },
@@ -145,8 +145,8 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { RoadNetwork, project } = await import("/physics.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { RoadNetwork, project } = await import("/physics.mjs?v=streaming-map-1");
     const roads = new RoadNetwork(data);
     const side = roads.edges.get("485635353:2:6505945379"), main = roads.edges.get("1067815827:9:13108528146");
     const a = data.nodes[side.a], b = data.nodes[side.b];
@@ -191,8 +191,8 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
-    const { project } = await import("/physics.mjs?v=local-map-popup-1");
+    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { project } = await import("/physics.mjs?v=streaming-map-1");
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:10000";
     document.body.append(canvas);

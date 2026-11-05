@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=local-map-popup-1">
+  <link rel="stylesheet" href="/style.css?v=streaming-map-1">
 </head>
 <body>
   <main id="game">
@@ -80,6 +80,7 @@
     </section>
     <div id="view-status" class="view-status" role="status" hidden></div>
     <div id="view-error" class="view-error panel" role="alert" hidden></div>
+    <div id="map-stream-error" class="view-error panel" role="alert" hidden></div>
     <div id="settings-notice" class="settings-notice" role="alert" aria-live="assertive" hidden></div>
     <div class="district-label">九龍 <span>KOWLOON</span></div>
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
@@ -227,6 +228,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=taxi-map-icons-1"></script>
+  <script type="module" src="/app.mjs?v=streaming-map-1"></script>
 </body>
 </html>
