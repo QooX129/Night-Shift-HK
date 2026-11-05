@@ -39,8 +39,8 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=parabolic-steering-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
       [RoadNetwork.prototype, "constrain"], [RoadNetwork.prototype, "bodyFits"]]) {
@@ -76,8 +76,8 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
-    const { surfacePose } = await import("/elevation.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { surfacePose } = await import("/elevation.mjs?v=parabolic-steering-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();
     const canvas = document.createElement("canvas");

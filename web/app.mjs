@@ -1,8 +1,8 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=streaming-map-1";
-import { MapView } from "./map.mjs?v=streaming-map-1";
-import { en, zh } from "./i18n.mjs?v=streaming-map-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=parabolic-steering-1";
+import { MapView } from "./map.mjs?v=parabolic-steering-1";
+import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
-import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=streaming-map-1";
+import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
 
 const $ = id => document.getElementById(id);
@@ -29,6 +29,8 @@ const t = key => (lang === "zh" ? zh : en)[key] || key;
 const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
 
 function resetControls() {
+  car.steeringInput = 0;
+  car.steeringTarget = 0;
   junctionInput.reset();
   if ($("junction").open) setExitPreview(null);
   for (const key of Object.keys(controls)) controls[key] = false;
@@ -510,7 +512,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=streaming-map-1");
+      const { Map3DView } = await import("./map3d.mjs?v=parabolic-steering-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }

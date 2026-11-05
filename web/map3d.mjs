@@ -1,14 +1,14 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=streaming-map-1";
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=streaming-map-1";
-import { en, zh } from "./i18n.mjs?v=streaming-map-1";
+import { MapView } from "./map.mjs?v=parabolic-steering-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=parabolic-steering-1";
+import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=streaming-map-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=streaming-map-1";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=parabolic-steering-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=parabolic-steering-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
-import { project } from "./physics.mjs?v=streaming-map-1";
+import { project } from "./physics.mjs?v=parabolic-steering-1";
 import { visualStream } from "./map-stream.mjs";
 
 export class Map3DView {
@@ -73,7 +73,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=streaming-map-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=parabolic-steering-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,

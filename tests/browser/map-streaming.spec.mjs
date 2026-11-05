@@ -9,7 +9,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await expect(page.locator("#start")).toBeEnabled();
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const render = Map3DView.prototype.render;
     await new Promise(resolve => {
       Map3DView.prototype.render = function (...args) {
@@ -49,7 +49,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await page.keyboard.press("m");
   await expect(page.locator("#map-popup")).toBeVisible();
   const farURL = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
     const view = window.streamingView;
     const key = [...view.stream.keys].sort((a, b) => {
       const distance = key => {
@@ -105,7 +105,7 @@ test("raster tiles reuse zoom levels, bound memory, and rasterize only nearby sh
   await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({ defaultView: "2d" })));
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { MapView, MAP_TILE_CACHE_LIMIT } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView, MAP_TILE_CACHE_LIMIT } = await import("/map.mjs?v=parabolic-steering-1");
     const canvas = document.createElement("canvas");
     canvas.style.width = "240px"; canvas.style.height = "168px";
     document.body.append(canvas);
@@ -141,7 +141,7 @@ test("cached raster tile borders have no blank pixel seams", async ({ page }) =>
   await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({ defaultView: "2d" })));
   await page.goto("/");
   const green = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
     const canvas = document.createElement("canvas");
     canvas.style.width = "600px"; canvas.style.height = "240px";
     document.body.append(canvas);

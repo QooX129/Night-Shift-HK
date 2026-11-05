@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY, BOUNDARY_DRAG,
+  stepCar, RoadNetwork, project, angleDifference, STEERING_SENSITIVITY, STEERING_RESPONSE_SECONDS, BOUNDARY_DRAG,
 } from "../web/physics.mjs";
 
 function network({ stacked = false, crossing = false, body = false } = {}) {
@@ -23,6 +23,56 @@ function network({ stacked = false, crossing = false, body = false } = {}) {
 }
 const carAt = (x = 20, y = 0) => ({ x, y, speed: 0, heading: 0, edge: "ab" });
 const freeDriving = { maxSpeed: 150 / 3.6, acceleration: 7 };
+
+test("manual turn-in follows a capped parabola with an exact integrated heading", () => {
+  const car = { ...carAt(), speed: 10 };
+  const dt = STEERING_RESPONSE_SECONDS / 12;
+  for (let frame = 1; frame <= 12; frame++) {
+    stepCar(car, { right: true }, dt, freeDriving);
+    assert.ok(Math.abs(car.steeringInput - (frame / 12) ** 2) < 1e-10);
+  }
+  assert.ok(Math.abs(car.heading - STEERING_SENSITIVITY * STEERING_RESPONSE_SECONDS / 3) < 1e-10);
+  stepCar(car, { right: true }, dt, freeDriving);
+  assert.equal(car.steeringInput, 1);
+  stepCar(car, {}, dt, freeDriving);
+  const released = car.steeringInput;
+  stepCar(car, { right: true }, dt, freeDriving);
+  assert.ok(Math.abs(car.steeringInput - (released + (1 - released) / 144)) < 1e-10);
+});
+
+test("manual steering eases in, reverses smoothly and returns toward centre", () => {
+  const car = { ...carAt(), speed: 10 };
+  stepCar(car, { right: true }, 1 / 60, freeDriving);
+  assert.ok(car.steeringInput > 0 && car.steeringInput < .2);
+  assert.ok(car.heading > 0 && car.heading < STEERING_SENSITIVITY / 60 * .2);
+  for (let i = 0; i < 29; i++) stepCar(car, { right: true }, 1 / 60, freeDriving);
+  assert.ok(car.steeringInput > .98);
+  const before = car.steeringInput;
+  stepCar(car, { left: true }, 1 / 60, freeDriving);
+  assert.ok(car.steeringInput > 0 && car.steeringInput < before);
+  for (let i = 0; i < 29; i++) stepCar(car, { left: true }, 1 / 60, freeDriving);
+  assert.ok(car.steeringInput < -.96);
+  stepCar(car, {}, 1 / 60, freeDriving);
+  assert.ok(car.steeringInput < 0 && car.steeringInput > -.96);
+  for (let i = 0; i < 29; i++) stepCar(car, {}, 1 / 60, freeDriving);
+  assert.ok(Math.abs(car.steeringInput) < .002);
+});
+
+test("steering smoothing is timestep independent and preserves reverse and stationary behavior", () => {
+  const simulate = (hz, speed) => {
+    const car = { ...carAt(), speed };
+    for (let i = 0; i < hz; i++) stepCar(car, { right: true }, 1 / hz, freeDriving);
+    return car;
+  };
+  const reference = simulate(60, 10);
+  for (const hz of [30, 120]) {
+    const car = simulate(hz, 10);
+    assert.ok(Math.abs(car.heading - reference.heading) < 1e-10);
+    assert.ok(Math.abs(car.steeringInput - reference.steeringInput) < 1e-10);
+  }
+  assert.ok(simulate(60, -4).heading < 0);
+  assert.equal(simulate(60, 0).heading, 0);
+});
 
 test("rectangular body permits side clearance but rejects nose and corner overlaps at every heading", () => {
   const roads = network({ body: true }), edge = roads.edges.get("ab");
@@ -218,6 +268,7 @@ test("selected exits never add steering assist or raise manual sensitivity", () 
     [60, 10, "bd", Math.PI / 2]]) {
     for (const direction of [-1, 0, 1]) {
       const car = { ...carAt(x, y), edge, heading };
+      car.steeringInput = direction;
       car.speed = 10;
       stepCar(car, { gas: true, left: direction < 0, right: direction > 0 }, 1 / 60, {
         roads, acceleration: 0, selectedExit: "bd", selectedJunction: "b",
@@ -394,7 +445,7 @@ test("a nearby closure does not kill steering at a boundary and reversing remain
   stepCar(car, { gas: true, right: true }, 1 / 60, { roads, closed });
   assert.ok(car.speed > 0, "collision must retain steering authority");
   const heading = car.heading, start = { ...car };
-  stepCar(car, { gas: true, left: true }, 1 / 60, { roads, closed });
+  for (let i = 0; i < 3; i++) stepCar(car, { gas: true, left: true }, 1 / 60, { roads, closed });
   assert.ok(car.heading < heading);
   car.heading = 0;
   for (let i = 0; i < 180; i++) stepCar(car, { brake: true }, 1 / 60, { roads, closed });

@@ -1,6 +1,6 @@
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=streaming-map-1";
-import { en, zh } from "./i18n.mjs?v=streaming-map-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=streaming-map-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=parabolic-steering-1";
+import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=parabolic-steering-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { visualStream } from "./map-stream.mjs";

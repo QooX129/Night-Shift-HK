@@ -186,6 +186,14 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 - Steering sensitivity is configured by `STEERING_SENSITIVITY` in
   `web/physics.mjs`; increase it for faster turning and decrease it for slower,
   gentler normal steering.
+  Manual keyboard and touch steering ease toward the requested direction rather
+  than switching instantly, following a parabola: `(held time / duration)^2`,
+  clamped at full steering. `STEERING_RESPONSE_SECONDS = 0.2` controls turn-in
+  and direction changes; `STEERING_RETURN_SECONDS = 0.08` controls return to
+  centre after release, in `web/physics.mjs`. Larger values give slower smoothing.
+  Turn-in reaches full strength after the response duration; release uses an
+  exponential return (about three return durations to centre by 95%). Pausing, losing focus,
+  or resetting controls clears the buffered steering. Junction snaps are unchanged.
 - The taxi uses a rotated rectangular body collider, configured in metres by
   `taxi_length` and `taxi_width` in `roads.py`'s `DRIVING` settings. The rendered
   body uses the same dimensions, including its outline, and scales with map zoom.

@@ -4,7 +4,7 @@ import { toggleDrivingView } from "./driving-view.mjs";
 test("taxi markers retain readable map and minimap sizes across zoom levels", async ({ page }) => {
   await page.goto("/");
   const sizes = await page.evaluate(async () => {
-    const { MapView, TAXI_ICON_MIN_LENGTH } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView, TAXI_ICON_MIN_LENGTH } = await import("/map.mjs?v=parabolic-steering-1");
     const data = {
       bounds: [-100, -100, 100, 100], nodes: {}, edges: [], backdrop: [],
       driving: { taxi_length: 4.7, taxi_width: 1.7 },
@@ -50,7 +50,7 @@ test("map popup keeps 3D driving live and supports keyboard, wheel zoom and drag
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#map-3d")).toBeVisible();
   const before = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
     const original = MapView.prototype.render;
     window.mapPopupProbe = { original, frames: 0 };
     MapView.prototype.render = function (car, state, ...args) {
@@ -108,7 +108,7 @@ test("map popup keeps 3D driving live and supports keyboard, wheel zoom and drag
     await expect(page.locator("#map-3d")).toBeVisible();
   } finally {
     await page.evaluate(async () => {
-      const { MapView } = await import("/map.mjs?v=streaming-map-1");
+      const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
       MapView.prototype.render = window.mapPopupProbe.original;
       delete window.mapPopupProbe;
     });

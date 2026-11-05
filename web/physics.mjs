@@ -1,11 +1,13 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=streaming-map-1";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=parabolic-steering-1";
 import { roadWidth } from "./road-width.mjs";
 import { colliderSegments } from "./straight-lines.mjs";
 
 export function angleDifference(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
-export const STEERING_SENSITIVITY = 3;
+export const STEERING_SENSITIVITY = 2;
+export const STEERING_RESPONSE_SECONDS = 0.12;
+export const STEERING_RETURN_SECONDS = 0.08;
 export const BOUNDARY_DRAG = 1;
 export function project(point, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1];
@@ -315,11 +317,35 @@ export function stepCar(car, input, dt, {
   }
   car.speed = Math.max(-4 * traffic, Math.min(maxSpeed * traffic, car.speed));
   if (fuel <= 0) car.speed = 0;
+  const steeringTarget = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const steeringBefore = car.steeringInput ?? 0;
+  let steeringTravel;
+  if (steeringTarget === 0) {
+    const eased = -Math.expm1(-step / STEERING_RETURN_SECONDS);
+    car.steeringInput = steeringBefore * (1 - eased);
+    steeringTravel = steeringBefore * STEERING_RETURN_SECONDS * eased;
+    car.steeringTarget = 0;
+  } else {
+    if (car.steeringTarget !== steeringTarget) {
+      car.steeringTarget = steeringTarget;
+      car.steeringStart = steeringBefore;
+      car.steeringElapsed = 0;
+    }
+    const duration = STEERING_RESPONSE_SECONDS;
+    const from = car.steeringElapsed, to = Math.min(duration, from + step);
+    const rampStep = to - from;
+    const change = steeringTarget - car.steeringStart;
+    car.steeringInput = car.steeringStart + change * (to / duration) ** 2;
+    // Integrate the parabola so heading changes do not depend on frame rate.
+    steeringTravel = car.steeringStart * rampStep
+      + change * (to ** 3 - from ** 3) / (3 * duration ** 2)
+      + steeringTarget * (step - rampStep);
+    car.steeringElapsed = to;
+  }
   if (Math.abs(car.speed) > 0.05) {
-    const manualSteering = ((input.right ? 1 : 0) - (input.left ? 1 : 0))
-      * steeringSensitivity
+    const manualSteering = steeringTravel * steeringSensitivity
       * Math.max(-1, Math.min(1, car.speed / 3));
-    car.heading += manualSteering * step;
+    car.heading += manualSteering;
   }
   const old = { x: car.x, y: car.y };
   const previous = roads?.edges.get(car.edge);

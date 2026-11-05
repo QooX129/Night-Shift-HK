@@ -18,7 +18,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=streaming-map-1");
+    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -92,7 +92,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -127,7 +127,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.create(Map3DView.prototype);
     view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
@@ -173,7 +173,7 @@ test("GPS route progress reuses traffic geometry and completed route segments", 
 test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = await (await fetch("/api/map")).json();
     const session = await (await fetch("/api/sessions", { method: "POST" })).json();
@@ -227,7 +227,7 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -282,7 +282,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -339,7 +339,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
         const a = roads.nodes[edge.a], b = roads.nodes[edge.b];
         const car = { edge: edge.id, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
         view.updateBoundaries(car);
-        const { COLLISION_LINE_WIDTH } = await import("/collision-lines.mjs?v=streaming-map-1");
+        const { COLLISION_LINE_WIDTH } = await import("/collision-lines.mjs?v=parabolic-steering-1");
         const expected = view.boundaryLines.reduce((sum, { a, b }) =>
           sum + Math.hypot(b[0] - a[0], b[1] - a[1]) * COLLISION_LINE_WIDTH
             + 8 * Math.sin(Math.PI / 8) * (COLLISION_LINE_WIDTH / 2) ** 2, 0);
@@ -471,7 +471,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=streaming-map-1");
+    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
