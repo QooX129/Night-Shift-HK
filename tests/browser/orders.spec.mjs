@@ -1,10 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { toggleDrivingView, useLegacyInitialView } from "./driving-view.mjs";
+test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test("alighting passenger and open door project to the taxi left in the 3D chase camera", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
     const [{ Map3DView }, THREE] = await Promise.all([
-      import("/map3d.mjs?v=slope-guide-seams-1"), import("/vendor/three/three.module.min.js"),
+      import("/map3d.mjs?v=local-map-popup-1"), import("/vendor/three/three.module.min.js"),
     ]);
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } },
@@ -47,7 +49,7 @@ test("alighting passenger and open door project to the taxi left in the 3D chase
 test("citizens and passengers stand on their road level after elevation is enabled", async ({ page }) => {
   await page.goto("/");
   const heights = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const ground = { id: "ground", a: "a", b: "b" };
     const bridge = { id: "bridge", a: "c", b: "d" };
@@ -300,7 +302,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
   await expect.poll(() => fixture.commands.filter(command => command.action === "move").length).toBeGreaterThan(1);
   expect(fixture.commands.filter(command => command.action === "move")
     .every(command => command.visible_citizens.length === 0)).toBe(true);
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
   await expect.poll(() => fixture.commands.some(command =>
     command.visible_citizens?.includes("visible-walker"))).toBe(true);
@@ -314,7 +316,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=slope-guide-seams-1");
+    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -341,12 +343,12 @@ for (const mode of ["2D", "3D"]) {
     page.on("pageerror", error => errors.push(error.message));
     const fixture = await dispatchFixture(page);
     if (mode === "3D") {
-      await page.locator("#view-mode").click();
+      await toggleDrivingView(page);
       await expect(page.locator("#map-3d")).toBeVisible();
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=slope-guide-seams-1`);
+      const module = await import(`/${path}?v=local-map-popup-1`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

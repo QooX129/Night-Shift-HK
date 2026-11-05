@@ -89,8 +89,12 @@ refreshing starts a new shift.
   require the door button. In 3D, citizens and waiting, boarding, and alighting
   passengers follow their road's elevation rather than the flat map plane.
   Citizen population is configured in `game.py`: `Game.create` starts
-  with 60 citizens, and `Game.advance_city` adds one every 8–16 seconds while
-  fewer than 100 remain. `CITIZEN_HAIL_PROBABILITY = 0.05` controls the passenger
+  with 60 citizens, and `Game.advance_city` adds up to five every 0.5 simulation
+  seconds until 100 are within the spawn radius. An empty stationary area refills
+  in about 10 seconds when safe sidewalks are available; moving can keep the
+  nearby count below 100. `CITIZEN_LIMIT`, `CITIZEN_SPAWN_BATCH`, and
+  `CITIZEN_SPAWN_INTERVAL` control this gradual refill. Citizens outside the radius do not
+  count toward this local limit. `CITIZEN_HAIL_PROBABILITY = 0.05` controls the passenger
   chance; `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
   `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
   `CITIZEN_HAIL_DURATION = (45, 120)` controls the waving timeout range.
@@ -99,8 +103,9 @@ refreshing starts a new shift.
   offset is `(sin(heading), -cos(heading))`, not the mathematical left normal.
   `CITIZEN_RADIUS` limits spawning to 220 metres around the taxi, matching the
   normal 3D driving fog distance (not the zoomed-out overview). Citizens leaving
-  that radius are removed and replaced locally. Their original 80–150 second
-  expiry timer does not remove citizens while they remain nearby. If no safe
+  that radius remain until their original 80–150 second expiry time is reached.
+  Citizens whose timer already expired are removed when they leave the radius.
+  That timer does not remove citizens while they remain nearby. If no safe
   roadside path is nearby, the population can temporarily be lower. Walking
   and existing orange hailing markers remain visible in 2D and the minimap.
   Phone orders and trip stops are not
@@ -230,9 +235,10 @@ refreshing starts a new shift.
   updates or losing the onboard passenger. Buffered browser movement is discarded
   when the server confirms the empty tank.
 - **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
-- **3D / 2D:** switch between the experimental chase-camera view and the original
-  top-down map without restarting your shift. Zoom changes chase distance in 3D;
-  overview shows the whole district. The default initial view is 2D and can be
+- **M / map button:** open or close a top-down map popup without changing or pausing
+  the driving view underneath. Use the mouse wheel to zoom around the cursor
+  and drag to pan; **Esc** closes the map before opening the pause menu.
+  The default initial driving view is 3D and can be
   changed in Settings.
   In 3D, a north-up minimap in the bottom-left follows the taxi and shows the
   same routes, junction guidance, and stop markers as the 2D map. It updates at
@@ -240,6 +246,9 @@ refreshing starts a new shift.
   The compact window is 240 × 168 CSS pixels on desktop and 168 × 120 on mobile.
   Its canvas and cached map render at a minimum 2× pixel density, retaining
   native density on higher-DPI screens without enlarging a low-resolution image.
+  Taxi marker minimum lengths are set by `TAXI_ICON_MIN_LENGTH` near the top of
+  `web/map.mjs`: `map: 32` and `minimap: 24`, in CSS pixels. Increase these values
+  to enlarge the icons; these display sizes do not change taxi physics.
 
 **Settings** is available from the welcome and pause menus. It includes the
 **Interface → Enable junction selector** toggle. Turning it off disables automatic

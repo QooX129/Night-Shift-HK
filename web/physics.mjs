@@ -1,4 +1,4 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=slope-guide-seams-1";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=local-map-popup-1";
 import { roadWidth } from "./road-width.mjs";
 import { colliderSegments } from "./straight-lines.mjs";
 

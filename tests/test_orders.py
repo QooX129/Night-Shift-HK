@@ -365,13 +365,16 @@ class OrderTests(unittest.TestCase):
         self.session.next_citizen = 1
         self.advance(1)
         self.assertNotEqual(point, self.game.citizen_point(citizen))
-        self.assertEqual(len(self.session.citizens), 2)
-        self.assertTrue(8 <= self.session.next_citizen - self.session.elapsed <= 16)
+        self.assertEqual(len(self.session.citizens), 6)
+        self.assertEqual(self.session.next_citizen - self.session.elapsed, .5)
         citizen.expires = self.session.elapsed
         self.advance(0)
         self.assertIn(citizen, self.session.citizens)
+        self.session.point = (100000, 100000)
+        self.advance(0)
+        self.assertNotIn(citizen, self.session.citizens)
 
-    def test_initial_and_relocated_citizens_stay_in_driving_visible_range(self):
+    def test_relocated_citizens_survive_outside_range_until_original_timeout(self):
         count = len(self.session.citizens)
         self.assertGreater(count, 0)
         for citizen in self.session.citizens:
@@ -382,14 +385,17 @@ class OrderTests(unittest.TestCase):
         self.session.next_offer = math.inf
         self.advance(0)
         self.assertEqual(len(self.session.citizens), count)
-        self.assertNotEqual(original_ids, {c.id for c in self.session.citizens})
-        for citizen in self.session.citizens:
-            self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS)
+        self.assertEqual(original_ids, {c.id for c in self.session.citizens})
+        self.session.elapsed = 151
+        self.game.advance_city(self.session, 0)
+        self.assertTrue(all(math.dist(self.session.point, self.game.citizen_point(c)) <= CITIZEN_RADIUS
+                            for c in self.session.citizens))
 
     def test_citizen_spawning_has_no_distant_fallback(self):
         self.session.point = (100000, 100000)
         self.session.next_citizen = 0
         self.session.next_offer = math.inf
+        self.session.elapsed = 151
         self.advance(0)
         self.assertEqual(self.session.citizens, [])
 
@@ -404,7 +410,7 @@ class OrderTests(unittest.TestCase):
             self.assertTrue(self.game.sidewalks.safe(*citizen.path))
             self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS + 1e-9)
 
-    def test_walking_beyond_visible_range_removes_citizen(self):
+    def test_walking_beyond_range_retains_citizen_until_expiry(self):
         citizen = self.citizen(hailing=False)
         citizen.fraction = 0.5
         citizen.direction = 1
@@ -417,9 +423,54 @@ class OrderTests(unittest.TestCase):
         )
         self.session.next_citizen = self.session.next_offer = math.inf
         self.advance(1)
+        self.assertIn(citizen, self.session.citizens)
+        self.session.elapsed = citizen.expires
+        self.game.advance_city(self.session, 0)
         self.assertNotIn(citizen, self.session.citizens)
         for nearby in self.session.citizens:
             self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(nearby)), CITIZEN_RADIUS)
+
+    def test_spawn_cap_counts_only_citizens_inside_radius(self):
+        self.session.citizens = []
+        for _ in range(100):
+            self.game.spawn_citizen(self.session)
+        self.session.next_offer = math.inf
+        self.session.next_citizen = 0
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 100)
+        self.at_stop("mongkok")
+        self.session.next_citizen = 0
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 105)
+        local = [c for c in self.session.citizens
+                 if math.dist(self.session.point, self.game.citizen_point(c)) <= CITIZEN_RADIUS]
+        self.assertLessEqual(len(local), 100)
+        self.assertEqual(len(local), 5)
+
+    def test_population_refills_gradually_to_100_within_ten_seconds(self):
+        self.session.citizens = []
+        self.session.next_offer = math.inf
+        self.session.next_citizen = 0
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 5)
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 5)
+        for _ in range(19):
+            self.session.elapsed += .5
+            self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 100)
+        self.session.elapsed += .5
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 100)
+
+    def test_refill_batch_stops_at_local_cap(self):
+        self.session.citizens = []
+        for _ in range(98):
+            self.game.spawn_citizen(self.session)
+        self.session.next_offer = math.inf
+        self.session.next_citizen = 0
+        self.game.advance_city(self.session, 0)
+        self.assertEqual(len(self.session.citizens), 100)
 
     def nearby_walker(self):
         citizen = self.session.citizens[0]

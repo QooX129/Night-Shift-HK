@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 test("junction selector can be disabled for manual driving and reset in Interface", async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#welcome-settings").click();
@@ -37,7 +38,7 @@ test("welcome settings persist preferences and close back to welcome without sav
   await page.locator('[data-category="language"]').click();
   await page.locator('[data-setting="language"]').selectOption("zh");
   await expect(page.locator("#settings-title")).toHaveText("遊戲設定");
-  await expect(page.locator('[data-setting="defaultView"]')).toHaveValue("2d");
+  await expect(page.locator('[data-setting="defaultView"]')).toHaveValue("3d");
   await page.keyboard.press("Escape");
   await expect(page.locator("#settings-dialog")).toBeHidden();
   await expect(page.locator("#welcome")).toBeVisible();

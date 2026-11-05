@@ -434,6 +434,22 @@ strong,
     height: 100%
 }
 
+.map-popup {
+    position: absolute;
+    inset: 9% 8% 15%;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #15262c;
+    pointer-events: auto
+}
+.map-popup[hidden] { display: none }
+.map-popup header { display: flex; align-items: center; gap: 12px; padding: 8px 12px }
+.map-popup header span { flex: 1; font-size: 12px }
+#popup-map { display: block; width: 100%; flex: 1; min-height: 0; touch-action: none; cursor: grab }
+#popup-map:active { cursor: grabbing }
+
 .minimap.panel {
     border: 2px solid var(--yellow);
     box-shadow: 0 0 0 3px #101a22e6, 0 6px 20px #0009

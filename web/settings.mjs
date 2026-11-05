@@ -2,7 +2,7 @@ export const SETTINGS_KEY = "night-shift-hk.settings.v1";
 
 export const DEFAULT_SETTINGS = Object.freeze({
   language: "en",
-  defaultView: "2d",
+  defaultView: "3d",
   graphics: "auto",
   cameraSmoothness: 60,
   cameraRotationSpeed: 90,

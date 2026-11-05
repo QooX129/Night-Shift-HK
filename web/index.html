@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=slope-guide-seams-1">
+  <link rel="stylesheet" href="/style.css?v=local-map-popup-1">
 </head>
 <body>
   <main id="game">
@@ -69,9 +69,15 @@
     </div>
 
     <aside class="map-tools" aria-label="Map tools">
-      <button id="view-mode" aria-label="Switch to 3D view" aria-pressed="false" disabled>3D</button>
+      <button id="view-mode" aria-label="Open map" aria-expanded="false" aria-controls="map-popup" disabled>M</button>
       <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="overview" aria-label="Toggle district overview">⌖</button>
     </aside>
+    <section id="map-popup" class="map-popup panel" role="region" aria-labelledby="map-title" hidden>
+      <header><strong id="map-title" data-i18n="mapTitle">District map</strong>
+        <span data-i18n="mapHelp">Scroll to zoom · Drag to pan · M / Esc to close</span>
+        <button id="map-close" data-i18n-aria="mapClose" aria-label="Close map">×</button></header>
+      <canvas id="popup-map" data-i18n-aria="mapTitle" aria-label="District map"></canvas>
+    </section>
     <div id="view-status" class="view-status" role="status" hidden></div>
     <div id="view-error" class="view-error panel" role="alert" hidden></div>
     <div id="settings-notice" class="settings-notice" role="alert" aria-live="assertive" hidden></div>
@@ -221,6 +227,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=slope-guide-seams-1"></script>
+  <script type="module" src="/app.mjs?v=taxi-map-icons-1"></script>
 </body>
 </html>

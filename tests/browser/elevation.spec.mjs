@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { toggleDrivingView, useLegacyInitialView } from "./driving-view.mjs";
+test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 test("elevation preview retains the same-machine legacy renderer frame budget", async ({ page }) => {
@@ -12,7 +14,7 @@ test("elevation preview retains the same-machine legacy renderer frame budget", 
     await page.goto("/");
     await expect(page.locator("#start")).toBeEnabled();
     await page.locator("#start").click();
-    await page.locator("#view-mode").click();
+    await toggleDrivingView(page);
     await expect(page.locator("#map-3d")).toBeVisible();
     await page.keyboard.down("w");
     rates[mode] = await page.evaluate(() => new Promise(resolve => {
@@ -37,8 +39,8 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
-    const { RoadNetwork } = await import("/physics.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { RoadNetwork } = await import("/physics.mjs?v=local-map-popup-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
       [RoadNetwork.prototype, "constrain"], [RoadNetwork.prototype, "bodyFits"]]) {
@@ -54,14 +56,14 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
     }
   });
   await page.locator("#start").click();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.keyboard.down("w");
   await page.waitForTimeout(2000);
   await page.keyboard.up("w");
   console.log(`Elevated driving timing ${JSON.stringify(await page.evaluate(() => window.elevationTiming))}`);
   await expect(page.locator("#error-dialog")).not.toBeVisible();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#map")).toBeVisible();
 });
 
@@ -74,8 +76,8 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
-    const { surfacePose } = await import("/elevation.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
+    const { surfacePose } = await import("/elevation.mjs?v=local-map-popup-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();
     const canvas = document.createElement("canvas");

@@ -1,4 +1,5 @@
 export const zh = {
+  mapTitle:"地區地圖", mapClose:"關閉地圖", mapHelp:"滾輪縮放 · 拖曳移動 · M / Esc 關閉",
   hailTaxi:"的士！",
   phoneToggle:"開啟或隱藏接單電話", phoneClose:"隱藏電話", phoneTabs:"訂單清單",
   availableTab:"可接訂單", acceptedTab:"已接訂單", noOffers:"暫時冇新單，可以留意街邊揚手乘客。",
@@ -27,7 +28,7 @@ export const zh = {
   district:"旺角 · 油麻地", simulated:"模擬城市", pause:"暫停", dispatch:"九龍的士台",
   yourshift:"城市正等緊你。", pickup:"上車地點", destination:"落車地點",
   loading:"正在載入街道…", earnings:"銀包", fuel:"油量", shift:"更份時間",
-  nosave:"今次遊戲限定 · 不會儲存", garage:"休息站 / 車房", controls:"W / ↑ 油門 · S / ↓ 煞車 / 倒車 · A D / ← → 轉向 · 空白鍵手掣 · Tab 電話 · Esc 暫停",
+  nosave:"今次遊戲限定 · 不會儲存", garage:"休息站 / 車房", controls:"W / ↑ 油門 · S / ↓ 煞車 / 倒車 · A D / ← → 轉向 · 空白鍵手掣 · Tab 電話 · M 地圖 · Esc 暫停",
   brake:"煞車 / 倒車", gas:"油門", notnavigation:"遊戲地圖，非實際導航",
   welcome:"你嘅街道，你嘅更份。", intro:"喺九龍真實街道上，展開一段的士小故事。接載乘客、揀自己條路，慢慢認識呢個城市。",
   introdrive:"用 WASD / 方向鍵或觸控按鈕駕駛。S / ↓ 煞車，停低後繼續按住就會慢速倒車。的士會留喺道路範圍內。",
@@ -55,6 +56,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  mapTitle:"District map", mapClose:"Close map", mapHelp:"Scroll to zoom · Drag to pan · M / Esc to close",
   hailTaxi:"Taxi!",
   phoneToggle:"Toggle dispatch phone", phoneClose:"Hide phone", phoneTabs:"Order lists",
   availableTab:"Available", acceptedTab:"Accepted", noOffers:"No offers right now. Watch for street hails.",
@@ -83,7 +85,7 @@ export const en = {
   district:"MONG KOK · YAU MA TEI", simulated:"SIMULATED CITY", pause:"Pause", dispatch:"KOWLOON DISPATCH",
   yourshift:"The city is calling.", pickup:"PICKUP", destination:"DROP-OFF", loading:"Loading roads…",
   earnings:"WALLET", fuel:"FUEL", shift:"SHIFT TIME", nosave:"Session only · no saves", garage:"Rest stop / garage",
-  controls:"W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · Esc pause", brake:"BRAKE / REV", gas:"GO",
+  controls:"W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · M map · Esc pause", brake:"BRAKE / REV", gas:"GO",
   notnavigation:"Game map, not real navigation", welcome:"Your streets. Your shift.",
   intro:"A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.",
   introdrive:"Use WASD / arrow keys or touch pedals. S / ↓ brakes; keep holding after stopping for low-speed reverse. The taxi stays inside the road.",

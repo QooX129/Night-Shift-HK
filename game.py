@@ -12,6 +12,9 @@ from pedestrians import Sidewalks, advance_walk, path_pose
 
 
 CITIZEN_RADIUS = 220
+CITIZEN_LIMIT = 100
+CITIZEN_SPAWN_INTERVAL = .5
+CITIZEN_SPAWN_BATCH = 5
 CITIZEN_HAIL_PROBABILITY = 0.05
 CITIZEN_HAIL_COOLDOWN = 300
 CITIZEN_HAIL_DISTANCE = 80
@@ -238,7 +241,7 @@ class Game:
         session.next_offer = session.rng.uniform(120, 180)
         for _ in range(60):
             self.spawn_citizen(session)
-        session.next_citizen = session.rng.uniform(8, 16)
+        session.next_citizen = CITIZEN_SPAWN_INTERVAL
         self.sessions[session.id] = session
         return self.snapshot(session)
 
@@ -368,10 +371,6 @@ class Game:
                 logger.warning("Scheduled passenger offer deferred: no reachable trip from edge %s",
                                session.edge)
             session.next_offer = session.elapsed + session.rng.uniform(45, 180)
-        if session.elapsed >= session.next_citizen:
-            if len(session.citizens) < 100:
-                self.spawn_citizen(session)
-            session.next_citizen = session.elapsed + session.rng.uniform(8, 16)
         for citizen in session.citizens:
             if citizen.hailing:
                 if citizen.hail_until is None:
@@ -407,14 +406,17 @@ class Game:
                     if not 0.15 <= citizen.fraction <= 0.85:
                         citizen.fraction = max(0.15, min(0.85, citizen.fraction))
                         citizen.direction *= -1
-        nearby = [
+        session.citizens = [
             c for c in session.citizens
             if math.dist(session.point, self.citizen_point(c)) <= CITIZEN_RADIUS
+            or c.expires > session.elapsed
         ]
-        removed = len(session.citizens) - len(nearby)
-        session.citizens = nearby
-        for _ in range(removed):
-            self.spawn_citizen(session)
+        if session.elapsed >= session.next_citizen:
+            local_count = sum(math.dist(session.point, self.citizen_point(c)) <= CITIZEN_RADIUS
+                              for c in session.citizens)
+            for _ in range(min(CITIZEN_SPAWN_BATCH, CITIZEN_LIMIT - local_count)):
+                self.spawn_citizen(session)
+            session.next_citizen = session.elapsed + CITIZEN_SPAWN_INTERVAL
         pending_phone = (session.order is not None and session.order.source == "phone"
                          and session.phase == "pickup") or any(o.source == "phone" for o in session.queue)
         if (not session.paused and not session.boarding and not pending_phone

@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { toggleDrivingView, useLegacyInitialView } from "./driving-view.mjs";
+test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 // Trace capture changes animation timing; measure the game, not the recorder.
 test.use({ trace: "off" });
@@ -8,7 +10,7 @@ test("sustained 3D driving has no application-wide freezes", async ({ page }, te
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(() => {
     window.freezeSamples = { frames: [], tasks: [], requests: [], detail: [] };
@@ -33,7 +35,7 @@ test("sustained 3D driving has no application-wide freezes", async ({ page }, te
     window.freezeFrame = requestAnimationFrame(sample);
   });
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const refresh = Map3DView.prototype.refreshGroundDetail;
     Map3DView.prototype.refreshGroundDetail = function (...args) {
       const start = performance.now();
@@ -78,9 +80,9 @@ for (const mode of ["2D", "3D"]) {
     await page.locator("#start").click();
     await expect(page.locator("#welcome")).not.toBeVisible();
     if (mode === "3D") {
-      await page.locator("#view-mode").click();
+      await toggleDrivingView(page);
       await expect(page.locator("#map-3d")).toBeVisible();
-      await expect(page.locator("#view-mode")).toHaveText("2D");
+      await expect(page.locator("#view-mode")).toHaveText("M");
       await expect(page.locator("#view-error")).not.toBeVisible();
     }
 
@@ -131,7 +133,7 @@ for (const offscreen of [true, false]) {
     }
     await page.goto("/");
     const result = await page.evaluate(async () => {
-      const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+      const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
       const [data, stops] = await Promise.all(["/api/map", "/api/stops"].map(url =>
         fetch(url).then(response => response.json())));
       data.elevation = null; // The elevation path uses static culled geometry, not this legacy texture worker.

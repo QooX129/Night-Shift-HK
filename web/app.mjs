@@ -1,14 +1,15 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=slope-guide-seams-1";
-import { MapView } from "./map.mjs?v=slope-guide-seams-1";
-import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=local-map-popup-1";
+import { MapView } from "./map.mjs?v=taxi-map-icons-1";
+import { en, zh } from "./i18n.mjs?v=local-map-popup-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
-import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=junction-toggle-1";
+import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=local-map-popup-1";
 
 const $ = id => document.getElementById(id);
 const loadedPreferences = loadSettings();
 let preferences = loadedPreferences.settings;
 let lang = preferences.language, state = null, view = null, mapData, stops;
 let map2d = null, map3d = null, changingView = false, viewError = null;
+let popupMap = null, mapDrag = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
@@ -39,6 +40,7 @@ function setExitPreview(edge) {
   }
 }
 function openDialog(id) {
+  setMapOpen(false);
   for (const other of dialogs) if (other !== id) $(other).close();
   if (!$(id).open) $(id).showModal();
   resetControls();
@@ -446,14 +448,31 @@ function updateUI() {
 function updateViewUI() {
   const active = Boolean(map3d && view === map3d);
   $("view-mode").disabled = !state || changingView;
-  $("view-mode").textContent = changingView ? "..." : active ? "2D" : "3D";
-  $("view-mode").setAttribute("aria-label", t(active ? "view2d" : "view3d"));
-  $("view-mode").setAttribute("aria-pressed", String(active));
+  $("view-mode").textContent = "M";
+  $("view-mode").setAttribute("aria-label", t("mapTitle"));
+  $("view-mode").setAttribute("aria-expanded", String(!$("map-popup").hidden));
   $("minimap").setAttribute("aria-label", t("minimap"));
   $("view-status").hidden = !active && !changingView;
   $("view-status").textContent = t(changingView ? "loading3d" : "preview3d");
   $("view-error").hidden = !viewError;
   $("view-error").textContent = viewError ? `${t(viewError.key)} ${viewError.detail}` : "";
+}
+function setMapOpen(open) {
+  const popup = $("map-popup");
+  if (!popup || (open && (!state || dialogs.some(id => $(id).open)))) return;
+  popup.hidden = !open;
+  mapDrag = null;
+  if (open) {
+    if (!popupMap) popupMap = new MapView($("popup-map"), mapData, stops, { compact: true, interactive: true });
+    popupMap.resize();
+    popupMap.camera = { x: car.x, y: car.y };
+    if (!popupMap.opened) {
+      const [left, top, right, bottom] = mapData.bounds;
+      popupMap.zoom = Math.max(.1, Math.min(popupMap.width / (right - left), popupMap.height / (bottom - top)) * .9);
+      popupMap.opened = true;
+    }
+  }
+  $("view-mode").setAttribute("aria-expanded", String(open));
 }
 function activateView(next) {
   next.zoom = view.zoom;
@@ -487,7 +506,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=slope-guide-seams-1");
+      const { Map3DView } = await import("./map3d.mjs?v=local-map-popup-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }
@@ -556,6 +575,7 @@ function frame(timestamp) {
     visualElapsed = Math.max(visualElapsed, state.elapsed + inFlightElapsed + elapsed);
     const visualState = { ...state, elapsed: visualElapsed };
     view.render(car, visualState, lang, approach, preview);
+    if (popupMap && !$("map-popup").hidden) popupMap.render(car, visualState, lang, approach, preview);
     if (view === map3d && minimap && preferences.minimapVisible
         && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {
       minimap.render(car, visualState, lang, approach, preview);
@@ -607,7 +627,37 @@ $("door").addEventListener("click", () => perform(async () => {
   car.speed = 0; resetControls(); paused = wasPaused;
 }));
 $("street-dropoff").addEventListener("click", () => $("job-action").click());
-$("view-mode").addEventListener("click", toggleView);
+$("view-mode").addEventListener("click", () => setMapOpen($("map-popup").hidden));
+$("map-close").addEventListener("click", () => setMapOpen(false));
+function zoomPopup(factor, x = popupMap?.width / 2, y = popupMap?.height / 2) {
+  if (!popupMap) return;
+  const old = popupMap.zoom;
+  const zoom = Math.max(.1, Math.min(3.5, old * factor));
+  popupMap.camera.x += (x - popupMap.width / 2) * (1 / old - 1 / zoom);
+  popupMap.camera.y += (y - popupMap.height / 2) * (1 / old - 1 / zoom);
+  popupMap.zoom = zoom;
+}
+$("popup-map").addEventListener("wheel", event => {
+  event.preventDefault();
+  const bounds = event.currentTarget.getBoundingClientRect();
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? bounds.height : 1);
+  zoomPopup(Math.exp(-Math.max(-200, Math.min(200, delta)) * .002), event.clientX - bounds.left, event.clientY - bounds.top);
+}, { passive: false });
+$("popup-map").addEventListener("pointerdown", event => {
+  if (event.button !== 0 || !popupMap) return;
+  event.preventDefault();
+  event.currentTarget.setPointerCapture(event.pointerId);
+  mapDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+});
+$("popup-map").addEventListener("pointermove", event => {
+  if (!mapDrag || event.pointerId !== mapDrag.id) return;
+  popupMap.camera.x -= (event.clientX - mapDrag.x) / popupMap.zoom;
+  popupMap.camera.y -= (event.clientY - mapDrag.y) / popupMap.zoom;
+  mapDrag.x = event.clientX; mapDrag.y = event.clientY;
+});
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+  $("popup-map").addEventListener(type, () => { mapDrag = null; });
+}
 $("map-3d").addEventListener("webglcontextlost", event => {
   event.preventDefault();
   if (map3d) {
@@ -660,9 +710,21 @@ $("settings-dialog").addEventListener("cancel", event => {
   closeSettings();
 });
 $("garage").addEventListener("click", () => pauseTo("garage-dialog"));
-$("overview").addEventListener("click", () => { if (view) view.overview = !view.overview; });
-$("zoom-in").addEventListener("click", () => { if (view) { view.overview = false; view.zoom = Math.min(3.5, view.zoom * 1.25); } });
-$("zoom-out").addEventListener("click", () => { if (view) { view.overview = false; view.zoom = Math.max(0.35, view.zoom / 1.25); } });
+$("overview").addEventListener("click", () => {
+  if (!$("map-popup").hidden && popupMap) {
+    const [left, top, right, bottom] = mapData.bounds;
+    popupMap.camera = { x: (left + right) / 2, y: (top + bottom) / 2 };
+    popupMap.zoom = Math.max(.1, Math.min(popupMap.width / (right - left), popupMap.height / (bottom - top)) * .9);
+  } else if (view) view.overview = !view.overview;
+});
+$("zoom-in").addEventListener("click", () => {
+  if (!$("map-popup").hidden) zoomPopup(1.25);
+  else if (view) { view.overview = false; view.zoom = Math.min(3.5, view.zoom * 1.25); }
+});
+$("zoom-out").addEventListener("click", () => {
+  if (!$("map-popup").hidden) zoomPopup(1 / 1.25);
+  else if (view) { view.overview = false; view.zoom = Math.max(0.35, view.zoom / 1.25); }
+});
 $("job-action").addEventListener("click", () => perform(async () => {
   const wasPaused = paused; paused = true; await flush();
   await send(({ available: "accept", pickup: "service", onboard: "service", complete: "next" })[state.phase]);
@@ -705,6 +767,14 @@ const bindings = {
 };
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
+  if (key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey
+      && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)
+      && !event.target.isContentEditable
+      && !dialogs.some(id => $(id).open)) {
+    event.preventDefault();
+    if (!event.repeat) setMapOpen($("map-popup").hidden);
+    return;
+  }
   if (key === "e" && !event.repeat && !paused && !dialogs.some(id => $(id).open)) {
     $(state.phase === "onboard" ? "street-dropoff" : "door").click();
   }
@@ -731,6 +801,7 @@ window.addEventListener("keydown", event => {
   }
   if (event.key === "Escape" && !event.repeat) {
     event.preventDefault();
+    if (!$("map-popup").hidden) { setMapOpen(false); return; }
     if ($("settings-dialog").open) { closeSettings(); return; }
     if ($("pause-dialog").open) { resume(); return; }
     if ($("junction").open) return;

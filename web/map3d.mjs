@@ -1,14 +1,14 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=slope-guide-seams-1";
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=slope-guide-seams-1";
-import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
+import { MapView } from "./map.mjs?v=taxi-map-icons-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=local-map-popup-1";
+import { en, zh } from "./i18n.mjs?v=local-map-popup-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=slope-guide-seams-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=slope-guide-seams-1";
+import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=local-map-popup-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=local-map-popup-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
-import { project } from "./physics.mjs?v=slope-guide-seams-1";
+import { project } from "./physics.mjs?v=local-map-popup-1";
 
 export class Map3DView {
   constructor(canvas, data, stops) {
@@ -68,7 +68,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=slope-guide-seams-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=local-map-popup-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
           : this.groundMap.unique,

@@ -1,4 +1,6 @@
 import { test, expect } from "@playwright/test";
+import { toggleDrivingView, useLegacyInitialView } from "./driving-view.mjs";
+test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 
@@ -6,7 +8,7 @@ test("3D street name is horizontally centered on the screen", async ({ page }) =
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator(".road-label")).toBeVisible();
   const streetLabel = await page.locator(".road-label").boundingBox();
   expect(Math.abs(streetLabel.x + streetLabel.width / 2 - page.viewportSize().width / 2)).toBeLessThan(1);
@@ -16,7 +18,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=slope-guide-seams-1");
+    const { MapView } = await import("/map.mjs?v=taxi-map-icons-1");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -32,7 +34,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   });
   await expect(page.locator("#minimap-panel")).toBeHidden();
   await page.locator("#start").click();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#minimap-panel")).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.minimapFrames || 0)).toBeGreaterThan(1);
   const checkMap = async () => {
@@ -80,7 +82,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await expect.poll(() => page.evaluate(() => window.minimapFrames)).toBeGreaterThan(3);
   await checkMap();
   await page.screenshot({ path: testInfo.outputPath("3d-minimap.png") });
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#minimap-panel")).toBeHidden();
   const frames = await page.evaluate(() => window.minimapFrames);
   await page.waitForTimeout(250);
@@ -90,7 +92,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -125,7 +127,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.create(Map3DView.prototype);
     view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
@@ -171,7 +173,7 @@ test("GPS route progress reuses traffic geometry and completed route segments", 
 test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = await (await fetch("/api/map")).json();
     const session = await (await fetch("/api/sessions", { method: "POST" })).json();
@@ -225,7 +227,7 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -280,7 +282,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -291,10 +293,10 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   });
   await page.locator("#start").click();
   await expect(page.locator("#welcome")).not.toBeVisible();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
-  await expect(page.locator("#view-mode")).toHaveText("2D");
-  await expect(page.locator("#view-mode")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#view-mode")).toHaveText("M");
+  await expect(page.locator("#view-mode")).toHaveAttribute("aria-expanded", "false");
   await expect(page.locator("#view-error")).not.toBeVisible();
   await expect.poll(() => page.evaluate(() => Boolean(window.threeView))).toBe(true);
   const before = await page.evaluate(() => ({
@@ -337,7 +339,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
         const a = roads.nodes[edge.a], b = roads.nodes[edge.b];
         const car = { edge: edge.id, x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
         view.updateBoundaries(car);
-        const { COLLISION_LINE_WIDTH } = await import("/collision-lines.mjs?v=slope-guide-seams-1");
+        const { COLLISION_LINE_WIDTH } = await import("/collision-lines.mjs?v=local-map-popup-1");
         const expected = view.boundaryLines.reduce((sum, { a, b }) =>
           sum + Math.hypot(b[0] - a[0], b[1] - a[1]) * COLLISION_LINE_WIDTH
             + 8 * Math.sin(Math.PI / 8) * (COLLISION_LINE_WIDTH / 2) ** 2, 0);
@@ -424,7 +426,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
 
   await page.locator("#language").click();
   await expect(page.locator("#view-status")).toContainText("3D 實驗");
-  await expect(page.locator("#view-mode")).toHaveAttribute("aria-label", "切換至 2D 地圖");
+  await expect(page.locator("#view-mode")).toHaveAttribute("aria-label", "地區地圖");
   await page.locator("#zoom-in").click();
   await page.locator("#overview").click();
   await expect.poll(() => page.evaluate(() => window.threeView.overview)).toBe(true);
@@ -441,10 +443,10 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
     .toBeCloseTo((originalSize.width - 30) / (originalSize.height - 30), 5);
   await page.setViewportSize(originalSize);
   for (let i = 0; i < 3; i++) {
-    await page.locator("#view-mode").click();
+    await toggleDrivingView(page);
     await expect(page.locator("#map")).toBeVisible();
     await expect(page.locator(".world-label")).not.toBeVisible();
-    await page.locator("#view-mode").click();
+    await toggleDrivingView(page);
     await expect(page.locator("#map-3d")).toBeVisible();
   }
   const after = await page.evaluate(() => ({
@@ -469,7 +471,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=slope-guide-seams-1");
+    const { Map3DView } = await import("/map3d.mjs?v=local-map-popup-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -644,7 +646,7 @@ test.describe("3D animation", () => {
     await page.goto("/");
     await expect(page.locator("#start")).toBeEnabled();
     await page.locator("#start").click();
-    await page.locator("#view-mode").click();
+    await toggleDrivingView(page);
     await expect(page.locator("#map-3d")).toBeVisible();
     await page.keyboard.down("w");
     const fps = await page.evaluate(() => new Promise(resolve => {
@@ -676,7 +678,7 @@ test("unsupported WebGL keeps 2D usable and reports the initialization error", a
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.locator("#start").click();
-  await page.locator("#view-mode").click();
+  await toggleDrivingView(page);
   await expect(page.locator("#view-error")).toContainText("Could not start 3D");
   await expect(page.locator("#map")).toBeVisible();
   await expect(page.locator("#map-3d")).not.toBeVisible();

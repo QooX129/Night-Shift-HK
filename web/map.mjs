@@ -1,13 +1,16 @@
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=slope-guide-seams-1";
-import { en, zh } from "./i18n.mjs?v=hail-dialogue-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=slope-guide-seams-1";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=local-map-popup-1";
+import { en, zh } from "./i18n.mjs?v=local-map-popup-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=local-map-popup-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 
+export const TAXI_ICON_MIN_LENGTH = { map: 20, minimap: 20 };
+
 export class MapView {
-  constructor(canvas, data, stops, { compact = false } = {}) {
+  constructor(canvas, data, stops, { compact = false, interactive = false } = {}) {
     this.canvas = canvas;
     this.compact = compact;
+    this.interactive = interactive;
     this.ctx = canvas.getContext("2d");
     this.data = data;
     this.collisionLines = staticCollisionLines(data);
@@ -125,7 +128,8 @@ export class MapView {
     const c = this.ctx, w = this.width, h = this.height;
     const [left, top, right, bottom] = this.data.bounds;
     const zoom = this.overview ? Math.min((w - 25) / (right - left), (h - 180) / (bottom - top)) : this.zoom;
-    const target = this.overview ? { x: (left + right) / 2, y: (top + bottom) / 2 } : car;
+    const target = this.interactive ? this.camera
+      : this.overview ? { x: (left + right) / 2, y: (top + bottom) / 2 } : car;
     this.camera.x += (target.x - this.camera.x) * 0.12;
     this.camera.y += (target.y - this.camera.y) * 0.12;
     const cx = w / 2;
@@ -233,6 +237,10 @@ export class MapView {
     }
     c.save(); c.translate(car.x, car.y); c.rotate(car.heading);
     const body = this.data.driving;
+    const minLength = this.compact && !this.interactive
+      ? TAXI_ICON_MIN_LENGTH.minimap : TAXI_ICON_MIN_LENGTH.map;
+    const iconScale = Math.max(1, minLength / (body.taxi_length ? body.taxi_length * 26 / 27 * zoom : 26));
+    c.scale(iconScale, iconScale);
     if (body.taxi_length) c.scale(body.taxi_length / 27, body.taxi_width / 13);
     const s = body.taxi_length ? 1 : 1 / zoom;
     c.fillStyle = "#f5c65a1f";
