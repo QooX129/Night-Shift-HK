@@ -27,6 +27,13 @@ class RuleError(ValueError):
     pass
 
 
+class MovementBoundaryError(RuleError):
+    def __init__(self, point: Point, heading: float, edge: str, trail_index: int):
+        super().__init__("The taxi footprint must remain on a connected road.")
+        self.sample = {"x": point[0], "y": point[1], "heading": heading,
+                       "edge": edge, "trail_index": trail_index}
+
+
 class NoReachableTrip(RuleError):
     pass
 
@@ -115,6 +122,8 @@ class Session:
     next_citizen: float = 0
     boarding: dict | None = None
     cancelled_orders: int = 0
+    last_boundary_log: float = -math.inf
+    boundary_logs_suppressed: int = 0
 
 
 PASSENGERS = [
@@ -531,7 +540,7 @@ class Game:
             *payload.get("trail", []),
             {"x": point[0], "y": point[1], "heading": heading},
         ]
-        for sample in trail:
+        for trail_index, sample in enumerate(trail):
             destination = (float(sample["x"]), float(sample["y"]))
             sample_heading = float(sample["heading"])
             if not all(math.isfinite(v) for v in (*destination, sample_heading)):
@@ -575,7 +584,7 @@ class Game:
                     )
                     if physical and physical.edge.way in session.closed:
                         raise RuleError("Road closed. Reverse or steer onto another road.")
-                    raise RuleError("The taxi footprint must remain on a connected road.")
+                    raise MovementBoundaryError(sample_point, sample_heading, previous.id, trail_index)
                 surface_speed_budget = max(surface_speed_budget,
                                            self.roads.speed_limit(match.edge, sample_point, sample_heading))
                 if match.edge.way != escaping_closure:

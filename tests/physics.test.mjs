@@ -74,6 +74,85 @@ test("steering smoothing is timestep independent and preserves reverse and stati
   assert.equal(simulate(60, 0).heading, 0);
 });
 
+test("narrow-road assist smoothly aligns toward either road direction in forward and reverse", () => {
+  for (const facing of [0, Math.PI]) {
+    for (const speed of [3, -3]) {
+      for (const side of [-1, 1]) {
+        const roads = network({ body: true });
+        roads.driving.widths.residential = roads.driving.taxi_width * 2;
+        const car = { ...carAt(), heading: facing + side * .15, speed };
+        const input = side * Math.sign(speed) > 0 ? { left: true } : { right: true };
+        const reference = { ...car };
+        stepCar(reference, input, 1 / 60, freeDriving);
+        stepCar(car, input, 1 / 60, { roads });
+        const error = Math.abs(angleDifference(facing, car.heading));
+        assert.ok(error < Math.abs(angleDifference(facing, reference.heading)), "assist must add rotation");
+        assert.ok(error > 0, "assist must not snap");
+        assert.ok(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)));
+        assert.ok(Math.abs(car.x - (20 + Math.cos(car.heading) * car.speed / 60)) < 1e-10);
+        assert.ok(Math.abs(car.y - Math.sin(car.heading) * car.speed / 60) < 1e-10,
+          "assist must not add sideways displacement");
+      }
+    }
+  }
+});
+
+test("narrow-road assist checks the exact angle threshold and has a timestep-independent response", () => {
+  for (const angle of [Math.PI / 6 - 1e-6, Math.PI / 6, Math.PI / 6 + 1e-6]) {
+    const roads = network({ body: true });
+    roads.driving.widths.residential = 3.9;
+    let checks = 0;
+    roads.rotationFits = () => { checks++; return false; };
+    stepCar({ ...carAt(), heading: -angle, speed: 3 }, { right: true }, 1 / 60, { roads });
+    assert.equal(checks, angle < Math.PI / 6 ? 1 : 0);
+  }
+  for (const hz of [30, 60, 120]) {
+    const roads = network({ body: true });
+    roads.driving.widths.residential = 3.9;
+    const car = { ...carAt(), heading: .15, speed: 3 };
+    for (let frame = 0; frame < hz; frame++) {
+      stepCar(car, { gas: true, left: true }, 1 / hz, { roads, steeringSensitivity: 0 });
+    }
+    assert.ok(Math.abs(car.heading - .15 * Math.exp(-1 / .25)) < 1e-10);
+  }
+});
+
+test("narrow-road assist respects width, strict 30-degree threshold, controls and stationary state", () => {
+  for (const scenario of [
+    { width: 5.201, heading: -.15, speed: 3, input: { right: true } },
+    { width: 3.9, heading: -Math.PI / 6, speed: 3, input: { right: true } },
+    { width: 3.9, heading: -.6, speed: 3, input: { right: true } },
+    { width: 3.9, heading: -.15, speed: 3, input: { left: true } },
+    { width: 3.9, heading: -.15, speed: 3, input: {} },
+    { width: 3.9, heading: -.15, speed: 3, input: { left: true, right: true } },
+    { width: 3.9, heading: -.15, speed: 0, input: { right: true } },
+  ]) {
+    const roads = network({ body: true });
+    for (const edge of roads.edges.values()) edge.width = scenario.width;
+    const car = { ...carAt(), heading: scenario.heading, speed: scenario.speed };
+    const reference = { ...car };
+    stepCar(reference, scenario.input, 1 / 60, freeDriving);
+    stepCar(car, scenario.input, 1 / 60, { roads });
+    assert.equal(car.heading, reference.heading, JSON.stringify(scenario));
+  }
+});
+
+test("narrow-road assist never adds an unsafe rotation or bypasses a closure", () => {
+  const roads = network({ body: true });
+  roads.driving.widths.residential = 3.9;
+  const car = { ...carAt(20, 1.8), heading: -.15, speed: 3 };
+  const reference = { ...car };
+  stepCar(reference, { right: true }, 1 / 60, freeDriving);
+  stepCar(car, { right: true }, 1 / 60, { roads });
+  assert.equal(car.heading, reference.heading, "existing unsafe overlap must not gain unchecked rotation");
+  const approaching = { ...carAt(57, 0), heading: -.01, speed: 3 };
+  for (let frame = 0; frame < 60; frame++) {
+    stepCar(approaching, { gas: true, right: true }, 1 / 60, { roads, closed: new Set([2]) });
+    assert.notEqual(approaching.edge, "bc");
+    assert.notEqual(approaching.edge, "~bc");
+  }
+});
+
 test("rectangular body permits side clearance but rejects nose and corner overlaps at every heading", () => {
   const roads = network({ body: true }), edge = roads.edges.get("ab");
   for (const heading of [0, Math.PI / 6, Math.PI / 4, Math.PI / 2, Math.PI, -Math.PI / 4]) {

@@ -1,6 +1,6 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=parabolic-steering-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=narrow-assist-2";
 import { MapView } from "./map.mjs?v=parabolic-steering-1";
-import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
+import { en, zh } from "./i18n.mjs?v=boundary-recovery-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
@@ -19,6 +19,7 @@ let inFlightElapsed = 0;
 let visualElapsed = 0;
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
 let previewExit = null;
+let movementRecoveryUntil = 0;
 let phoneTab = "available";
 let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
   : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
@@ -79,6 +80,9 @@ async function fetchJSON(url, options) {
     const message = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
     const error = new Error(message);
     error.status = response.status;
+    error.code = data.code;
+    error.state = data.state;
+    error.diagnostic = data.diagnostic;
     throw error;
   }
   return data;
@@ -95,6 +99,18 @@ async function send(action, fields = {}) {
     applyState(next);
     return next;
   } catch (error) {
+    if (action === "move" && error.status === 409 && error.code === "movement_boundary" && error.state) {
+      console.warn("movement_boundary: restored last confirmed position", error.diagnostic);
+      pending = null;
+      applyState(error.state, true);
+      car.speed = 0;
+      stepBank = 0;
+      boundary = true;
+      closureWarning = false;
+      movementRecoveryUntil = performance.now() + 4000;
+      updateUI();
+      return null;
+    }
     if (error.status && error.status < 500) {
       pending = null;
       car = { x: state.x, y: state.y, speed: 0, heading: state.heading, edge: state.edge };
@@ -115,8 +131,9 @@ async function flush() {
   try {
     const visible_citizens = view === map3d && map3d
       ? map3d.visibleCitizens({ ...state, elapsed: visualElapsed }, car) : [];
-    await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples,
+    const next = await send("move", { x: car.x, y: car.y, speed: car.speed, heading: car.heading, dt, trail: samples,
       visible_citizens });
+    if (!next) return;
     if (!busy && !paused && !state.boarding && state.phase === "pickup" && state.service_ready && Math.abs(car.speed) <= 0.6) {
       await send("service");
     }
@@ -444,7 +461,8 @@ function updateUI() {
     $(kind).disabled = busy || !state.depot_ready || state.upgrades.includes(kind) || state.money < (kind === "efficiency" ? 100 : 160);
     if (state.upgrades.includes(kind)) $(kind).textContent += ` · ${t("installed")}`;
   }
-  let notice = boundary ? "boundary" : closureWarning ? "closed" : state.fuel <= 0 ? "empty" : state.warning || (state.no_route ? "noRoute" : "");
+  let notice = performance.now() < movementRecoveryUntil ? "movementRecovered"
+    : boundary ? "boundary" : closureWarning ? "closed" : state.fuel <= 0 ? "empty" : state.warning || (state.no_route ? "noRoute" : "");
   $("notice").hidden = !notice;
   $("notice").textContent = notice ? t(notice) : "";
   if ($("junction").open) renderExits();
@@ -560,7 +578,7 @@ function frame(timestamp) {
       if (paused) break;
     }
     if (elapsed >= 0.3 && !moving && !busy && !pending) {
-      // Movement failures are displayed by send(); stop the simulation until resolved.
+      // Boundary rejections recover in send(); other movement failures require attention.
       flush().catch(error => { if (!$("error-dialog").open) showError(error, false); });
     }
     if (!busy && nearJunction()) promptJunction();

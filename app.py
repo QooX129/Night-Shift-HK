@@ -1,15 +1,18 @@
 from pathlib import Path
+import json
+import logging
 import mimetypes
+import time
 from threading import RLock
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from game import Game, RuleError
+from game import Game, MovementBoundaryError, RuleError
 from roads import DRIVING, RoadMap
 from map_streaming import VisualMap
 
@@ -21,6 +24,7 @@ game_lock = RLock()
 visual_map = VisualMap(roads.document)
 app = FastAPI(title="Night Shift HK", docs_url=None, redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+logger = logging.getLogger(__name__)
 
 
 class StrictModel(BaseModel):
@@ -134,13 +138,40 @@ def create_session() -> dict:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
-@app.post("/api/sessions/{session_id}/commands")
-def command(session_id: str, body: Command) -> dict:
+@app.post("/api/sessions/{session_id}/commands", response_model=None)
+def command(session_id: str, body: Command) -> dict | JSONResponse:
     try:
         payload = body.command.model_dump()
         action = payload.pop("action")
         with game_lock:
-            return game.command(session_id, body.seq, action, payload)
+            try:
+                return game.command(session_id, body.seq, action, payload)
+            except MovementBoundaryError as error:
+                session = game.sessions[session_id]
+                session.speed = 0
+                diagnostic = {
+                    "code": "movement_boundary", "reason": str(error), "seq": body.seq,
+                    "version": roads.version,
+                    "confirmed": {"x": session.point[0], "y": session.point[1],
+                                  "heading": session.heading, "edge": session.edge},
+                    "selected_exit": session.selected_exit, "selected_junction": session.selected_junction,
+                    "rejected_sample": error.sample,
+                    "movement": {key: payload[key] for key in ("x", "y", "heading", "speed", "dt")},
+                    "trail": payload["trail"],
+                }
+                now = time.monotonic()
+                if now - session.last_boundary_log >= 5:
+                    logger.warning("Movement rejected: %s", json.dumps({
+                        **diagnostic, "suppressed_since_last_log": session.boundary_logs_suppressed,
+                    }))
+                    session.last_boundary_log = now
+                    session.boundary_logs_suppressed = 0
+                else:
+                    session.boundary_logs_suppressed += 1
+                return JSONResponse(status_code=409, content={
+                    "detail": str(error), "code": "movement_boundary",
+                    "state": game.snapshot(session), "diagnostic": diagnostic,
+                })
     except RuleError as error:
         status = 404 if session_id not in game.sessions else 409
         raise HTTPException(status_code=status, detail=str(error)) from error

@@ -6,8 +6,9 @@ export function angleDifference(a, b) {
   return Math.atan2(Math.sin(a - b), Math.cos(a - b));
 }
 export const STEERING_SENSITIVITY = 2;
-export const STEERING_RESPONSE_SECONDS = 0.12;
+export const STEERING_RESPONSE_SECONDS = 0.2;
 export const STEERING_RETURN_SECONDS = 0.08;
+export const NARROW_ROAD_ASSIST_SECONDS = 0.25;
 export const BOUNDARY_DRAG = 1;
 export function project(point, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1];
@@ -342,13 +343,28 @@ export function stepCar(car, input, dt, {
       + steeringTarget * (step - rampStep);
     car.steeringElapsed = to;
   }
+  const previous = roads?.edges.get(car.edge);
   if (Math.abs(car.speed) > 0.05) {
-    const manualSteering = steeringTravel * steeringSensitivity
+    let manualSteering = steeringTravel * steeringSensitivity
       * Math.max(-1, Math.min(1, car.speed / 3));
+    if (previous && roadWidth(roads.driving, previous) <= roads.driving.taxi_width * 2) {
+      let alignment = angleDifference(roads.angle(previous), car.heading);
+      if (Math.abs(alignment) > Math.PI / 2) {
+        alignment = angleDifference(roads.angle(previous) + Math.PI, car.heading);
+      }
+      // Angle wrapping must not pull exactly 30 degrees inside the threshold.
+      if (Math.abs(alignment) < Math.PI / 6 - 1e-12 && steeringTarget * Math.sign(car.speed) * alignment > 0) {
+        const rotation = Math.sign(alignment) * Math.min(Math.abs(alignment),
+          Math.max(0, manualSteering * Math.sign(alignment))
+          + Math.abs(alignment) * -Math.expm1(-step / NARROW_ROAD_ASSIST_SECONDS));
+        if (roads.rotationFits(car, car.heading, car.heading + rotation, previous)) {
+          manualSteering = rotation;
+        }
+      }
+    }
     car.heading += manualSteering;
   }
   const old = { x: car.x, y: car.y };
-  const previous = roads?.edges.get(car.edge);
   const touching = roads?.driving.taxi_length && !roads.bodyFits(car, car.heading, previous, 0.02);
   if (touching) car.speed *= Math.exp(-BOUNDARY_DRAG * step);
   const desired = { x: car.x + Math.cos(car.heading) * car.speed * step, y: car.y + Math.sin(car.heading) * car.speed * step };

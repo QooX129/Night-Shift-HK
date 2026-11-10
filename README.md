@@ -637,7 +637,27 @@ connected road corridor along those paths, rejecting off-road movement and
 unconnected level changes rather than silently snapping the taxi.
 Browser collision handling also validates intermediate positions at the same
 0.4 m sampling interval, preventing boundary slides from cutting across concave
-road corners and triggering a rejected movement/forced pause.
+road corners and triggering a rejected movement.
+If the server nevertheless rejects a taxi-footprint movement, the browser restores
+the last server-confirmed position, heading and road, stops the taxi, discards
+unconfirmed movement and resumes without a blocking dialog. Held controls remain
+active, and a four-second notice explains the recovery. Other command conflicts,
+network failures and rule errors retain their existing error handling.
+Each boundary rejection includes diagnostic movement/trail data (at most 240
+client samples), the rejected sample, confirmed road and selected junction in the
+browser console. Server warnings contain the same bounded data, limited to one
+entry per session every five seconds, with a count of suppressed repeats.
+
+On roads no wider than **2 times the taxi width** (3.4 m for the current taxi), steering toward either
+direction along the current segment gains smooth alignment assistance when
+the heading difference is **strictly below 30 degrees**. This works forward and
+in reverse, ignoring official road direction for alignment only. Assistance
+changes heading, never teleports sideways, and adds rotation only if the entire
+angular sweep fits the connected road footprint. Steering away, no steering,
+stationary taxis and wider roads retain manual steering; closures and route
+restrictions are unchanged. The assist's exponential response time is
+`NARROW_ROAD_ASSIST_SECONDS` (0.25 seconds) in `web/physics.mjs`, separate from
+manual steering response and sensitivity.
 During forced turns, browser and server matching both exclude unselected exits.
 Heading alignment is revalidated before sending movement, so wall contact still
 stops or slides the taxi rather than producing an inconsistent movement trail.

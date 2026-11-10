@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from fastapi.testclient import TestClient
 
-from app import app
+from app import app, game as api_game
 from game import Game, RuleError
 from roads import DRIVING, RoadMap
 
@@ -517,6 +517,43 @@ class ApiTests(unittest.TestCase):
         command["speed"] = DRIVING["max_speed"] + 0.01
         self.assertEqual(self.client.post(url, json={"seq": 2, "command": command}).status_code, 422)
         self.assertEqual(self.client.get("/api/map").json()["driving"]["max_speed"], DRIVING["max_speed"])
+
+    def test_boundary_rejection_recovers_authoritative_state_and_logs_bounded_diagnostics(self):
+        state = self.client.post("/api/sessions").json()
+        url = f"/api/sessions/{state['id']}/commands"
+        state = self.client.post(url, json={"seq": 1, "command": {"action": "pause", "paused": False}}).json()
+        x, y, heading = state["x"], state["y"], state["heading"]
+        command = {"action": "move", "x": x - math.sin(heading) * 15,
+                   "y": y + math.cos(heading) * 15, "heading": heading, "speed": 10, "dt": 1,
+                   "trail": [{"x": x, "y": y, "heading": heading}]}
+        api_game.sessions[state["id"]].speed = 5
+        with self.assertLogs("app", level="WARNING") as logs:
+            response = self.client.post(url, json={"seq": 2, "command": command})
+        self.assertEqual(response.status_code, 409)
+        body = response.json()
+        self.assertEqual(body["code"], "movement_boundary")
+        restored = body["state"]
+        for key in ["x", "y", "heading", "edge", "fuel", "elapsed", "seq"]:
+            self.assertEqual(restored[key], state[key], key)
+        self.assertEqual(restored["speed"], 0)
+        self.assertFalse(restored["paused"])
+        diagnostic = body["diagnostic"]
+        self.assertEqual(diagnostic["trail"], command["trail"])
+        self.assertEqual(diagnostic["confirmed"]["edge"], state["edge"])
+        self.assertIn("rejected_sample", diagnostic)
+        self.assertIn("movement_boundary", logs.output[0])
+        self.assertEqual(len(logs.output), 1)
+        with self.assertNoLogs("app", level="WARNING"):
+            self.assertEqual(self.client.post(url, json={"seq": 2, "command": command}).status_code, 409)
+        self.assertEqual(api_game.sessions[state["id"]].boundary_logs_suppressed, 1)
+        api_game.sessions[state["id"]].last_boundary_log -= 5
+        with self.assertLogs("app", level="WARNING") as logs:
+            self.assertEqual(self.client.post(url, json={"seq": 2, "command": command}).status_code, 409)
+        self.assertIn('"suppressed_since_last_log": 1', logs.output[0])
+        command.update(x=x, y=y, speed=0, dt=0, trail=[])
+        accepted = self.client.post(url, json={"seq": 2, "command": command})
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["seq"], 2)
 
 
 if __name__ == "__main__":

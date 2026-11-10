@@ -1,4 +1,5 @@
 export const zh = {
+  movementRecovered:"已返回上次確認位置並停車。可繼續駕駛，或倒車離開路邊。",
   mapStreamError:"地圖細節載入失敗，將自動重試；駕駛及碰撞仍可用。",
   mapTitle:"地區地圖", mapClose:"關閉地圖", mapHelp:"滾輪縮放 · 拖曳移動 · M / Esc 關閉",
   hailTaxi:"的士！",
@@ -57,6 +58,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  movementRecovered:"Returned to the last confirmed position and stopped. Keep driving or reverse away from the boundary.",
   mapStreamError:"Map detail loading failed; retrying automatically. Driving and collisions remain available.",
   mapTitle:"District map", mapClose:"Close map", mapHelp:"Scroll to zoom · Drag to pan · M / Esc to close",
   hailTaxi:"Taxi!",
