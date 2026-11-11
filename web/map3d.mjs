@@ -1,14 +1,15 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=parabolic-steering-1";
+import { MapView } from "./map.mjs?v=tunnel-clearance-1";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=parabolic-steering-1";
 import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
-import { surfacePose, surfaceSegments, terrainHeight } from "./elevation.mjs?v=parabolic-steering-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=parabolic-steering-1";
+import { surfacePose, surfaceSegments, terrainHeight, isElevatedRoad, isGroundRoad, isTunnelRoad }
+  from "./elevation.mjs?v=tunnel-clearance-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=tunnel-clearance-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
-import { project } from "./physics.mjs?v=parabolic-steering-1";
+import { project } from "./physics.mjs?v=tunnel-clearance-1";
 import { visualStream } from "./map-stream.mjs";
 
 export class Map3DView {
@@ -73,9 +74,9 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=parabolic-steering-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=tunnel-clearance-1", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
-        edges: this.elevation ? this.groundMap.unique.filter(edge => edge.bridge === "no" && edge.tunnel === "no")
+        edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
           : this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale, revision: this.stream?.revision ?? 0 });
       this.detailWorker.onmessage = ({ data }) => {
@@ -146,7 +147,7 @@ export class Map3DView {
     });
     const allRoads = map.unique;
     if (this.elevation) {
-      map.unique = allRoads.filter(edge => edge.bridge === "no" && edge.tunnel === "no");
+      map.unique = allRoads.filter(isGroundRoad);
       map.drawRoadDirections = () => {};
     }
     const scale = Math.min(1.5, 4096 / Math.max(right - left, bottom - top));
@@ -183,7 +184,7 @@ export class Map3DView {
       const positions = geometry.getAttribute("position");
       const cells = new Map();
       for (const edge of map.unique) {
-        if (edge.bridge !== "no" || edge.tunnel !== "no") continue;
+        if (!isGroundRoad(edge)) continue;
         const a = this.nodes[edge.a], b = this.nodes[edge.b], margin = 20;
         for (let i = Math.floor((Math.min(a[0], b[0]) - margin) / 40); i <= Math.floor((Math.max(a[0], b[0]) + margin) / 40); i++)
           for (let j = Math.floor((Math.min(a[1], b[1]) - margin) / 40); j <= Math.floor((Math.max(a[1], b[1]) + margin) / 40); j++) {
@@ -237,7 +238,7 @@ export class Map3DView {
     this.groundMap = map;
     this.detailMap = Object.create(map);
     if (this.elevation) {
-      this.detailMap.unique = allRoads.filter(edge => edge.bridge === "no" && edge.tunnel === "no");
+      this.detailMap.unique = allRoads.filter(isGroundRoad);
     }
     this.detailMap.drawRoadDirections = () => {};
     this.detailMap.backdrop = document.createElement("canvas");
@@ -374,7 +375,7 @@ export class Map3DView {
       const key = roadKey(edge);
       if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [], markings: [] });
       const tile = tiles.get(key);
-      const bridge = edge.bridge !== "no";
+      const bridge = isElevatedRoad(edge), tunnel = isTunnelRoad(edge);
       const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
       const upper = p => [p[0], p[1] + WORLD_SCALE.tunnelClearance, p[2]];
       for (const [start, end] of surfaceSegments(this, edge)) {
@@ -391,7 +392,7 @@ export class Map3DView {
           quad(tile.shell, al, bl, lower(bl), lower(al));
           quad(tile.shell, ar, br, lower(br), lower(ar));
         }
-        if (edge.tunnel !== "no") {
+        if (tunnel) {
           quad(tile.shell, al, bl, upper(bl), upper(al));
           quad(tile.shell, ar, br, upper(br), upper(ar));
           quad(tile.shell, upper(al), upper(ar), upper(br), upper(bl));
@@ -632,12 +633,16 @@ export class Map3DView {
     if (lines === this.boundaryLines) return;
     this.boundaryLines = lines;
     const positions = [], coverage = [];
-    for (const { a, b, edge, heights } of lines) {
+    for (const { a, b, edge } of lines) {
+      const heights = new Map();
       const vertex = (point, coord) => {
-        const [x, y] = point;
-        const height = heights
-          ? heights[0] + (heights[1] - heights[0]) * project({ x, y }, a, b).t
-          : surfacePose(this, edge, { x, y }, 0).height;
+        const x = Math.fround(point[0]), y = Math.fround(point[1]);
+        const key = `${x},${y}`;
+        let height = heights.get(key);
+        if (height === undefined) {
+          height = surfacePose(this, edge, { x, y }, 0).height;
+          heights.set(key, height);
+        }
         positions.push(x, height + .14, y);
         coverage.push(...coord);
       };
@@ -1326,7 +1331,7 @@ export class Map3DView {
       { x: target.x, y: target.z }, car.heading).height + 1 : 1;
     const eye = position.clone().addScaledVector(forward, -distance * 0.9);
     eye.y = position.y + distance * 0.6;
-    const inTunnel = this.elevation && this.edges.get(car.edge).tunnel !== "no";
+    const inTunnel = this.elevation && isTunnelRoad(this.edges.get(car.edge));
     if (inTunnel && !this.overview) { eye.y = position.y + 3.3; target.y = position.y + 1.4; }
     if (this.elevation) {
       this.ground.material.transparent = Boolean(inTunnel && !this.overview);

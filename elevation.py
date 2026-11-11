@@ -93,21 +93,11 @@ def road_junctions(nodes, edges, profiles, widths):
                     if math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy) < entry["radius"] + 8.2:
                         pending.append(target)
     for owners in result.values():
-        # A side road inherits any higher-priority adjustment already affecting its main road.
-        seen = {owner["id"] for owner in owners}
-        index = 0
-        while index < len(owners):
-            owner = owners[index]
-            index += 1
-            for ancestor in result.get(owner["id"], ()):
-                if ancestor["id"] not in seen:
-                    seen.add(ancestor["id"])
-                    owners.append(ancestor)
         owners.sort(key=lambda e: (e["a"], e["b"], e["node"]))
     return result
 
 
-def _surface(nodes, heights, start, end, point, profile):
+def _surface(nodes, heights, start, end, point, profile, pieces=None):
     a, b = nodes[start], nodes[end]
     dx, dy = b[0] - a[0], b[1] - a[1]
     projection = ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / (dx * dx + dy * dy)
@@ -116,7 +106,14 @@ def _surface(nodes, heights, start, end, point, profile):
     length = math.hypot(dx, dy)
     grade = (zb - za) / length
     height = za + (zb - za) * t
-    if profile:
+    if pieces:
+        for (t0, z0), (t1, z1) in zip(pieces, pieces[1:]):
+            if t <= t1:
+                u = (t - t0) / (t1 - t0)
+                height = z0 + (z1 - z0) * u * u * (3 - 2 * u)
+                grade = (z1 - z0) * 6 * u * (1 - u) / ((t1 - t0) * length)
+                break
+    elif profile:
         m0, m1 = (value * length for value in profile)
         delta = zb - za
         height = za + m0 * t + (3 * delta - 2 * m0 - m1) * t * t + (m0 + m1 - 2 * delta) * t * t * t
@@ -126,8 +123,8 @@ def _surface(nodes, heights, start, end, point, profile):
     return height, grade * dx / length, grade * dy / length
 
 
-def _blended_surface(nodes, heights, start, end, point, profile, junctions, edge_id):
-    height, gx, gy = _surface(nodes, heights, start, end, point, profile)
+def _blended_surface(nodes, heights, start, end, point, profile, junctions, edge_id, pieces):
+    height, gx, gy = _surface(nodes, heights, start, end, point, profile, (pieces or {}).get(edge_id))
     owners_by_priority = {}
     for owner in (junctions or {}).get(edge_id, ()):
         a, b = nodes[owner["a"]], nodes[owner["b"]]
@@ -145,7 +142,13 @@ def _blended_surface(nodes, heights, start, end, point, profile, junctions, edge
         if closest[0] >= 8:
             continue
         gap, distance, offset, owner, _ = closest
-        h, mx, my = _surface(nodes, heights, owner["a"], owner["b"], point, owner["profile"])
+        # A fully covered intermediate owner already includes its own parent.
+        if any(other_priority > priority and other[0] == 0
+               and any(parent["id"] == owner["id"] for parent in (junctions or {}).get(other[3]["id"], ()))
+               for other_priority, other in owners_by_priority.items()):
+            continue
+        h, mx, my = _blended_surface(
+            nodes, heights, owner["a"], owner["b"], point, owner["profile"], junctions, owner["id"], pieces)
         t = gap / 8
         weight = 1 - t * t * (3 - 2 * t)
         derivative = -6 * t * (1 - t) / 8
@@ -156,11 +159,11 @@ def _blended_surface(nodes, heights, start, end, point, profile, junctions, edge
     return height, gx, gy
 
 
-def surface_pose(nodes, heights, edge, point, heading, profiles=None, junctions=None):
+def surface_pose(nodes, heights, edge, point, heading, profiles=None, junctions=None, pieces=None):
     if not heights:
         return {"height": 0.0, "grade": 0.0, "pitch": 0.0}
     height, gx, gy = _blended_surface(
-        nodes, heights, edge.a, edge.b, point, profiles.get(edge.id) if profiles else None, junctions, edge.id)
+        nodes, heights, edge.a, edge.b, point, profiles.get(edge.id) if profiles else None, junctions, edge.id, pieces)
     grade = gx * math.cos(heading) + gy * math.sin(heading)
     return {"height": height, "grade": grade, "pitch": math.atan(grade)}
 

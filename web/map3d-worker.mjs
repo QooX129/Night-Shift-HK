@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=parabolic-steering-1";
-import { MapView } from "./map.mjs?v=parabolic-steering-1";
+import { Map3DView } from "./map3d.mjs?v=tunnel-clearance-1";
+import { MapView } from "./map.mjs?v=tunnel-clearance-1";
 
 let view;
 let revision = 0;

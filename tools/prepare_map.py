@@ -20,13 +20,14 @@ LAT, LON = 22.314, 114.1695
 SCALE_X = 111_320 * math.cos(math.radians(LAT))
 SCALE_Y = 111_320
 ROAD_TYPES = {
+    "motorway", "trunk", "motorway_link", "trunk_link",
     "primary", "secondary", "tertiary", "unclassified", "residential",
     "living_street", "service", "primary_link", "secondary_link", "tertiary_link",
 }
 QUERY = """
 [out:json][timeout:90];
 (
- way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|service|primary_link|secondary_link|tertiary_link)$"](22.304,114.161,22.324,114.178);
+ way["highway"~"^(motorway|trunk|motorway_link|trunk_link|primary|secondary|tertiary|unclassified|residential|living_street|service|primary_link|secondary_link|tertiary_link)$"](22.304,114.161,22.324,114.178);
  way["building"](22.304,114.161,22.324,114.178);
  way["leisure"="park"](22.304,114.161,22.324,114.178);
  relation["type"="restriction"](22.304,114.161,22.324,114.178);
@@ -97,13 +98,14 @@ def build(raw_path: Path, output: Path) -> None:
             continue
         if tags.get("service") in {"parking_aisle", "driveway"}:
             continue
-        oneway = tags.get("oneway", "yes" if tags.get("junction") == "roundabout" else "no")
+        oneway = tags.get("oneway", "yes" if tags.get("junction") == "roundabout"
+                          or tags["highway"] == "motorway" else "no")
         for index, (a, b) in enumerate(zip(ids, ids[1:])):
             pa, pb = points[a], points[b]
             if not all(top_left[0] <= p[0] <= bottom_right[0] and top_left[1] <= p[1] <= bottom_right[1] for p in (pa, pb)):
                 continue
             length = math.dist(pa, pb)
-            if length < 0.5:
+            if length == 0:
                 continue
             pairs = [(a, b)] if oneway in {"yes", "1", "true"} else [(b, a)] if oneway == "-1" else [(a, b), (b, a)]
             for start, end in pairs:
@@ -169,7 +171,7 @@ def build(raw_path: Path, output: Path) -> None:
     nodes = {k: v for k, v in nodes.items() if k in largest}
     edges = [e for e in edges if e["a"] in largest and e["b"] in largest]
     result = {
-        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-2").hexdigest()[:12],
+        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-3").hexdigest()[:12],
         "source": "OpenStreetMap contributors", "license": "ODbL-1.0",
         "downloaded": dt.datetime.now(dt.timezone.utc).isoformat(),
         "origin": [LAT, LON], "bounds": top_left + bottom_right,
@@ -177,6 +179,7 @@ def build(raw_path: Path, output: Path) -> None:
         "restrictions": restrictions, "unsupported_restrictions": omitted,
         "conditional_notes": conditional_notes,
         "source_timestamp": source.get("osm3s", {}).get("timestamp_osm_base"),
+        "supplemental_source_timestamp": source.get("supplemental_osm3s", {}).get("timestamp_osm_base"),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

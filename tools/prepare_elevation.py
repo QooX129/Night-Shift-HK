@@ -113,6 +113,20 @@ def building_height(tags):
     return 18, "estimated-default-18m"
 
 
+def road_layer_offset(edge):
+    try:
+        layer = int(edge["layer"])
+    except (TypeError, ValueError):
+        layer = 0
+    bridge = edge["bridge"] not in ("no", "0", "")
+    tunnel = edge["tunnel"] not in ("no", "0", "", "building_passage")
+    if bridge:
+        return max(1, layer) * 6
+    if tunnel:
+        return min(-1, layer) * 6
+    return layer * 6
+
+
 def build(refresh=False):
     document = json.loads((ROOT / "data/district.json").read_text())
     cache = ROOT / "data/elevation.json"
@@ -135,10 +149,7 @@ def build(refresh=False):
     for n, edges in incident.items():
         offsets = []
         for e in edges:
-            layer = int(e["layer"]) if e["layer"].lstrip("-").isdigit() else 0
-            bridge = e["bridge"] not in ("no", "0", "")
-            tunnel = e["tunnel"] not in ("no", "0", "", "building_passage")
-            offsets.append(max(1, layer) * 6 if bridge else min(-1, layer) * 6 if tunnel else 0)
+            offsets.append(road_layer_offset(e))
         heights[n] = sample(ground, nodes[n]) + sum(offsets) / len(offsets)
     # Shared graph nodes guarantee ramp continuity. Bound grades to 12%; lower
     # high endpoints instead of inventing physical jumps at bridge/tunnel tags.

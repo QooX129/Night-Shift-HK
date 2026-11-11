@@ -1,5 +1,5 @@
-import { RoadNetwork, project } from "./physics.mjs?v=parabolic-steering-1";
-import { surfacePose, surfaceSegments } from "./elevation.mjs";
+import { RoadNetwork, project } from "./physics.mjs?v=tunnel-clearance-1";
+import { surfacePose, surfaceSegments } from "./elevation.mjs?v=tunnel-clearance-1";
 import { straightJoin } from "./straight-lines.mjs";
 
 const mapLines = new WeakMap();
@@ -75,10 +75,12 @@ export class CollisionLines {
         ? (roads.elevation.node_heights[edge.b] - roads.elevation.node_heights[edge.a])
           / Math.hypot(roads.nodes[edge.b][0] - roads.nodes[edge.a][0],
             roads.nodes[edge.b][1] - roads.nodes[edge.a][1]) : 0;
-      const curved = profile && profile.some(value => Math.abs(value - grade) > 1e-9);
-      const steps = Math.max(1, Math.ceil(length / 2), curved ? surfaceSegments(roads, edge, a, b).length : 1);
-      for (let i = 0; i < steps; i++) {
-        const start = pointAt(a, b, i / steps), end = pointAt(a, b, (i + 1) / steps);
+      const curved = !!roads.elevation?.tunnel_profiles?.[edge.id]
+        || (profile && profile.some(value => Math.abs(value - grade) > 1e-9));
+      const steps = Math.max(1, Math.ceil(length / 2));
+      const segments = curved ? surfaceSegments(roads, edge, a, b)
+        : Array.from({ length: steps }, (_, i) => [pointAt(a, b, i / steps), pointAt(a, b, (i + 1) / steps)]);
+      for (const [start, end] of segments) {
         let intervals = rectangleInterval(start, end, bounds);
         if (!intervals.length) continue;
         if (border) intervals = intervals.flatMap(([low, high]) =>
@@ -155,6 +157,8 @@ export class CollisionLines {
           && straightJoin(points, candidate.b));
         if (next.length !== 1) break;
         const candidate = next[0];
+        if (roads.elevation?.road_junctions?.[line.edge.id]
+            || roads.elevation?.road_junctions?.[candidate.edge.id]) break;
         const height = (edge, p) => surfacePose(roads, edge, { x: p[0], y: p[1] }, 0).height;
         const h0 = line.heights?.[0] ?? height(line.edge, line.a);
         const h1 = line.heights?.[1] ?? height(line.edge, line.b);
@@ -169,6 +173,13 @@ export class CollisionLines {
               * project({ x: p[0], y: p[1] }, line.a, candidate.b).t)) > .001)
             || Math.abs(height(candidate.edge, pointAt(candidate.a, candidate.b, .5))
               - (h1 + h2) / 2) > .001) break;
+        const nx = -(candidate.b[1] - line.a[1]) / length * COLLISION_LINE_WIDTH / 2;
+        const ny = (candidate.b[0] - line.a[0]) / length * COLLISION_LINE_WIDTH / 2;
+        if ([line.a, line.b, candidate.b].some(p => [-1, 1].some(side => {
+          const point = [p[0] + nx * side, p[1] + ny * side];
+          const expected = h0 + (h2 - h0) * project({ x: point[0], y: point[1] }, line.a, candidate.b).t;
+          return Math.abs(height(line.edge, point) - expected) > .0005;
+        }))) break;
         line.b = candidate.b;
         line.heights = [h0, h2];
         points.push(candidate.b);

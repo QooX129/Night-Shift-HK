@@ -47,13 +47,22 @@ Government data; they are **not relicensed as ODbL or MIT**.
 ## OSM sources and estimates
 
 © OpenStreetMap contributors, ODbL-1.0, retained bounded `source.osm.json`.
+The original extract is from 2026-10-26; motorway and trunk roads, including
+their link roads, were supplemented from OSM on 2026-11-11. The supplemental
+timestamp is recorded separately in the source and district packages.
+All supported, accessible roads in the largest connected component are
+drivable, including elevated flyovers. Nonzero-length OSM connector segments
+are retained even when shorter than 0.5 m, so adjacent roads remain connected.
+Some flyover components whose connections lie outside the district bounds are
+still excluded; the game does not invent connections across the map boundary.
 Building footprints are matched to original way IDs. `height` tags are used as
 tagged real-world claims, **not independently verified measurements**.
 `building:levels × 3.2 m` and the 18 m fallback are separate estimate categories.
 No building's height is randomized in the elevation view.
 
 Outside the pilot, road profiles are estimated from a 30 m neighborhood lower
-envelope of the DTM plus 6 m per bridge/tunnel OSM layer. Shared graph-node
+envelope of the DTM plus 6 m per nonzero OSM road layer (and at least 6 m for
+bridge/tunnel tags). Shared graph-node
 heights and grade-bounded propagation ensure continuous ramps, including reverse
 edges. A single DTM cannot establish ground under a flyover: reconstructed ground
 and underpass clearances must not be described as measured.
@@ -62,9 +71,20 @@ profiles. Two-neighbor continuations within a 60-degree bend use weighted
 harmonic-mean endpoint grades; extrema, sharp bends and multi-road junctions
 use zero grade. Reverse edges use the same physical profile. No smoothing
 crosses disconnected graph nodes, even at coincident map coordinates.
+At map load, independent tunnel and surface footprints are checked using their
+estimated widths. Where they overlap, the tunnel floor is lowered to at least
+6.05 m below a conservative bound on the surface road: 5 m for the estimated
+tunnel interior, 1 m cover, and 5 cm for mesh interpolation. The bound includes
+connected junction owners and may lower a tunnel more than strictly necessary.
+Connected portal approach segments on the same ground way are exempt when they
+start within 25 m of the portal along the connected network; building passages
+are not deep tunnels.
+Smooth piecewise ramps aim for a 12% local grade, but may be steeper near fixed
+portal heights. Shared tunnel nodes can be lowered; original package heights and
+the official pilot model geometry remain unchanged on disk. A junction owner
+overriding a corrected tunnel is reported as an unresolved warning.
 The source preparation's 12% bound applies to average segment grade; the cubic
-profile's local grade can exceed that average. Endpoint elevations and source
-model geometry are not altered. Python exports the profiles to the browser so
+profile's local grade can exceed that average. Python exports the profiles to the browser so
 taxi pitch, slope forces, validation and rendered surfaces share the equations.
 Matching also rejects overlapping fork surfaces differing by more than 0.35 m
 at the car's centre; actual level changes must follow continuous shared-node ramps.
@@ -81,7 +101,11 @@ Terrain is visually carved around estimated ground roads and faded in tunnels.
 Cars use existing swept 2D road-corridor containment on their current surface;
 unconnected crossings never authorize a level switch. Decks support the car by
 surface constraint, not rigid-body simulation. Buildings/pillars are not surveyed
-3D solid colliders. Some non-pilot clearances may still be inaccurate.
+3D solid colliders. These computed clearances are not surveyed tunnel depths.
+The width audit reports two closely spaced, disconnected carriageway pairs
+whose estimated widths cannot satisfy the normal separation margin without
+falling below the minimum drivable width; they remain explicitly recorded in
+`road-widths.json`, not silently merged.
 
 ## Rollout and validation
 

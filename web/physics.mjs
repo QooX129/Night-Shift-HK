@@ -1,4 +1,4 @@
-import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=parabolic-steering-1";
+import { surfacePose, slopeSpeedLimit } from "./elevation.mjs?v=tunnel-clearance-1";
 import { roadWidth } from "./road-width.mjs";
 import { colliderSegments } from "./straight-lines.mjs";
 

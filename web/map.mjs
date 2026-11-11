@@ -1,10 +1,11 @@
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=parabolic-steering-1";
 import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=parabolic-steering-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=tunnel-clearance-1";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { visualStream } from "./map-stream.mjs";
 import { SpatialGrid, pointBounds } from "./spatial-grid.mjs";
+import { roadLayer, isElevatedRoad, isTunnelRoad } from "./elevation.mjs?v=tunnel-clearance-1";
 
 export const TAXI_ICON_MIN_LENGTH = { map: 20, minimap: 20 };
 export const MAP_TILE_PIXELS = 256;
@@ -84,12 +85,19 @@ export class MapView {
       c.fill(); c.stroke();
     }
     c.lineCap = "round"; c.lineJoin = "round";
-    for (const border of [true, false]) {
-      for (const e of this.roadIndex.query(bounds)) {
+    const levels = new Map();
+    for (const edge of this.roadIndex.query(bounds)) {
+      const layer = roadLayer(edge) || (isElevatedRoad(edge) ? 1
+        : isTunnelRoad(edge) && edge.tunnel !== "building_passage" ? -1 : 0);
+      if (!levels.has(layer)) levels.set(layer, []);
+      levels.get(layer).push(edge);
+    }
+    for (const level of [...levels.keys()].sort((a, b) => a - b)) {
+      for (const border of [true, false]) for (const e of levels.get(level)) {
         const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
-        const major = ["primary", "secondary"].includes(e.kind);
+        const major = ["motorway", "trunk", "primary", "secondary"].includes(e.kind);
         c.lineWidth = roadWidth(this.data.driving, e) + (border ? .2 : 0);
-        c.strokeStyle = border ? "#17292d" : e.layer !== "0" ? "#52605b" : major ? "#4b5955" : "#3b504f";
+        c.strokeStyle = border ? "#17292d" : level !== 0 ? "#52605b" : major ? "#4b5955" : "#3b504f";
         c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
       }
     }

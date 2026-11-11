@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MIN_WIDTH = 2.2
 GAP = 0.3
 DEFAULT_WIDTHS = {
+    "motorway": 12.8, "trunk": 12.8, "motorway_link": 3.2, "trunk_link": 3.2,
     "primary": 12.8, "secondary": 12, "tertiary": 6.4,
     "unclassified": 5.6, "residential": 5.6, "living_street": 3,
     "service": 3, "primary_link": 3.2, "secondary_link": 3.2, "tertiary_link": 3.2,
@@ -31,7 +32,7 @@ def tagged_width(tags: dict) -> tuple[float, str]:
     kind = tags["highway"]
     width = DEFAULT_WIDTHS.get(kind, 5.6)
     if tags.get("oneway") in {"yes", "1", "true", "-1"}:
-        width = 6.4 if kind in {"primary", "secondary"} else 3.2
+        width = 6.4 if kind in {"motorway", "trunk", "primary", "secondary"} else 3.2
     return width, "estimated-road-class"
 
 

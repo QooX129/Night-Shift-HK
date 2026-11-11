@@ -5,7 +5,7 @@ import unittest
 from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
 from game import Game, RuleError, Session
 from roads import DRIVING, Edge, RoadMap, project
-from tools.prepare_elevation import building_height
+from tools.prepare_elevation import building_height, road_layer_offset
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,6 +111,20 @@ class ElevationTests(unittest.TestCase):
         for value in ("NaN", "-1", "bad", "10000"):
             self.assertEqual(building_height({"height": value}), (18, "estimated-default-18m"))
 
+    def test_road_layer_offsets_apply_without_bridge_or_tunnel_tags(self):
+        edge = {"layer": "1", "bridge": "no", "tunnel": "no"}
+        self.assertEqual(road_layer_offset(edge), 6)
+        edge["layer"] = "2"
+        self.assertEqual(road_layer_offset(edge), 12)
+        edge["layer"] = "-1"
+        self.assertEqual(road_layer_offset(edge), -6)
+        edge.update(layer="0", bridge="yes")
+        self.assertEqual(road_layer_offset(edge), 6)
+        edge.update(bridge="no", tunnel="yes")
+        self.assertEqual(road_layer_offset(edge), -6)
+        edge.update(tunnel="building_passage")
+        self.assertEqual(road_layer_offset(edge), 0)
+
     def test_packaged_curves_preserve_unblended_heights_and_all_junctions_connect(self):
         roads = RoadMap(ROOT / "data/district.json")
         node_surfaces = {}
@@ -121,7 +135,8 @@ class ElevationTests(unittest.TestCase):
                 point = tuple(a[i] + (b[i] - a[i]) * t for i in range(2))
                 height = roads.surface(edge, point, 0)["height"]
                 self.assertTrue(math.isfinite(height), edge.id)
-                if edge.id not in roads.elevation["road_junctions"]:
+                if (edge.id not in roads.elevation["road_junctions"]
+                        and edge.id not in roads.elevation["tunnel_profiles"]):
                     self.assertGreaterEqual(height, low - 1e-9, edge.id)
                     self.assertLessEqual(height, high + 1e-9, edge.id)
             for node, point in ((edge.a, a), (edge.b, b)):
@@ -195,6 +210,18 @@ class ElevationTests(unittest.TestCase):
         payload["speed"] = roads.speed_limit(edge, point, heading)
         game.update_position(session, payload)
         self.assertEqual(session.speed, payload["speed"])
+
+    def test_gascoigne_flyover_crosses_drivable_nathan_road(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        upper = roads.edges["452590572:1:1172166368"]
+        lower = roads.edges["102506132:4:4353485231"]
+        point = (174.75, 539.13)
+        self.assertEqual((upper.kind, upper.layer, upper.bridge), ("trunk", "1", "yes"))
+        self.assertGreater(roads.surface(upper, point, 0)["height"]
+                           - roads.surface(lower, point, 0)["height"], 5.65)
+        for current, other in ((upper, lower), (lower, upper)):
+            self.assertTrue(roads.body_fits(point, roads.angle(current), current))
+            self.assertNotIn(other.id, {edge.id for edge in roads.corridor_edges(point, current)})
 
 
 if __name__ == "__main__":

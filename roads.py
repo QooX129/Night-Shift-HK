@@ -9,7 +9,8 @@ import math
 import warnings
 from pathlib import Path
 from typing import TypedDict
-from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
+from elevation import surface_pose, slope_speed_limit
+from tunnel_clearance import correct_tunnel_clearance
 
 
 Point = tuple[float, float]
@@ -43,12 +44,13 @@ class DrivingConfig(TypedDict):
 
 DRIVING: DrivingConfig = {
     "taxi_radius": 2.5,
-    "taxi_length": 3.7,
-    "taxi_width": 1.7,
+    "taxi_length": 2.9,
+    "taxi_width": 1.5,
     "max_speed": 160 / 3.6,
     "acceleration": 7,
     "upgraded_acceleration": 9.1,
-    "widths": {"primary": 16, "secondary": 14, "tertiary": 12, "unclassified": 10,
+    "widths": {"motorway": 16, "trunk": 16, "motorway_link": 10, "trunk_link": 10,
+               "primary": 16, "secondary": 14, "tertiary": 12, "unclassified": 10,
                "residential": 10, "living_street": 8, "service": 8,
                "primary_link": 10, "secondary_link": 10, "tertiary_link": 10},
 }
@@ -132,11 +134,14 @@ class RoadMap:
         self.document["edges"] = [asdict(e) for e in self.edges.values()]
         self.max_radius = max(self.radius(edge) for edge in self.edges.values())
         if self.elevation:
-            self.elevation["road_profiles"] = road_profiles(self.nodes, self.elevation["node_heights"], list(self.edges.values()))
-            self.elevation["road_junctions"] = road_junctions(
-                self.nodes, list(self.edges.values()), self.elevation["road_profiles"], DRIVING["widths"])
+            heights, profiles, junctions, pieces = correct_tunnel_clearance(
+                self.nodes, self.elevation["node_heights"], list(self.edges.values()), DRIVING["widths"])
+            self.elevation["node_heights"] = heights
+            self.elevation["road_profiles"] = profiles
+            self.elevation["road_junctions"] = junctions
+            self.elevation["tunnel_profiles"] = pieces
         self.document["driving"] = DRIVING
-        self.version += "-manual-3" + ("-elevation-junctions-2" if self.elevation else "") + width_version
+        self.version += "-manual-3" + ("-tunnel-clearance-1" if self.elevation else "") + width_version
         self.document["version"] = self.version
         self.outgoing: dict[str, list[Edge]] = {}
         self.neighbors: dict[str, set[str]] = {}
@@ -163,7 +168,8 @@ class RoadMap:
     def surface(self, edge: Edge, point: Point, heading: float) -> dict:
         return surface_pose(self.nodes, self.elevation["node_heights"] if self.elevation else None,
                             edge, point, heading, self.elevation.get("road_profiles") if self.elevation else None,
-                            self.elevation.get("road_junctions") if self.elevation else None)
+                            self.elevation.get("road_junctions") if self.elevation else None,
+                            self.elevation.get("tunnel_profiles") if self.elevation else None)
 
     def speed_limit(self, edge: Edge, point: Point, heading: float) -> float:
         return slope_speed_limit(DRIVING["max_speed"], self.surface(edge, point, heading)["grade"])

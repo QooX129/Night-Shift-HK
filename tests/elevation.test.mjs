@@ -2,7 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { RoadNetwork, stepCar } from "../web/physics.mjs";
-import { surfacePose, surfaceSegments, slopeSpeedLimit, terrainHeight } from "../web/elevation.mjs";
+import { surfacePose, surfaceSegments, slopeSpeedLimit, terrainHeight,
+  isElevatedRoad, isTunnelRoad, isGroundRoad } from "../web/elevation.mjs";
+
+test("OSM layer-only roads are rendered on their own vertical level", () => {
+  assert.equal(isElevatedRoad({ layer: "1", bridge: "no", tunnel: "no" }), true);
+  assert.equal(isTunnelRoad({ layer: "-1", bridge: "no", tunnel: "no" }), true);
+  assert.equal(isGroundRoad({ layer: "0", bridge: "no", tunnel: "no" }), true);
+  assert.equal(isElevatedRoad({ layer: "0", bridge: "yes", tunnel: "no" }), true);
+  assert.equal(isTunnelRoad({ layer: "0", bridge: "no", tunnel: "building_passage" }), true);
+});
 
 test("side roads conform across the main-road width with continuous blending and accurate grades", () => {
   const roads = { nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
@@ -73,6 +82,27 @@ test("short steep transitions refine the mesh to a five-millimetre vertical erro
   for (const [a, b] of segments) {
     for (const t of [.25, .5, .75]) {
       assert.ok(Math.abs(at(a[0] + (b[0] - a[0]) * t) - (at(a[0]) * (1 - t) + at(b[0]) * t)) <= .005);
+    }
+  }
+});
+
+test("tunnel clearance profiles share smooth heights, reverse grades and mesh subdivisions", () => {
+  const roads = { nodes: { a: [0, 0], b: [100, 0] },
+    elevation: { node_heights: { a: 5, b: 5 }, road_profiles: { t: [0, 0], reverse: [0, 0] },
+      tunnel_profiles: { t: [[0, 5], [.35, 1], [.65, 1], [1, 5]],
+        reverse: [[0, 5], [.35, 1], [.65, 1], [1, 5]] } } };
+  const tunnel = { id: "t", a: "a", b: "b", width: 10 };
+  const reverse = { id: "reverse", a: "b", b: "a", width: 10 };
+  const at = (edge, x) => surfacePose(roads, edge, { x, y: 0 }, 0);
+  for (let x = 0; x <= 100; x += .5) {
+    assert.ok(Math.abs(at(tunnel, x).height - at(reverse, x).height) < 1e-10);
+    assert.ok(Math.abs(at(tunnel, x).grade - at(reverse, x).grade) < 1e-10);
+  }
+  for (const [a, b] of surfaceSegments(roads, tunnel)) {
+    for (const t of [.25, .5, .75]) {
+      const x = a[0] + (b[0] - a[0]) * t;
+      assert.ok(Math.abs(at(tunnel, x).height - (at(tunnel, a[0]).height * (1 - t)
+        + at(tunnel, b[0]).height * t)) <= .0021);
     }
   }
 });

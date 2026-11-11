@@ -360,6 +360,11 @@ turn controls and disconnected levels are preserved; minor-road heights near
 the junction may adjust to meet the main surface.
 The estimated source profiles limit average segment grades to 12%;
 local curved grades can be steeper, with the speed penalty still capped at 12%.
+At map load, underground road profiles are lowered beneath overlapping separate
+surface roads, allowing 5 m tunnel height plus at least 1 m estimated cover.
+Connected portal approaches remain exempt; ramps are smoothed where possible and
+may be steeper where a fixed portal leaves insufficient distance. These are
+geometry estimates, not measured tunnel depths.
 Road decks, bridge/tunnel shells, markings, collision outlines and GPS guides
 sample the same profile. Curved decks use at most 2 m steps, refined where needed
 to bound vertical interpolation error to 5 mm. Profiles and geometry are prepared
@@ -370,6 +375,10 @@ No rigid-body jumps, suspension or rollover physics are added. Cars remain on th
 connected road surface, never switching to an unconnected bridge at a crossing.
 Solid bridge decks and estimated tunnel floors/walls/ceilings render separately;
 obstructing structures fade, and terrain fades for readable tunnel interiors.
+The OSM graph includes motorway and trunk roads and their links, including
+drivable flyovers such as Gascoigne Road Flyover. Short OSM connectors are
+retained; the 2D map draws higher road layers above lower ones. Flyover heights
+outside the official pilot remain estimates, not measured clearances.
 These are constrained arcade road-surface collisions, not surveyed 3D building/
 pillar collision meshes. Building collision still relies on staying on roads.
 
@@ -381,6 +390,7 @@ To reproduce the district package (map-build dependency only):
 
 ```sh
 .venv/bin/python -m pip install -r requirements-map.txt
+.venv/bin/python tools/prepare_map.py --download
 .venv/bin/python tools/prepare_elevation.py --refresh
 .venv/bin/python tools/prepare_pilot.py
 ```

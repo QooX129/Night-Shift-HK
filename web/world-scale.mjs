@@ -1,7 +1,7 @@
 // Metre-based visual estimates, not surveyed dimensions. Road widths and the
 // taxi footprint come from the server; gameplay overlays are intentionally separate.
 export const WORLD_SCALE = Object.freeze({
-  taxiHeight: 1.5,
+  taxiHeight: 1.0,
   taxiSignHeight: .12,
   wheelRadius: .31,
   wheelWidth: .19,

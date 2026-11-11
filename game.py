@@ -187,7 +187,8 @@ class Game:
                 and e.bridge == "no"
                 and e.tunnel == "no"
                 and e.kind
-                not in {"service", "primary_link", "secondary_link", "tertiary_link"}
+                not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
+                        "primary_link", "secondary_link", "tertiary_link"}
             ]
             edge = min(candidates, key=lambda e: math.dist((x, y), self.midpoint(e)))
             self.stops[key] = Stop(key, name, zh, edge.id, self.midpoint(edge))
@@ -201,7 +202,8 @@ class Game:
             and e.bridge == "no"
             and e.tunnel == "no"
             and e.kind
-            not in {"service", "primary_link", "secondary_link", "tertiary_link"}
+            not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
+                    "primary_link", "secondary_link", "tertiary_link"}
         ]
         for edge in random.Random(29).sample(street_edges, min(96, len(street_edges))):
             key = f"street-{edge.id}"

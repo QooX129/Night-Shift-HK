@@ -1,5 +1,5 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=narrow-assist-2";
-import { MapView } from "./map.mjs?v=parabolic-steering-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=tunnel-clearance-1";
+import { MapView } from "./map.mjs?v=tunnel-clearance-1";
 import { en, zh } from "./i18n.mjs?v=boundary-recovery-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
@@ -530,7 +530,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=parabolic-steering-1");
+      const { Map3DView } = await import("./map3d.mjs?v=tunnel-clearance-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }

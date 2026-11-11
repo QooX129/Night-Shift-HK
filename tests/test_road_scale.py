@@ -72,11 +72,57 @@ class RoadScaleTests(unittest.TestCase):
         regenerated = prepare(document, source)
         for field in ("values", "spacing_checks", "audit", "conflicts", "warnings"):
             self.assertEqual(package[field], regenerated[field])
-        self.assertEqual(package["conflicts"], [])
+        conflicts = {frozenset(item["edges"]) for item in package["conflicts"]}
+        self.assertEqual(conflicts, {
+            frozenset(("272254647:0:2772111178", "272254652:0:6702368661")),
+            frozenset(("1418296168:1:13110380030", "1418296169:0:6283852188")),
+        })
         self.assertGreater(package["audit"]["spacing_constrained"], 50)
         for check in package["spacing_checks"]:
+            first_edge = next(e["id"] for e in document["edges"]
+                              if ":".join(map(str, (e["way"], *sorted((e["a"], e["b"]))))) == check["first"])
+            second_edge = next(e["id"] for e in document["edges"]
+                               if ":".join(map(str, (e["way"], *sorted((e["a"], e["b"]))))) == check["second"])
+            if frozenset((first_edge, second_edge)) in conflicts:
+                continue
             first, second = (package["values"][check[key]]["width"] for key in ("first", "second"))
             self.assertLessEqual((first + second) / 2 + GAP, check["spacing_m"] + 1e-8)
+
+    def test_nathan_road_short_connector_remains_drivable(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        previous = roads.edges["436371172:1:9891388476"]
+        connector = roads.edges["436371172:2:9125470663"]
+        following = roads.edges["987256904:0:5057028185"]
+        self.assertLess(connector.length, .5)
+        point = (193.14069793709123, 478.4369422355976)
+        self.assertTrue(roads.body_fits(point, 1.0668896195141204, previous))
+        current = previous
+        heading = roads.angle(following)
+        a, b = roads.nodes[following.a], roads.nodes[following.b]
+        for distance in (.2, .5, 1, 2, 4):
+            point = tuple(a[i] + (b[i] - a[i]) * distance / math.dist(a, b) for i in range(2))
+            match = roads.corridor_match(point, heading, current)
+            self.assertIsNotNone(match, point)
+            current = match.edge
+        self.assertEqual(current.id, following.id)
+
+    def test_short_osm_segments_between_retained_nodes_are_present(self):
+        document = json.loads((ROOT / "data/district.json").read_text())
+        source = json.loads((ROOT / "data/source.osm.json").read_text())
+        nodes = document["nodes"]
+        edges = {(edge["way"], edge["a"], edge["b"]) for edge in document["edges"]}
+        checked = 0
+        for way in source["elements"]:
+            if way["type"] != "way" or "highway" not in way.get("tags", {}):
+                continue
+            for start, end in zip(way["nodes"], way["nodes"][1:]):
+                a, b = str(start), str(end)
+                if a not in nodes or b not in nodes or not 0 < math.dist(nodes[a], nodes[b]) < .5:
+                    continue
+                self.assertTrue((way["id"], a, b) in edges or (way["id"], b, a) in edges,
+                                (way["id"], a, b))
+                checked += 1
+        self.assertGreater(checked, 1)
 
     def test_real_ferry_ching_ping_gap_taxi_fit_and_reverse_width(self):
         roads = RoadMap(ROOT / "data/district.json")

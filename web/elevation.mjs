@@ -9,7 +9,28 @@ export function terrainHeight(data, x, y) {
     + ((1 - dx) * grid.values[b] + dx * grid.values[b + 1]) * dy;
 }
 
-function surface(roads, start, end, point, profile) {
+export function roadLayer(edge) {
+  const layer = Number(edge.layer);
+  return Number.isInteger(layer) ? layer : 0;
+}
+
+function hasLevelTag(value) {
+  return value !== undefined && value !== null && !["", "0", "no"].includes(String(value));
+}
+
+export function isElevatedRoad(edge) {
+  return hasLevelTag(edge.bridge) || roadLayer(edge) > 0;
+}
+
+export function isTunnelRoad(edge) {
+  return hasLevelTag(edge.tunnel) || roadLayer(edge) < 0;
+}
+
+export function isGroundRoad(edge) {
+  return !isElevatedRoad(edge) && !isTunnelRoad(edge);
+}
+
+function surface(roads, id, start, end, point, profile) {
   const a = roads.nodes[start], b = roads.nodes[end];
   const heights = roads.elevation.node_heights;
   const za = heights[start], zb = heights[end];
@@ -18,7 +39,18 @@ function surface(roads, start, end, point, profile) {
   const t = Math.max(0, Math.min(1, projection));
   const length = Math.hypot(dx, dy);
   let height = za + (zb - za) * t, grade = (zb - za) / length;
-  if (profile) {
+  const pieces = roads.elevation.tunnel_profiles?.[id];
+  if (pieces) {
+    for (let i = 1; i < pieces.length; i++) {
+      const [t0, z0] = pieces[i - 1], [t1, z1] = pieces[i];
+      if (t <= t1) {
+        const u = (t - t0) / (t1 - t0);
+        height = z0 + (z1 - z0) * u * u * (3 - 2 * u);
+        grade = (z1 - z0) * 6 * u * (1 - u) / ((t1 - t0) * length);
+        break;
+      }
+    }
+  } else if (profile) {
     const m0 = profile[0] * length, m1 = profile[1] * length, delta = zb - za;
     height = za + m0 * t + (3 * delta - 2 * m0 - m1) * t * t + (m0 + m1 - 2 * delta) * t * t * t;
     grade = (m0 + 2 * (3 * delta - 2 * m0 - m1) * t + 3 * (m0 + m1 - 2 * delta) * t * t) / length;
@@ -28,7 +60,7 @@ function surface(roads, start, end, point, profile) {
 }
 
 function blendedSurface(roads, id, start, end, point, profile) {
-  let { height, gx, gy } = surface(roads, start, end, point, profile);
+  let { height, gx, gy } = surface(roads, id, start, end, point, profile);
   const ownersByPriority = new Map();
   for (const owner of roads.elevation.road_junctions?.[id] ?? []) {
     const a = roads.nodes[owner.a], b = roads.nodes[owner.b];
@@ -45,7 +77,11 @@ function blendedSurface(roads, id, start, end, point, profile) {
     const closest = ownersByPriority.get(priority);
     if (closest.gap >= 8) continue;
     const { gap, distance, ox, oy, owner } = closest;
-    const main = surface(roads, owner.a, owner.b, point, owner.profile);
+    // A fully covered intermediate owner already includes its own parent.
+    if ([...ownersByPriority].some(([otherPriority, other]) => otherPriority > priority && other.gap === 0
+        && (roads.elevation.road_junctions?.[other.owner.id] ?? []).some(parent => parent.id === owner.id)))
+      continue;
+    const main = blendedSurface(roads, owner.id, owner.a, owner.b, point, owner.profile);
     const t = gap / 8, weight = 1 - t * t * (3 - 2 * t), derivative = -6 * t * (1 - t) / 8;
     const wx = distance ? derivative * ox / distance : 0, wy = distance ? derivative * oy / distance : 0;
     gx = gx * (1 - weight) + main.gx * weight + (main.height - height) * wx;
@@ -77,9 +113,23 @@ export function surfaceSegments(roads, edge, a = roads.nodes[edge.a], b = roads.
     // Linear interpolation error is at most max(|h''|) * step² / 8.
     steps = Math.max(1, Math.ceil(span / 2), Math.ceil(Math.sqrt(curvature / .04) * span / length));
   }
-  const segments = Array.from({ length: steps }, (_, i) => [i / steps, (i + 1) / steps].map(t =>
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]));
-  if (!roads.elevation?.road_junctions?.[edge.id]) return segments;
+  const fractions = Array.from({ length: steps + 1 }, (_, i) => i / steps);
+  const pieces = roads.elevation?.tunnel_profiles?.[edge.id];
+  if (pieces) {
+    const dx = end[0] - start[0], dy = end[1] - start[1];
+    const projection = p => ((p[0] - start[0]) * dx + (p[1] - start[1]) * dy) / (length * length);
+    const first = projection(a), last = projection(b);
+    if (Math.abs(last - first) > 1e-12) {
+      for (const [t] of pieces) {
+        const fraction = (t - first) / (last - first);
+        if (fraction > 0 && fraction < 1) fractions.push(fraction);
+      }
+    }
+  }
+  fractions.sort((a, b) => a - b);
+  const point = t => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  const segments = fractions.slice(1).map((t, i) => [point(fractions[i]), point(t)]);
+  if (!pieces && !roads.elevation?.road_junctions?.[edge.id]) return segments;
   const radius = (edge.width ?? roads.data?.driving?.widths?.[edge.kind] ?? 10) / 2;
   const nx = -(end[1] - start[1]) / length, ny = (end[0] - start[0]) / length;
   const refined = [];
