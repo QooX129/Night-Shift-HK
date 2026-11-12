@@ -461,14 +461,49 @@ strong,
         overflow-y: auto
     }
 
+    .view-3d .minimap {
+        position: fixed;
+        bottom: 32px
+    }
+}
+
+@media (min-width: 1200px) and (min-height: 501px) {
     .view-3d .dashboard {
-        left: 330px;
-        right: 30px;
-        width: auto;
-        max-width: 700px;
-        min-width: 0;
-        transform: none;
-        gap: 18px
+        width: min(700px, calc(100% - var(--minimap-width) - var(--minimap-width) - 92px))
+    }
+}
+
+@media (min-width: 801px) and (max-width: 1199px) {
+    .view-3d .dashboard {
+        bottom: calc(var(--minimap-height) + 48px)
+    }
+}
+
+@media (min-width: 801px) and (pointer: coarse) {
+    .view-3d .touch-controls {
+        bottom: calc(var(--minimap-height) + 48px)
+    }
+}
+
+@media (min-width: 801px) and (max-width: 1199px) and (pointer: coarse) {
+    .view-3d .dashboard {
+        bottom: calc(var(--minimap-height) + 142px)
+    }
+}
+
+@media (min-width: 801px) and (max-height: 500px) {
+    .view-3d .minimap {
+        width: min(var(--minimap-width), 210px, calc((100vw - 422px) / 2));
+        height: auto;
+        aspect-ratio: 10 / 7
+    }
+
+    .view-3d .dashboard {
+        bottom: 40px
+    }
+
+    .view-3d .touch-controls {
+        bottom: 145px
     }
 }
 
@@ -867,7 +902,7 @@ blockquote {
 .notice {
     position: absolute;
     top: 103px;
-    left: 52%;
+    left: 50%;
     transform: translateX(-50%);
     padding: 11px 18px;
     background: #283029ed;
@@ -1483,9 +1518,9 @@ dialog p {
     }
 
     .dashboard {
-        left: auto;
-        right: 15px;
-        transform: none;
+        left: 50%;
+        right: auto;
+        transform: translateX(-50%);
         width: min(330px, calc(100% - 30px));
         bottom: 40px;
         gap: 12px;

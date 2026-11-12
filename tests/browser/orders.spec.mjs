@@ -307,6 +307,7 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
       expect(positions.door.right).toBeLessThanOrEqual(positions.dashboard.right);
       expect(positions.reading.left).toBeGreaterThanOrEqual(positions.dial.right);
       expect(positions.reading.right).toBeLessThanOrEqual(positions.dashboard.right);
+      expect(Math.abs((positions.dashboard.left + positions.dashboard.right) / 2 - size.width / 2)).toBeLessThanOrEqual(1);
       if (size.width === 1280) expect(positions.dial.width).toBeGreaterThan(112);
       if (size.width === 320) expect(positions.dial.width).toBeGreaterThan(78);
     }
@@ -423,13 +424,62 @@ test("reverse indicator does not move the dashboard or speedometer", async ({ pa
 });
 
 test("3D dashboard and minimap fit without overlapping", async ({ page }) => {
-  await page.setViewportSize({ width: 900, height: 720 });
   await dispatchFixture(page);
   await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
-  const dashboard = await page.locator(".dashboard").boundingBox();
-  expect(dashboard.x).toBeGreaterThanOrEqual(0);
-  expect(dashboard.x + dashboard.width).toBeLessThanOrEqual(900);
+  for (const width of [801, 900, 1199, 1200, 1280, 1600]) {
+    await page.setViewportSize({ width, height: 720 });
+    const positions = await page.evaluate(() => {
+      const bounds = selector => {
+        const { left, right, top, bottom } = document.querySelector(selector).getBoundingClientRect();
+        return { left, right, top, bottom };
+      };
+      const notice = document.querySelector("#notice");
+      const wasHidden = notice.hidden;
+      notice.hidden = false;
+      const result = {
+        minimap: bounds("#minimap-panel"),
+        dashboard: bounds(".dashboard"),
+        meter: bounds(".taxi-meter"),
+        digits: bounds("#meter-digits"),
+        speed: bounds(".speed-display"),
+        touchButtons: [...document.querySelectorAll(".touch-controls button")]
+          .filter(button => button.getClientRects().length)
+          .map(button => {
+            const { left, right, top, bottom } = button.getBoundingClientRect();
+            return { left, right, top, bottom };
+          }),
+        roadLabel: bounds(".road-label"),
+        notice: bounds("#notice"),
+      };
+      notice.hidden = wasHidden;
+      return result;
+    });
+    expect(positions.minimap.left).toBe(30);
+    expect(positions.minimap.bottom).toBe(688);
+    expect(Math.abs((positions.dashboard.left + positions.dashboard.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
+    expect(positions.digits.right).toBeLessThanOrEqual(positions.meter.right);
+    expect(positions.speed.right).toBeLessThanOrEqual(positions.dashboard.right);
+    for (const button of positions.touchButtons) {
+      expect(button.bottom).toBeLessThanOrEqual(positions.minimap.top);
+    }
+    if (width >= 1200) {
+      expect(positions.dashboard.left).toBeGreaterThanOrEqual(positions.minimap.right);
+    } else {
+      expect(positions.dashboard.bottom).toBeLessThanOrEqual(positions.minimap.top);
+    }
+    expect(Math.abs((positions.roadLabel.left + positions.roadLabel.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
+    expect(Math.abs((positions.notice.left + positions.notice.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
+  }
+  await page.setViewportSize({ width: 844, height: 390 });
+  const shortMinimap = await page.locator("#minimap-panel").boundingBox();
+  const shortDashboard = await page.locator(".dashboard").boundingBox();
+  const shortDoor = await page.locator("#door").boundingBox();
+  expect(shortMinimap.x).toBe(30);
+  expect(shortMinimap.y + shortMinimap.height).toBe(358);
+  expect(Math.abs(shortDashboard.x + shortDashboard.width / 2 - 422)).toBeLessThanOrEqual(1);
+  expect(shortDashboard.x).toBeGreaterThanOrEqual(shortMinimap.x + shortMinimap.width);
+  expect(shortDoor.y).toBeGreaterThanOrEqual(0);
   await page.setViewportSize({ width: 320, height: 720 });
   const mobileDashboard = await page.locator(".dashboard").boundingBox();
   const minimap = await page.locator("#minimap-panel").boundingBox();
