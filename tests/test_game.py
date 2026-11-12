@@ -1,9 +1,11 @@
 import json
+import itertools
 import math
 from pathlib import Path
 import tempfile
 import unittest
 from dataclasses import replace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -48,6 +50,25 @@ class RoadTests(unittest.TestCase):
         self.assertIsNone(r.route(r.edges["ab"], r.edges["bf"], (1,), set(), {}))
         self.assertIsNone(r.route(r.edges["ab"], r.edges["ce"], (1,), set(), {}))
         self.assertEqual(r.route(r.edges["ab"], r.edges["cd"], (1,), set(), {}), ["ab", "bc", "cd"])
+
+    def test_compressed_route_history_preserves_overlapping_via_restrictions(self):
+        self.data["restrictions"] = [
+            {"from": 1, "to": 4, "via": None, "via_ways": [2, 3], "rule": "only_right_turn"},
+            {"from": 2, "to": 5, "via": None, "via_ways": [3], "rule": "no_left_turn"},
+            {"from": 5, "to": 4, "via": None, "via_ways": [1, 2], "rule": "no_right_turn"},
+        ]
+        roads = self.road_map()
+        ways = (1, 2, 3, 4, 5, 99)
+        for sequence in itertools.product(ways, repeat=4):
+            full = compact = ()
+            for way in sequence:
+                full = roads.history(full, way)
+                compact = roads.route_history(roads.history(compact, way))
+            incoming = replace(roads.edges["ab"], way=sequence[-1])
+            for way in ways:
+                outgoing = replace(roads.edges["bf"], way=way)
+                self.assertEqual(roads.legal(incoming, outgoing, full),
+                                 roads.legal(incoming, outgoing, compact), (sequence, way))
 
     def test_junction_choice_includes_more_than_two_exits(self):
         self.data["nodes"]["g"] = [40, -40]
@@ -131,6 +152,25 @@ class GameTests(unittest.TestCase):
             edge = self.roads.edges[stop.edge]
             self.assertEqual(edge.layer, "0")
             self.assertGreaterEqual(edge.length, 30)
+
+    def test_district_route_avoids_irrelevant_history_explosion(self):
+        start = self.roads.edges[self.game.depot.edge]
+        target = self.roads.edges[self.game.stops["waterloo"].edge]
+        with patch.object(self.roads, "speed_limit", wraps=self.roads.speed_limit) as speed_limit:
+            path = self.roads.route(start, target, (start.way,), set(), {})
+        with patch.object(self.roads, "route_history", side_effect=lambda history: history):
+            with patch.object(self.roads, "speed_limit", wraps=self.roads.speed_limit) as original_speed_limit:
+                original = self.roads.route(start, target, (start.way,), set(), {})
+        self.assertIsNotNone(path)
+        self.assertEqual(path, original)
+        self.assertEqual((path[0], path[-1]), (start.id, target.id))
+        self.assertLess(speed_limit.call_count, 10000)
+        self.assertLess(speed_limit.call_count * 10, original_speed_limit.call_count)
+        history = (start.way,)
+        for current, following in zip(path, path[1:]):
+            edge, next_edge = self.roads.edges[current], self.roads.edges[following]
+            self.assertTrue(self.roads.legal(edge, next_edge, history), (current, following))
+            history = self.roads.history(history, next_edge.way)
 
     def test_vehicle_cap_and_high_speed_path_validation(self):
         edge = next(e for e in self.roads.edges.values() if not e.wrongway and e.length > 100)

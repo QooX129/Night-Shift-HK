@@ -187,13 +187,43 @@ test("touch controls, responsive layout, and visible attribution", async ({ page
   expect(box.y + box.height).toBeLessThanOrEqual(size.height);
   if (testInfo.project.name === "phone") {
     const gas = page.locator("[data-control=gas]");
+    const brake = page.locator("[data-control=brake]");
     await expect(gas).toBeVisible();
+    await expect(gas).toHaveAccessibleName("Accelerator");
+    await expect(brake).toHaveAccessibleName("Brake / reverse");
+    await expect(gas.locator("svg")).toBeVisible();
+    await expect(brake.locator("svg")).toBeVisible();
+    await expect(gas.locator("path").first()).toHaveCSS("fill", "rgba(217, 176, 76, 0.91)");
+    await expect(gas.locator("path").last()).toHaveCSS("stroke", "rgb(24, 36, 45)");
+    await expect(brake.locator("path").first()).toHaveCSS("fill", "rgba(25, 44, 56, 0.91)");
+    await expect(brake.locator("path").last()).toHaveCSS("stroke", "rgb(255, 169, 159)");
+    await expect(gas).toHaveText("");
+    await expect(brake).toHaveText("");
     const pedal = await gas.boundingBox();
-    await page.mouse.move(pedal.x + pedal.width / 2, pedal.y + pedal.height / 2);
-    await page.mouse.down();
+    const brakeBox = await brake.boundingBox();
+    expect(pedal.height).toBeGreaterThan(pedal.width);
+    expect(brakeBox.width).toBeGreaterThan(brakeBox.height);
+    expect(Math.min(pedal.width, brakeBox.height)).toBeGreaterThanOrEqual(44);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart",
+      touchPoints: [{ x: pedal.x + pedal.width / 2, y: pedal.y + pedal.height / 2 }] });
+    await expect(gas).toHaveClass(/pressed/);
     await page.waitForTimeout(700);
-    await page.mouse.up();
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await expect(page.locator("#speed")).not.toHaveText("0");
+    const speed = Number(await page.locator("#speed").textContent());
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart",
+      touchPoints: [{ x: brakeBox.x + brakeBox.width / 2, y: brakeBox.y + brakeBox.height / 2 }] });
+    await expect(brake).toHaveClass(/pressed/);
+    await expect.poll(async () => Number(await page.locator("#speed").textContent())).toBeLessThan(speed);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await cdp.detach();
+    await expect(brake).not.toHaveClass(/pressed/);
+    await page.locator("#language").click();
+    await expect(gas).toHaveAccessibleName("油門");
+    await expect(brake).toHaveAccessibleName("煞車 / 倒車");
+    await expect(gas.locator("svg")).toBeVisible();
+    await expect(brake.locator("svg")).toBeVisible();
   }
   await page.screenshot({ path: testInfo.outputPath("game.png") });
 });

@@ -15,7 +15,7 @@ CITIZEN_RADIUS = 220
 CITIZEN_LIMIT = 100
 CITIZEN_SPAWN_INTERVAL = .5
 CITIZEN_SPAWN_BATCH = 5
-CITIZEN_HAIL_PROBABILITY = 0.05
+CITIZEN_HAIL_PROBABILITY = 0.04
 CITIZEN_HAIL_COOLDOWN = 300
 CITIZEN_HAIL_DISTANCE = 80
 CITIZEN_HAIL_DURATION = (45, 120)
@@ -211,13 +211,31 @@ class Game:
                 key, edge.name, edge.zh, edge.id, self.midpoint(edge)
             )
         self.street_stops = [s for s in self.stops.values() if s.id != "depot"]
+        place_stops = []
+        for place in roads.places:
+            location = tuple(place["point"])
+            edge = min(street_edges, key=lambda e: project(location, roads.nodes[e.a], roads.nodes[e.b])[1])
+            _, distance, fraction = project(location, roads.nodes[edge.a], roads.nodes[edge.b])
+            fraction = max(8 / edge.length, min(1 - 8 / edge.length, fraction))
+            a, b = roads.nodes[edge.a], roads.nodes[edge.b]
+            point = (a[0] + (b[0] - a[0]) * fraction, a[1] + (b[1] - a[1]) * fraction)
+            if distance > 100 or math.dist(location, point) > 100:
+                continue
+            if any(s.name == f"Near {place['name']}" and math.dist(s.point, point) < 40 for s in place_stops):
+                continue
+            stop = Stop(place["id"], f"Near {place['name']}", f"{place['zh']}附近", edge.id, point)
+            self.stops[stop.id] = stop
+            place_stops.append(stop)
+        if roads.places and not place_stops:
+            logger.warning("No named places are close enough to an eligible surface street")
+        self.destination_stops = [*self.street_stops, *place_stops]
         self.incident_ways = sorted(
             {
                 e.way
                 for e in roads.edges.values()
                 if e.kind == "residential"
                 and e.name != "Local road"
-                and all(roads.edges[s.edge].way != e.way for s in self.stops.values())
+                and all(roads.edges[s.edge].way != e.way for s in [*self.street_stops, self.depot])
             }
         )
 
@@ -264,6 +282,7 @@ class Game:
 
     def make_order(self, session: Session, pickup: Stop | None = None) -> Order:
         candidates = session.rng.sample(self.street_stops, len(self.street_stops))
+        destinations = session.rng.sample(self.destination_stops, len(self.destination_stops))
         start = self.roads.edges[session.edge]
         for origin in [pickup] if pickup else candidates:
             edge = self.roads.edges[origin.edge]
@@ -274,7 +293,7 @@ class Game:
             destination = next(
                 (
                     s
-                    for s in candidates
+                    for s in destinations
                     if s.id != origin.id
                     and math.dist(s.point, origin.point) >= 60
                     and self.roads.route(

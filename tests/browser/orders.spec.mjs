@@ -176,6 +176,7 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false) {
       state.boarding = { point: [55, 6], starts: state.elapsed, ends: state.elapsed + 1.8 };
       state.destination = ""; state.citizens = []; state.dialogue = "boarding";
     } else throw new Error(`Unexpected command ${command.action}`);
+    state.route = ["pickup", "onboard"].includes(state.phase) ? ["road"] : null;
     state.can_accept = !["pickup", "boarding"].includes(state.phase) && !state.accepted_orders.length;
     if (command.action === "move" && moveDelay) await new Promise(resolve => setTimeout(resolve, moveDelay));
     await route.fulfill({ json: state });
@@ -257,6 +258,59 @@ test("phone pickups are automatic and one waiting order is stored on Accepted", 
   await expect(page.locator("#available-orders .order-accept").first()).toBeDisabled();
 });
 
+test("trip panel shows the pickup, then the destination, and closes after drop-off", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.service_ready = false;
+  await expect(page.locator("#trip-toggle")).toBeHidden();
+  await page.locator("#phone-toggle").click();
+  await page.locator(".order-accept").first().click();
+  await page.locator("#phone-close").click();
+  const panel = page.locator("#trip-panel"), toggle = page.locator("#trip-toggle");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#trip-label")).toHaveText("PICKUP");
+  await expect(page.locator("#trip-name")).toHaveText("Test Street pickup");
+  await expect(page.locator("#trip-distance")).toHaveText("Route distance · 0 m");
+  const positions = await page.evaluate(() => ({
+    panel: document.querySelector("#trip-details").getBoundingClientRect().toJSON(),
+    tools: document.querySelector(".map-tools").getBoundingClientRect().toJSON(),
+  }));
+  expect(positions.panel.bottom).toBeLessThanOrEqual(positions.tools.top + 1);
+  await expect(page.locator("#trip-details")).not.toContainText("Mei");
+  await page.locator("#view-mode").click();
+  await expect(page.locator("#map-popup")).toBeVisible();
+  await page.locator("#map-close").click();
+  await page.locator("#phone-toggle").click();
+  await expect(page.locator("#phone-screen")).toHaveAttribute("aria-hidden", "false");
+  await expect.poll(() => page.evaluate(() => {
+    const header = document.querySelector(".phone-header"), rect = header.getBoundingClientRect();
+    return document.querySelector("#phone").contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+  })).toBe(true);
+  await page.locator("#phone-close").click();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fixture.state.service_ready = true;
+  await expect.poll(() => fixture.state.phase).toBe("onboard");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#trip-label")).toHaveText("DROP-OFF");
+  await expect(page.locator("#trip-name")).toHaveText("Test Street destination");
+  await expect(page.locator("#trip-distance")).toHaveText("Route distance · 150 m");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await toggle.click();
+  await page.locator("#language").click();
+  await expect(page.locator("#trip-name")).toHaveText("測試街落車");
+  await expect(page.locator("#trip-distance")).toHaveText("路線距離 · 150 m");
+  await expect(toggle).toHaveAttribute("aria-label", "隱藏行程目的地");
+  await page.keyboard.down("w");
+  await expect.poll(() => fixture.state.x).toBeGreaterThan(51);
+  await page.keyboard.up("w");
+  await expect.poll(async () => Number((await page.locator("#trip-distance").textContent()).match(/(\d+) m/)[1])).toBeLessThan(150);
+  await page.keyboard.press("e");
+  await expect.poll(() => fixture.state.phase).toBe("complete");
+  await expect(toggle).toBeHidden();
+  await expect(panel).not.toHaveClass(/open/);
+});
+
 test("E drops off the passenger at the destination", async ({ page }) => {
   const fixture = await dispatchFixture(page);
   await page.locator("#phone-toggle").click();
@@ -316,7 +370,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
+    const { MapView } = await import("/map.mjs?v=tunnel-clearance-1");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -348,7 +402,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=parabolic-steering-1`);
+      const module = await import(`/${path}?v=tunnel-clearance-1`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {
@@ -359,6 +413,7 @@ for (const mode of ["2D", "3D"]) {
     await expect(page.locator("#door")).toBeEnabled();
     await page.locator("#door").click();
     await expect(page.locator("#boarding-status")).toBeVisible();
+    await expect(page.locator("#trip-toggle")).toBeHidden();
     await page.locator("#phone-toggle").click();
     await page.locator("#accepted-tab").click();
     await expect(page.locator("#destination-name")).toHaveText("Revealed after boarding");
@@ -370,6 +425,8 @@ for (const mode of ["2D", "3D"]) {
     await expect.poll(() => fixture.state.phase).toBe("onboard");
     await expect(page.locator("#boarding-status")).toBeHidden();
     await expect(page.locator("#destination-name")).toHaveText("Test Street destination");
+    await expect(page.locator("#trip-name")).toHaveText("Test Street destination");
+    await expect(page.locator("#trip-toggle")).toHaveAttribute("aria-expanded", "true");
     expect(await page.evaluate(() => window.boardingFrames)).toBeGreaterThan(1);
     expect(fixture.commands.filter(command => command.action === "door")).toHaveLength(1);
     expect(errors).toEqual([]);

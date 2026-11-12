@@ -1,9 +1,11 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=tunnel-clearance-1";
 import { MapView } from "./map.mjs?v=tunnel-clearance-1";
-import { en, zh } from "./i18n.mjs?v=boundary-recovery-1";
+import { en, zh } from "./i18n.mjs?v=pedal-icons-1";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
+import { interpolateCar } from "./visual-motion.mjs";
+import { routeDistance } from "./route-distance.mjs";
 
 const $ = id => document.getElementById(id);
 const loadedPreferences = loadSettings();
@@ -14,6 +16,7 @@ let popupMap = null, mapDrag = null;
 let mapStream = null, mapStreamFailure = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
+let previousCar = null;
 let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
 let inFlightElapsed = 0;
 let visualElapsed = 0;
@@ -21,6 +24,7 @@ let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 
 let previewExit = null;
 let movementRecoveryUntil = 0;
 let phoneTab = "available";
+let tripPanelPhase = null, tripPanelOrder = null;
 let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
   : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
 let settingsOrigin = "welcome", settingsCategory = "display", preferredViewRequest = null;
@@ -56,12 +60,14 @@ function applyState(next, resetPosition = false) {
   state = next;
   if (resetPosition) {
     car = { x: next.x, y: next.y, speed: next.speed, heading: next.heading, edge: next.edge };
+    previousCar = null;
     elapsed = 0; trail = [];
     inFlightElapsed = 0;
     visualElapsed = next.elapsed;
   } else if (next.fuel <= 0) {
     // Discard motion predicted while the fuel-exhausting request was in flight.
     car = { x: next.x, y: next.y, speed: 0, heading: next.heading, edge: next.edge };
+    previousCar = null;
     trail = [];
   }
   updateUI();
@@ -114,6 +120,7 @@ async function send(action, fields = {}) {
     if (error.status && error.status < 500) {
       pending = null;
       car = { x: state.x, y: state.y, speed: 0, heading: state.heading, edge: state.edge };
+      previousCar = null;
       elapsed = 0; trail = [];
       inFlightElapsed = 0;
       visualElapsed = state.elapsed;
@@ -169,7 +176,7 @@ async function resume() {
     await send("pause", { paused: false });
     dialogs.forEach(id => $(id).close());
     updateSettingsMessage();
-    paused = false; lastFrame = performance.now(); stepBank = 0; resetControls();
+    paused = false; lastFrame = performance.now(); stepBank = 0; previousCar = null; resetControls();
   });
 }
 function localMatch() {
@@ -405,6 +412,34 @@ function renderOrders(id, orders, accepted = false) {
     accept.disabled = busy || !state.can_accept;
   }
 }
+function setTripPanelOpen(open) {
+  $("trip-panel").classList.toggle("open", open);
+  $("trip-toggle").setAttribute("aria-expanded", String(open));
+  $("trip-toggle").setAttribute("aria-label", t(open ? "tripHide" : "tripShow"));
+  $("trip-details").inert = !open;
+  $("trip-details").setAttribute("aria-hidden", String(!open));
+}
+function updateTripPanel() {
+  const pickup = state.phase === "pickup" || (state.phase === "boarding" && state.order_source === "phone");
+  const active = pickup || state.phase === "onboard";
+  if (active && (tripPanelOrder !== state.active_order || !tripPanelPhase
+      || (state.phase === "onboard" && tripPanelPhase !== "onboard"))) setTripPanelOpen(true);
+  if (!active) {
+    if (!$("trip-toggle").hidden && document.activeElement === $("trip-toggle")) $("phone-toggle").focus();
+    setTripPanelOpen(false);
+  }
+  $("trip-toggle").hidden = !active;
+  $("trip-toggle").setAttribute("aria-label", t($("trip-panel").classList.contains("open") ? "tripHide" : "tripShow"));
+  tripPanelPhase = active ? state.phase : null;
+  tripPanelOrder = active ? state.active_order : null;
+  if (!active) return;
+  const stop = stops.find(item => item.id === (pickup ? state.pickup : state.destination));
+  $("trip-label").textContent = t(pickup ? "pickup" : "destination");
+  $("trip-name").textContent = stop ? stop[lang === "zh" ? "zh" : "name"] : t("destinationHidden");
+  const distance = routeDistance(state.route, roads, { x: state.x, y: state.y }, stop);
+  $("trip-distance").textContent = distance === null ? t("routeDistanceUnavailable")
+    : `${t("routeDistance")} · ${distance < 1000 ? `${Math.round(distance)} m` : `${(distance / 1000).toFixed(1)} km`}`;
+}
 function updateUI() {
   updateViewUI();
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
@@ -413,6 +448,7 @@ function updateUI() {
   $("language").textContent = lang === "en" ? "繁中" : "EN";
   updateSettingsControls();
   if (!state) return;
+  updateTripPanel();
   $("start").disabled = busy; $("start").textContent = t("start");
   const passenger = state.passenger;
   $("passenger-name").textContent = lang === "zh" ? passenger.zh : passenger.name;
@@ -560,6 +596,7 @@ function frame(timestamp) {
     while (stepBank >= 1 / 60) {
       const dt = 1 / 60;
       stepBank -= dt;
+      previousCar = { ...car };
       const match = localMatch();
       const factor = state.traffic[match.edge.way] || 1;
       if (state.boarding) car.speed = 0;
@@ -588,12 +625,14 @@ function frame(timestamp) {
     }
   } else {
     stepBank = 0;
+    previousCar = null;
     if (state && !paused && moving) {
       $("notice").hidden = false;
       $("notice").textContent = t("wait");
     }
   }
   if (view && state) {
+    if (paused) previousCar = null;
     if (mapStream) {
       const ahead = Math.min(160, Math.abs(car.speed) * 3);
       const direction = car.speed < 0 ? -1 : 1;
@@ -607,11 +646,12 @@ function frame(timestamp) {
     const preview = $("junction").open ? previewExit : null;
     visualElapsed = Math.max(visualElapsed, state.elapsed + inFlightElapsed + elapsed);
     const visualState = { ...state, elapsed: visualElapsed };
-    view.render(car, visualState, lang, approach, preview);
-    if (popupMap && !$("map-popup").hidden) popupMap.render(car, visualState, lang, approach, preview);
+    const visualCar = interpolateCar(previousCar, car, stepBank * 60);
+    view.render(visualCar, visualState, lang, approach, preview);
+    if (popupMap && !$("map-popup").hidden) popupMap.render(visualCar, visualState, lang, approach, preview);
     if (view === map3d && minimap && preferences.minimapVisible
         && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {
-      minimap.render(car, visualState, lang, approach, preview);
+      minimap.render(visualCar, visualState, lang, approach, preview);
       lastMinimapFrame = timestamp;
     }
   }
@@ -621,6 +661,7 @@ function frame(timestamp) {
 }
 
 $("language").addEventListener("click", () => commitPreferences({ ...preferences, language: lang === "en" ? "zh" : "en" }));
+$("trip-toggle").addEventListener("click", () => setTripPanelOpen(!$("trip-panel").classList.contains("open")));
 $("phone-toggle").addEventListener("click", () => setPhoneOpen(!$("phone").classList.contains("open")));
 $("phone-close").addEventListener("click", () => setPhoneOpen(false));
 for (const tab of ["available", "accepted"]) {

@@ -187,6 +187,11 @@ def build(raw_path: Path, output: Path) -> None:
     print(f"Restrictions: {len(restrictions)} supported; {len(omitted)} require audit")
     print(f"Dataset version: {result['version']}")
     build_road_widths(output, raw_path, output.with_name("road-widths.json"))
+    if __package__:
+        from .prepare_places import build as build_places
+    else:
+        from prepare_places import build as build_places
+    build_places(raw_path, output, output.with_name("places.json"))
 
 
 if __name__ == "__main__":

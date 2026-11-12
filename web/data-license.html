@@ -7,13 +7,15 @@
 <h1>Map data &amp; attribution<br>地圖資料與授權</h1>
 <p>© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>.
 OpenStreetMap data is available under the <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License (ODbL) 1.0</a>.</p>
-<p>The game's district road database and building/park backdrop are adapted from OpenStreetMap.
+<p>The game's district road database, named destinations and building/park backdrop are adapted from OpenStreetMap.
 The OSM-derived component of the adapted database is offered under ODbL 1.0;
 the combined API response also contains Government data under the terms below. Download the
 <a href="/api/map" download="district.json">adapted database</a> or the
-<a href="/api/source">bounded original OSM extract</a>.
-The preparation script is included with the project as <code>tools\prepare_map.py</code>.</p>
-<p>本遊戲的道路、建築物及公園資料來自 OpenStreetMap，並經過處理。
+<a href="/api/source">bounded original OSM extract</a>. The derived
+<a href="/api/places">named places</a> are also available.
+The preparation scripts are included with the project as <code>tools/prepare_map.py</code>
+and <code>tools/prepare_places.py</code>.</p>
+<p>本遊戲的道路、目的地、建築物及公園資料來自 OpenStreetMap，並經過處理。
 經處理的區域資料庫亦以 ODbL 1.0 提供。你可以使用以上連結下載原始資料及經處理的資料庫。</p>
 <h2>Not a real navigation service / 並非實際導航服務</h2>
 <p>The experimental 3D renderer uses locally packaged Three.js under the

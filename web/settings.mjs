@@ -11,12 +11,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
   steeringSensitivity: 300,
   junctionGrace: 150,
   minimapVisible: true,
-  minimapSize: "medium",
+  minimapSize: "large",
   minimapZoom: 90,
   minimapRefreshRate: 60,
   junctionHudOpacity: 70,
   shortcutHints: true,
-  junctionSelector: true,
+  junctionSelector: false,
 });
 
 export const SETTINGS_CATEGORIES = Object.freeze({

@@ -37,6 +37,8 @@ seconds; entering new streets does not build this geometry during driving.
 After a code update, restart the backend and refresh the browser to load the
 matching scripts. An already-open page keeps its old scripts until refreshed;
 refreshing starts a new shift.
+The taxi and camera interpolate between fixed physics steps for smoother motion;
+driving and server validation continue to use the actual physics position.
 
 ## Map loading and larger districts
 
@@ -97,12 +99,19 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   If no legal passenger trip is reachable when a scheduled offer is due,
   dispatch logs the deferral and tries again after 45–180 seconds; driving
   continues without rejecting the movement update.
+- Destinations also include randomly selected named places from the district's
+  offline OpenStreetMap extract, such as hotels, parks and shopping centres.
+  Their markers are approximate nearby road stops, not verified entrances.
 - Accept a phone order, then stop at its **green** pickup marker. The customer
   waits waving at the curb and walks into the taxi automatically once you stop.
   **Accepted** stores the current pickup and any waiting order.
   Carry one passenger per trip; while carrying one, you can accept **one pending
   phone order**. Waiting accepted customers cancel after **120–300 seconds**,
   without a money penalty. The timer stops applying once they board.
+- A left-edge trip panel shows the active pickup, then the drop-off after boarding,
+  with remaining distance along the GPS route. Use its arrow to hide or reopen it;
+  it reopens after boarding and slides away when the trip ends. Distance is
+  unavailable when the GPS has no usable route.
 - Citizens walk along safe roadside paths on both sides of nearby ground-level
   streets, never through road surfaces or building footprints. Blocked paths
   turn back rather than cutting through buildings or across junction roads.
@@ -329,6 +338,9 @@ The 2D renderer uses **one Canvas layer** rather than Leaflet plus a separate dr
 overlay, avoiding external tile hosting. Likewise, the offline importer uses Python's
 standard library instead of the larger OSMnx/geospatial dependency stack; the
 packaged graph is small enough for direct geometry and heap-based routing.
+Route searches retain only road-history suffixes relevant to a via-way
+restriction, avoiding repeated exploration of equivalent paths while preserving
+turn legality and route costs.
 The map cache is rendered from vector geometry at the current zoom and native
 screen pixel density, keeping roads and bilingual labels sharp on high-DPI screens.
 Only the visible area plus a small scrolling margin is cached, rather than a
@@ -693,7 +705,18 @@ To rebuild from the existing source without downloading:
 python tools/prepare_map.py
 ```
 
-The map importer also rebuilds `data/road-widths.json`. To revise width rules
+The map importer also rebuilds `data/road-widths.json` and `data/places.json`.
+To rebuild named places from the existing extract without rebuilding the map:
+
+```sh
+python tools/prepare_places.py
+```
+
+Only named places within the current map and within 100 m of an eligible
+surface street are offered; their locations and names may be incomplete or
+outdated. Routing checks reachability before an order is offered. The extract
+does not provide popularity rankings and is not a live business directory.
+To revise width rules
 without regenerating geographic/elevation data:
 
 ```sh

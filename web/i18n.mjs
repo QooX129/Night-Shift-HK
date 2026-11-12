@@ -1,4 +1,5 @@
 export const zh = {
+  tripShow:"顯示行程目的地", tripHide:"隱藏行程目的地", routeDistance:"路線距離", routeDistanceUnavailable:"路線距離未能提供",
   movementRecovered:"已返回上次確認位置並停車。可繼續駕駛，或倒車離開路邊。",
   mapStreamError:"地圖細節載入失敗，將自動重試；駕駛及碰撞仍可用。",
   mapTitle:"地區地圖", mapClose:"關閉地圖", mapHelp:"滾輪縮放 · 拖曳移動 · M / Esc 關閉",
@@ -58,6 +59,7 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  tripShow:"Show trip destination", tripHide:"Hide trip destination", routeDistance:"Route distance", routeDistanceUnavailable:"Route distance unavailable",
   movementRecovered:"Returned to the last confirmed position and stopped. Keep driving or reverse away from the boundary.",
   mapStreamError:"Map detail loading failed; retrying automatically. Driving and collisions remain available.",
   mapTitle:"District map", mapClose:"Close map", mapHelp:"Scroll to zoom · Drag to pan · M / Esc to close",
@@ -89,7 +91,7 @@ export const en = {
   district:"MONG KOK · YAU MA TEI", simulated:"SIMULATED CITY", pause:"Pause", dispatch:"KOWLOON DISPATCH",
   yourshift:"The city is calling.", pickup:"PICKUP", destination:"DROP-OFF", loading:"Loading roads…",
   earnings:"WALLET", fuel:"FUEL", shift:"SHIFT TIME", nosave:"Session only · no saves", garage:"Rest stop / garage",
-  controls:"W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · M map · Esc pause", brake:"BRAKE / REV", gas:"GO",
+  controls:"W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · M map · Esc pause", brake:"Brake / reverse", gas:"Accelerator",
   notnavigation:"Game map, not real navigation", welcome:"Your streets. Your shift.",
   intro:"A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.",
   introdrive:"Use WASD / arrow keys or touch pedals. S / ↓ brakes; keep holding after stopping for low-speed reverse. The taxi stays inside the road.",

@@ -116,6 +116,11 @@ def map_source() -> FileResponse:
     return FileResponse(ROOT / "data" / "source.osm.json", media_type="application/json", filename="source.osm.json")
 
 
+@app.get("/api/places")
+def places_source() -> FileResponse:
+    return FileResponse(ROOT / "data" / "places.json", media_type="application/json", filename="places.json")
+
+
 @app.get("/api/stops")
 def stops() -> list[dict]:
     return [

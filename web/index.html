@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=parabolic-steering-1">
+  <link rel="stylesheet" href="/style.css?v=pedal-colors-1">
 </head>
 <body>
   <main id="game">
@@ -68,6 +68,14 @@
       <span id="boarding-status" role="status" hidden data-i18n="boarding">Passenger boarding…</span>
     </div>
 
+    <aside id="trip-panel" class="trip-panel" aria-labelledby="trip-label">
+      <div id="trip-details" class="trip-details panel" inert aria-hidden="true">
+        <small id="trip-label"></small>
+        <strong id="trip-name"></strong>
+        <span id="trip-distance"></span>
+      </div>
+      <button id="trip-toggle" class="trip-toggle" aria-label="Show trip destination" aria-controls="trip-details" aria-expanded="false" hidden>›</button>
+    </aside>
     <aside class="map-tools" aria-label="Map tools">
       <button id="view-mode" aria-label="Open map" aria-expanded="false" aria-controls="map-popup" disabled>M</button>
       <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="overview" aria-label="Toggle district overview">⌖</button>
@@ -95,7 +103,20 @@
     <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · Esc pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
       <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
-      <div><button data-control="brake" class="brake" data-i18n="brake">BRAKE / REV</button><button data-control="gas" class="gas" data-i18n="gas">GO</button></div>
+      <div>
+        <button data-control="brake" class="brake" data-i18n-aria="brake" aria-label="Brake / reverse">
+          <svg viewBox="0 0 80 52" aria-hidden="true" focusable="false">
+            <path fill="currentColor" stroke="var(--line)" stroke-width="3" d="M10 3H70Q77 3 76 10L73 41Q72 49 64 49H16Q8 49 7 41L4 10Q3 3 10 3Z"></path>
+            <path fill="none" stroke="var(--pedal-grip)" stroke-width="4" stroke-linecap="round" d="M11 12H69M12 21H68M13 30H67M14 39H66"></path>
+          </svg>
+        </button>
+        <button data-control="gas" class="gas" data-i18n-aria="gas" aria-label="Accelerator">
+          <svg viewBox="0 0 48 78" aria-hidden="true" focusable="false">
+            <path fill="currentColor" stroke="var(--line)" stroke-width="3" d="M12 2H31Q36 2 38 8L45 25V66Q45 76 35 76H12Q3 76 3 66V12Q3 2 12 2Z"></path>
+            <path fill="none" stroke="var(--pedal-grip)" stroke-width="4" stroke-linecap="round" d="M10 11H32M10 20H35M10 29H38M10 38H38M10 47H38M10 56H38M10 65H38"></path>
+          </svg>
+        </button>
+      </div>
     </div>
     <footer class="attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap contributors</a> · © HKSAR Government / LandsD / DATA.GOV.HK · <a href="/data-license.html">Data terms &amp; sources</a> · <span data-i18n="notnavigation">Game map, not real navigation</span></footer>
   </main>
@@ -228,6 +249,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=tunnel-clearance-1"></script>
+  <script type="module" src="/app.mjs?v=pedal-icons-1"></script>
 </body>
 </html>

@@ -95,6 +95,15 @@ class RoadMap:
     def __init__(self, path: Path):
         self.document = json.loads(path.read_text(encoding="utf-8"))
         self.version: str = self.document["version"]
+        places_path = path.with_name("places.json")
+        self.places = []
+        if places_path.exists():
+            places = json.loads(places_path.read_text(encoding="utf-8"))
+            if places["map_version"] != self.version:
+                raise ValueError("Place package is stale; rebuild tools/prepare_places.py")
+            self.places = places["places"]
+        elif path.name == "district.json":
+            raise ValueError("Missing place package; run tools/prepare_places.py")
         width_path = path.with_name("road-widths.json")
         width_version = ""
         if width_path.exists():
@@ -155,6 +164,11 @@ class RoadMap:
             else:
                 for way in (rule["from"], *rule["via_ways"]):
                     self.way_rules.setdefault(way, []).append(rule)
+        self.route_history_prefixes = set()
+        for rule in self.restrictions:
+            if not rule["via"]:
+                prefix = (rule["from"], *rule["via_ways"])
+                self.route_history_prefixes.update(prefix[:i] for i in range(1, len(prefix) + 1))
         for edge in self.edges.values():
             self.outgoing.setdefault(edge.a, []).append(edge)
             self.neighbors.setdefault(edge.a, set()).add(edge.b)
@@ -376,6 +390,14 @@ class RoadMap:
             return previous
         return (*previous, way)[-self.history_size:]
 
+    def route_history(self, history: tuple[int, ...]) -> tuple[int, ...]:
+        # Older ways cannot affect future via-way restrictions unless they form a prefix.
+        for index in range(len(history)):
+            suffix = history[index:]
+            if suffix in self.route_history_prefixes:
+                return suffix
+        return ()
+
     def legal(self, incoming: Edge, outgoing: Edge, history: tuple[int, ...]) -> bool:
         if incoming.b != outgoing.a or outgoing.wrongway:
             return False
@@ -422,7 +444,7 @@ class RoadMap:
         if start.wrongway:
             # A wrong-way taxi has no legal exits ahead, so plan from turning around.
             start = self.edges[start.id[1:]]
-        initial = (start.id, self.history(history, start.way))
+        initial = (start.id, self.route_history(self.history(history, start.way)))
         goal = self.nodes[target.b]
         # A* guide: edge lengths are never shorter than 0.99 × straight-line distance.
         scale = 0.99 / max([1.0, *traffic.values()])
@@ -447,7 +469,7 @@ class RoadMap:
                 found = state
                 break
             for nxt in self.exits(edge, state[1], closed):
-                next_history = self.history(state[1], nxt.way)
+                next_history = self.route_history(self.history(state[1], nxt.way))
                 next_state = (nxt.id, next_history)
                 heading = math.atan2(self.nodes[nxt.b][1] - self.nodes[nxt.a][1],
                                      self.nodes[nxt.b][0] - self.nodes[nxt.a][0])
