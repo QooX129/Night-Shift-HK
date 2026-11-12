@@ -77,8 +77,8 @@
 .pickup-controls {
     position: absolute;
     z-index: 7;
-    right: 82px;
-    bottom: 185px;
+    right: 0;
+    bottom: calc(100% + 9px);
     display: grid;
     gap: 8px;
     max-width: 190px
@@ -89,12 +89,11 @@
 @media(max-width:800px) {
     .phone { top: 78px }
     .phone-screen { height: min(600px, calc(100dvh - 300px)); padding: 12px }
-    .pickup-controls { bottom: 220px; right: 72px; max-width: 165px }
+    .pickup-controls { max-width: 165px }
 }
 @media(max-height:500px) {
     .phone { top: 65px }
     .phone-screen { height: calc(100dvh - 88px) }
-    .pickup-controls { right: 16px; bottom: 200px }
 }
 
 .settings-dialog[open] {
@@ -392,7 +391,8 @@ strong,
     width: 100vw;
     height: 100dvh;
     min-height: 400px;
-    overflow: hidden
+    overflow: hidden;
+    overflow: clip
 }
 
 #map,
@@ -464,6 +464,8 @@ strong,
     .view-3d .dashboard {
         left: 330px;
         right: 30px;
+        width: auto;
+        max-width: 700px;
         min-width: 0;
         transform: none;
         gap: 18px
@@ -882,34 +884,101 @@ blockquote {
     bottom: 62px;
     left: 50%;
     transform: translateX(-50%);
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr) minmax(70px, .7fr) 42px;
     align-items: center;
     border-radius: 16px;
-    padding: 18px 24px;
-    gap: 26px;
-    min-width: 590px
+    padding: 12px 18px;
+    gap: 16px;
+    width: min(700px, calc(100% - 32px))
 }
 
+.taxi-meter {
+    min-width: 0;
+    border: 1px solid #4b5148;
+    border-radius: 9px;
+    padding: 10px 12px;
+    background: #0c171c88
+}
+
+.meter-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 4px;
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 1px
+}
+
+.meter-head small { font-size: inherit; font-weight: 700 }
+.meter-head span { color: var(--mint); letter-spacing: .5px }
+.meter-amount { display: flex; align-items: center; gap: 5px; margin: 5px 0 4px; color: var(--yellow); font-size: 10px; font-weight: 700 }
+.meter-digits { display: inline-flex; gap: 3px; align-items: center; height: 35px; font: 600 25px ui-monospace, monospace; color: #78878b }
+.meter-digit { position: relative; width: 19px; height: 34px }
+.meter-digit i { position: absolute; background: var(--yellow); opacity: .09; border-radius: 2px }
+.meter-digit i.on { opacity: 1; box-shadow: 0 0 8px #f5c65a30 }
+.meter-digit .a, .meter-digit .g, .meter-digit .d { width: 13px; height: 3px; left: 3px; transform: skew(-12deg) }
+.meter-digit .a { top: 0 }
+.meter-digit .g { top: 15px }
+.meter-digit .d { bottom: 0 }
+.meter-digit .b, .meter-digit .c, .meter-digit .e, .meter-digit .f { width: 3px; height: 12px; transform: skew(-5deg) }
+.meter-digit .b { top: 2px; right: 0 }
+.meter-digit .c { bottom: 2px; right: 0 }
+.meter-digit .f { top: 2px; left: 0 }
+.meter-digit .e { bottom: 2px; left: 0 }
+.meter-decimal { width: 3px; height: 3px; background: var(--yellow); border-radius: 50%; align-self: flex-end; margin-bottom: 1px }
+.meter-wallet { display: flex; flex-wrap: wrap; gap: 3px 10px; color: var(--muted); font-size: 10px }
+.meter-wallet strong { color: var(--text); font-size: 12px }
+
+.speed-dial {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    overflow: visible
+}
+
+.dial-base, .dial-scale { fill: none }
+.dial-base { stroke: #344852; stroke-width: 5; stroke-linecap: round }
+.dial-scale { stroke: #9ab0b3; stroke-width: 1.4; stroke-dasharray: 1 7 }
+.speed-dial text { fill: var(--muted); font: 7px system-ui, sans-serif }
+#speed-needle { stroke: var(--yellow); stroke-width: 2.8; stroke-linecap: round; transition: transform .18s ease-out }
 .speed {
     position: relative;
-    min-width: 68px
+    min-width: 0;
+    text-align: center
 }
 
+.speed-display {
+    display: grid;
+    grid-template-columns: minmax(0, 140px) max-content;
+    align-items: end;
+    justify-content: start;
+    column-gap: 2px
+}
+.speed-reading {
+    width: 3ch;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums
+}
 .speed strong {
-    font-size: 38px;
+    font-size: 18px;
     line-height: 1;
-    font-weight: 500
+    font-weight: 700
 }
 
-.speed>span {
+.speed div>span {
     font-size: 10px;
-    color: var(--muted);
-    margin-left: 3px
+    color: var(--muted)
 }
 
+.drive-mode-slot { grid-column: 1; height: 12px; display: flex; align-items: center; justify-content: center }
 .speed small {
     display: block;
-    margin-top: 7px;
     font-size: 8px;
     letter-spacing: 1.8px;
     color: var(--mint)
@@ -943,9 +1012,11 @@ blockquote {
     height: 3px;
     border-radius: 2px;
     background: #35433c;
-    margin-top: 3px
+    overflow: hidden
 }
 
+.fuel-stat { grid-column: 1; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 5px; min-width: 0 }
+.speed .fuel-stat span { font-size: 9px }
 .fuel-track i {
     height: 100%;
     display: block;
@@ -954,12 +1025,16 @@ blockquote {
 }
 
 .dashboard>.quiet {
-    font-size: 10px;
-    margin-left: auto;
-    max-width: 100px;
-    line-height: 1.5
+    width: 42px;
+    height: 42px;
+    padding: 8px;
+    display: grid;
+    place-items: center
 }
 
+.dashboard>.quiet svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round }
+.passenger .fare { text-align: right }
+.passenger .fare small { max-width: 120px; white-space: normal; font-size: 9px }
 .keyboard-hint {
     position: absolute;
     bottom: 35px;
@@ -1150,6 +1225,10 @@ dialog p {
 }
 
 @media(max-width:800px) {
+    .minimap {
+        bottom: 222px
+    }
+
     .topbar {
         padding: 16px
     }
@@ -1249,28 +1328,31 @@ dialog p {
     }
 
     .dashboard {
-        min-width: 0;
         width: calc(100% - 32px);
-        gap: 18px;
-        padding: 14px 18px;
+        grid-template-columns: minmax(0, .88fr) minmax(0, 1.32fr) minmax(42px, .48fr) 32px;
+        gap: 5px;
+        padding: 9px;
         bottom: 65px
     }
 
-    .speed strong {
-        font-size: 30px
-    }
-
-    .dash-stat strong {
-        font-size: 15px
-    }
-
-    .shift-stat {
-        display: none
-    }
-
-    .dashboard>.quiet {
-        font-size: 9px
-    }
+    .taxi-meter { padding: 7px }
+    .meter-head { display: block; font-size: 8px; letter-spacing: .4px }
+    .meter-head span { display: block }
+    .meter-amount { flex-direction: column; align-items: flex-start; gap: 2px; font-size: 8px }
+    .meter-digits { flex: none; transform: scale(.6); transform-origin: left center; margin-right: -35px }
+    .meter-wallet { font-size: 8px; gap: 2px 5px }
+    .meter-wallet strong { font-size: 10px }
+    .speed-display { grid-template-columns: minmax(0, 90px) max-content }
+    .speed-reading { font-size: 13px }
+    .speed strong { font-size: 13px }
+    .speed .fuel-stat span { font-size: 8px }
+    .fuel-stat { gap: 3px }
+    .fuel-track { width: 35px }
+    .shift-stat small { font-size: 8px; letter-spacing: .4px }
+    .shift-stat strong { font-size: 13px }
+    .shift-stat>span { display: none }
+    .dashboard>.quiet { width: 32px; height: 36px; padding: 5px }
+    .dashboard>.quiet svg { width: 20px; height: 20px }
 
     .notice {
         left: 50%;
@@ -1296,7 +1378,7 @@ dialog p {
 
 @media(max-width:800px) and (pointer:coarse) {
     .minimap {
-        bottom: 245px
+        bottom: 302px
     }
 
     .dashboard {
@@ -1304,7 +1386,7 @@ dialog p {
     }
 
     .notice {
-        bottom: 247px
+        bottom: 290px
     }
 
     .dispatch {
@@ -1314,6 +1396,14 @@ dialog p {
     .touch-controls {
         bottom: 55px
     }
+}
+
+@media(max-width:800px) and (min-height:600px) {
+    .view-3d .minimap { bottom: 270px }
+}
+
+@media(max-width:800px) and (min-height:600px) and (pointer:coarse) {
+    .view-3d .minimap { bottom: 350px }
 }
 
 @media(max-width:800px) {
@@ -1359,7 +1449,7 @@ dialog p {
     }
 
     .dashboard {
-        padding: 10px 15px
+        padding: 9px
     }
 
     .avatar {
@@ -1396,7 +1486,7 @@ dialog p {
         left: auto;
         right: 15px;
         transform: none;
-        width: 330px;
+        width: min(330px, calc(100% - 30px));
         bottom: 40px;
         gap: 12px;
         padding: 10px
@@ -1423,9 +1513,6 @@ dialog p {
         bottom: 20px
     }
 
-    .shift-stat {
-        display: none
-    }
 }
 
 #junction {

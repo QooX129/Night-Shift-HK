@@ -1,4 +1,6 @@
 export const zh = {
+  taxiMeter:"的士咪錶", meterHired:"載客中", meterVacant:"空車", meterPaid:"已付款",
+  estimatedFare:"預計車資", totalFare:"實際車資", bookingIncluded:"已包括 $5 電召費",
   tripShow:"顯示行程目的地", tripHide:"隱藏行程目的地", routeDistance:"路線距離", routeDistanceUnavailable:"路線距離未能提供",
   movementRecovered:"已返回上次確認位置並停車。可繼續駕駛，或倒車離開路邊。",
   mapStreamError:"地圖細節載入失敗，將自動重試；駕駛及碰撞仍可用。",
@@ -26,7 +28,7 @@ export const zh = {
   settingsLoadError:"無法讀取已儲存的設定；已使用預設值。", settingsInvalidError:"已儲存的設定格式無效；不相容項目已還原預設值。",
   settingsSaveError:"無法儲存設定。變更只會保留到關閉此頁面為止。",
   view3d:"切換至 3D 視角", view2d:"切換至 2D 地圖", loading3d:"正在建立 3D 街區…",
-  preview3d:"3D 實驗 · 官方地形 / 模型 + 高度估算", failed3d:"無法啟用 3D，已保留 2D 地圖。需要支援 WebGL 2 的瀏覽器。",
+  failed3d:"無法啟用 3D，已保留 2D 地圖。需要支援 WebGL 2 的瀏覽器。",
   lost3d:"3D 圖像連線中斷，已返回 2D。可再按 3D 重試。",
   district:"旺角 · 油麻地", simulated:"模擬城市", pause:"暫停", dispatch:"九龍的士台",
   yourshift:"城市正等緊你。", pickup:"上車地點", destination:"落車地點",
@@ -59,6 +61,8 @@ export const zh = {
   restored:"已連線，請按繼續。", installed:"已安裝", depot:"藍色標記係休息站", wait:"請稍等…",
 };
 export const en = {
+  taxiMeter:"TAXI METER", meterHired:"HIRED", meterVacant:"VACANT", meterPaid:"PAID",
+  estimatedFare:"Estimated fare", totalFare:"Final fare", bookingIncluded:"Includes $5 phone booking",
   tripShow:"Show trip destination", tripHide:"Hide trip destination", routeDistance:"Route distance", routeDistanceUnavailable:"Route distance unavailable",
   movementRecovered:"Returned to the last confirmed position and stopped. Keep driving or reverse away from the boundary.",
   mapStreamError:"Map detail loading failed; retrying automatically. Driving and collisions remain available.",
@@ -86,7 +90,7 @@ export const en = {
   settingsLoadError:"Saved settings could not be read; defaults are in use.", settingsInvalidError:"Saved settings were invalid; unsupported values were reset to defaults.",
   settingsSaveError:"Settings could not be saved. Changes will last only until this page is closed.",
   view3d:"Switch to 3D view", view2d:"Switch to 2D map", loading3d:"Building the 3D district...",
-  preview3d:"3D EXPERIMENT · OFFICIAL TERRAIN / MODEL + ESTIMATED HEIGHTS", failed3d:"Could not start 3D; the 2D map is still available. A WebGL 2 browser is required.",
+  failed3d:"Could not start 3D; the 2D map is still available. A WebGL 2 browser is required.",
   lost3d:"3D graphics context lost. Returned to 2D; press 3D to retry.",
   district:"MONG KOK · YAU MA TEI", simulated:"SIMULATED CITY", pause:"Pause", dispatch:"KOWLOON DISPATCH",
   yourshift:"The city is calling.", pickup:"PICKUP", destination:"DROP-OFF", loading:"Loading roads…",

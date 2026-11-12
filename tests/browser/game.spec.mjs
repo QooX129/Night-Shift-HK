@@ -287,7 +287,7 @@ test("space handbrake slows without reversing and Escape opens pause menu", asyn
   await page.keyboard.up("Space");
   const after = Number(await page.locator("#speed").textContent());
   expect(after).toBeLessThan(before);
-  await expect(page.locator("#drive-mode")).not.toHaveText("REVERSE");
+  await expect(page.locator("#drive-mode")).toBeHidden();
 
   await page.keyboard.press("Escape");
   await expect(page.locator("#pause-dialog")).toBeVisible();

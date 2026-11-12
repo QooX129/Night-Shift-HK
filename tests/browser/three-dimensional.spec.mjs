@@ -425,7 +425,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.evaluate(() => { window.threeHeadingOffset = 0; });
 
   await page.locator("#language").click();
-  await expect(page.locator("#view-status")).toContainText("3D 實驗");
+  await expect(page.locator("#view-status")).toBeHidden();
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-label", "地區地圖");
   await page.locator("#zoom-in").click();
   await page.locator("#overview").click();

@@ -107,7 +107,7 @@ test("stacked selection previews the exit and waits until arrival to snap", asyn
   const approachX = state.x;
   await page.getByRole("button", { name: /Turn right/ }).click();
   await expect(page.locator("#junction")).not.toBeVisible();
-  await expect(page.locator("#drive-mode")).toHaveText("MANUAL");
+  await expect(page.locator("#drive-mode")).toBeHidden();
   expect(state.selected_exit).toBe("surface");
   expect(state.speed).toBe(approachSpeed);
   expect(state.x).toBe(approachX);

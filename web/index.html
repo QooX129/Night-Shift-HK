@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=pedal-colors-1">
+  <link rel="stylesheet" href="/style.css?v=taxi-meter-5">
 </head>
 <body>
   <main id="game">
@@ -37,7 +37,7 @@
       <div id="phone-accepted" role="tabpanel" aria-labelledby="accepted-tab" hidden>
       <div id="active-trip">
       <p class="muted" id="status" role="status" aria-live="polite"></p>
-      <div class="passenger"><div class="avatar" id="avatar">林</div><div><strong id="passenger-name">—</strong><small id="passenger-role">—</small></div><span class="fare" id="fare">HK$ —</span></div>
+      <div class="passenger"><div class="avatar" id="avatar">林</div><div><strong id="passenger-name">—</strong><small id="passenger-role">—</small></div><div class="fare"><span id="fare">HK$ —</span><small id="fare-label"></small></div></div>
       <div class="stops">
         <div><span class="stop-dot pickup-dot"></span><div><small data-i18n="pickup">PICKUP</small><p id="pickup-name">—</p></div></div>
         <div><span class="stop-dot destination-dot"></span><div><small data-i18n="destination">DROP-OFF</small><p id="destination-name">—</p></div></div>
@@ -62,12 +62,6 @@
         <button class="primary order-accept" data-i18n="accept">Accept order</button>
       </article>
     </template>
-    <div class="pickup-controls">
-      <button id="door" class="primary" disabled data-i18n="door">Open door</button>
-      <button id="street-dropoff" class="primary" hidden data-i18n="dropoffKey">Drop off passenger · E</button>
-      <span id="boarding-status" role="status" hidden data-i18n="boarding">Passenger boarding…</span>
-    </div>
-
     <aside id="trip-panel" class="trip-panel" aria-labelledby="trip-label">
       <div id="trip-details" class="trip-details panel" inert aria-hidden="true">
         <small id="trip-label"></small>
@@ -94,11 +88,30 @@
     <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
     <section class="dashboard panel" aria-label="Taxi dashboard">
-      <div class="speed"><strong id="speed">0</strong><span>km/h</span><small id="drive-mode">MANUAL</small></div>
-      <div class="dash-stat"><small data-i18n="earnings">WALLET</small><strong id="money">$120</strong><span id="trips">0 trips</span></div>
-      <div class="dash-stat fuel-stat"><small data-i18n="fuel">FUEL</small><strong id="fuel">100%</strong><div class="fuel-track"><i id="fuel-bar"></i></div></div>
+      <div class="pickup-controls">
+        <button id="door" class="primary" disabled data-i18n="door">Open door</button>
+        <button id="street-dropoff" class="primary" hidden data-i18n="dropoffKey">Drop off passenger · E</button>
+        <span id="boarding-status" role="status" hidden data-i18n="boarding">Passenger boarding…</span>
+      </div>
+      <div class="taxi-meter">
+        <div class="meter-head"><small data-i18n="taxiMeter">TAXI METER</small><span id="meter-status">VACANT</span></div>
+        <div class="meter-amount"><span>HK$</span><span id="meter-digits" class="meter-digits" aria-label="Vacant">— —</span></div>
+        <div class="meter-wallet"><span><span data-i18n="earnings">WALLET</span> <strong id="money">$120</strong></span><span id="trips">0 trips</span></div>
+      </div>
+      <div class="speed">
+        <div class="speed-display">
+          <svg class="speed-dial" viewBox="0 0 120 78" aria-hidden="true">
+            <path class="dial-base" d="M18 60A42 42 0 0 1 102 60"></path><path class="dial-scale" d="M23 60A37 37 0 0 1 97 60"></path>
+            <text x="12" y="72">0</text><text x="93" y="72">160</text>
+            <line id="speed-needle" x1="60" y1="60" x2="60" y2="25" transform="rotate(-90 60 60)"></line><circle cx="60" cy="60" r="3" fill="#f5c65a"></circle>
+          </svg>
+          <div class="speed-reading"><strong id="speed">0</strong><span>km/h</span></div>
+          <div class="drive-mode-slot"><small id="drive-mode" hidden></small></div>
+          <div class="fuel-stat"><span data-i18n="fuel">FUEL</span><div class="fuel-track"><i id="fuel-bar"></i></div><span id="fuel">100%</span></div>
+        </div>
+      </div>
       <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
-      <button id="garage" class="quiet" data-i18n="garage">Rest stop / garage</button>
+      <button id="garage" class="quiet" data-i18n-aria="garage" aria-label="Rest stop / garage"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 5a5 5 0 0 0-5.7 6.7L3.8 16.2a2.1 2.1 0 0 0 3 3l4.5-4.5A5 5 0 0 0 18 9l-3.1 3.1-3-3z"></path></svg></button>
     </section>
     <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · Esc pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
@@ -249,6 +262,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=route-guide-1"></script>
+  <script type="module" src="/app.mjs?v=taxi-meter-2"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import app, game as api_game
-from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, RuleError
+from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, RuleError, Stop, urban_meter
 from roads import RoadMap
 
 
@@ -53,7 +53,7 @@ class OrderTests(unittest.TestCase):
         return citizen
 
     def test_random_offer_ranges_and_reachable_map_locations(self):
-        pickups, destinations, passengers = set(), set(), set()
+        pickups, destinations, passengers, fares = set(), set(), set(), set()
         for _ in range(12):
             order = self.game.make_order(self.session)
             self.assertTrue(30 <= order.expires - self.session.elapsed <= 180)
@@ -67,9 +67,130 @@ class OrderTests(unittest.TestCase):
             pickups.add(order.pickup)
             destinations.add(order.destination)
             passengers.add(order.passenger)
+            fares.add(order.fare)
         self.assertGreater(len(pickups), 1)
         self.assertGreater(len(destinations), 1)
         self.assertGreater(len(passengers), 1)
+        self.assertTrue(any(fare > 34 for fare in fares))
+
+    def test_urban_meter_increment_and_discount_boundaries(self):
+        self.assertEqual(urban_meter(0), 29)
+        self.assertEqual(urban_meter(.999), 29)
+        self.assertEqual(urban_meter(1), 31.1)
+        self.assertEqual(urban_meter(35), 102.5)
+        self.assertEqual(urban_meter(35.999), 102.5)
+        self.assertEqual(urban_meter(36), 103.9)
+
+    def test_phone_meter_counts_distance_and_waiting_and_pays_once(self):
+        self.assertGreaterEqual(self.session.offers[0].fare, 34)
+        self.phone_pickup()
+        self.session.paused = False
+        self.session.next_offer = self.session.next_citizen = math.inf
+        self.assertEqual(self.game.snapshot(self.session)["meter"], 29)
+        self.assertEqual(self.session.fare, 34)
+
+        edge = next(e for e in self.game.roads.edges.values() if not e.wrongway and e.length > 100)
+        a, b = self.game.roads.nodes[edge.a], self.game.roads.nodes[edge.b]
+        self.session.point = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+        self.session.edge, self.session.heading = edge.id, self.game.roads.angle(edge)
+        self.session.history = (edge.way,)
+        self.session.meter_distance = 499
+        x, y = self.session.point
+        heading = self.session.heading
+        payload = dict(x=x + 4 * math.cos(heading), y=y + 4 * math.sin(heading),
+                       speed=4, heading=heading, dt=1)
+        response = self.cmd("move", **payload)
+        self.assertAlmostEqual(self.session.meter_units, 3 / 200)
+        self.assertEqual(response["meter"], 29)
+        self.session.meter_distance = 699
+        self.session.meter_units = 199 / 200
+        x, y = self.session.point
+        payload.update(x=x + 4 * math.cos(heading), y=y + 4 * math.sin(heading))
+        response = self.cmd("move", **payload)
+        self.assertAlmostEqual(self.session.meter_units, 203 / 200)
+        self.assertEqual(response["meter"], 31.1)
+        self.assertEqual(response["fare"], 36.1)
+        self.assertEqual(self.game.command(self.session.id, self.session.seq, "move", payload), response)
+        self.assertAlmostEqual(self.session.meter_units, 203 / 200)
+
+        x, y = self.session.point
+        self.cmd("move", x=x + math.cos(heading), y=y + math.sin(heading),
+                 speed=1, heading=heading, dt=1)
+        self.assertAlmostEqual(self.session.meter_units, 203 / 200 + 1 / 60)
+        units = self.session.meter_units
+        self.cmd("pause", paused=True)
+        self.assertEqual(self.session.meter_units, units)
+        self.cmd("pause", paused=False)
+
+        self.at_stop(self.session.destination)
+        old_money, fare = self.session.money, self.session.fare
+        completed = self.cmd("service")
+        self.assertEqual(completed["meter"], 31.1)
+        committed_money = self.session.money
+        self.assertEqual(committed_money, round(old_money + fare, 1))
+        self.assertEqual(self.game.command(self.session.id, self.session.seq, "service", {}), completed)
+        self.assertEqual(self.session.money, committed_money)
+
+    def test_street_trip_has_no_phone_booking_charge(self):
+        citizen = self.citizen()
+        self.cmd("door", citizen=citizen.id)
+        self.advance(1.8)
+        self.assertEqual(self.session.fare, 29)
+        self.assertEqual(self.game.snapshot(self.session)["meter"], 29)
+
+    def test_stationary_waiting_accumulates_across_updates(self):
+        self.phone_pickup()
+        self.session.paused = False
+        self.session.next_offer = self.session.next_citizen = math.inf
+        x, y = self.session.point
+        payload = dict(x=x, y=y, speed=0, heading=self.session.heading, dt=4)
+        state = self.cmd("move", **{**payload, "dt": .1})
+        self.assertEqual(state["meter"], 29)
+        for _ in range(14):
+            self.cmd("move", **payload)
+        state = self.cmd("move", **{**payload, "dt": 3.8})
+        self.assertEqual(state["meter"], 29)
+        state = self.cmd("move", **{**payload, "dt": .1})
+        self.assertAlmostEqual(self.session.meter_units, 1)
+        self.assertEqual(state["meter"], 31.1)
+        state = self.cmd("move", **{**payload, "dt": .1})
+        self.assertEqual(state["meter"], 31.1)
+        self.assertEqual(state["fare"], 36.1)
+        for _ in range(14):
+            self.cmd("move", **payload)
+        state = self.cmd("move", **{**payload, "dt": 3.8})
+        self.assertEqual(state["meter"], 31.1)
+        state = self.cmd("move", **{**payload, "dt": .1})
+        self.assertEqual(state["meter"], 33.2)
+        self.assertEqual(state["fare"], 38.2)
+
+    def test_meter_ticks_after_driving_700_metres(self):
+        self.phone_pickup()
+        self.session.paused = False
+        self.session.next_offer = self.session.next_citizen = math.inf
+        edge = max((e for e in self.game.roads.edges.values() if not e.wrongway), key=lambda e: e.length)
+        a = self.game.roads.nodes[edge.a]
+        heading = self.game.roads.angle(edge)
+        dx, dy = math.cos(heading), math.sin(heading)
+        self.session.point = (a[0] + 5 * dx, a[1] + 5 * dy)
+        self.session.edge, self.session.heading = edge.id, heading
+        self.session.history = (edge.way,)
+        pickup = Stop("meter-pickup", "Pickup", "上車", edge.id, self.session.point)
+        destination = Stop("meter-destination", "Destination", "落車", edge.id,
+                           (a[0] + 705 * dx, a[1] + 705 * dy))
+        with patch.object(self.game, "destination_stops", [destination]):
+            estimate = self.game.make_order(self.session, pickup).fare
+        self.assertEqual(estimate, 36.1)
+        for _ in range(21):
+            x, y = self.session.point
+            state = self.cmd("move", x=x + 32 * dx, y=y + 32 * dy, speed=8, heading=heading, dt=4)
+        self.assertAlmostEqual(self.session.meter_distance, 672, places=5)
+        self.assertEqual(state["meter"], 29)
+        x, y = self.session.point
+        state = self.cmd("move", x=x + 28 * dx, y=y + 28 * dy, speed=8, heading=heading, dt=3.5)
+        self.assertAlmostEqual(self.session.meter_distance, 700, places=5)
+        self.assertEqual(state["meter"], 31.1)
+        self.assertEqual(state["fare"], estimate)
 
     def test_offers_arrive_at_scheduled_times_and_expire_independently(self):
         old = self.session.offers[0]

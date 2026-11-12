@@ -19,8 +19,16 @@ CITIZEN_HAIL_PROBABILITY = 0.04
 CITIZEN_HAIL_COOLDOWN = 300
 CITIZEN_HAIL_DISTANCE = 80
 CITIZEN_HAIL_DURATION = (45, 120)
+METER_BASE_DISTANCE = 500
+METER_INCREMENT_DISTANCE = 200
+METER_WAIT_SECONDS = 60
 
 logger = logging.getLogger(__name__)
+
+
+def urban_meter(units: float) -> float:
+    increments = max(0, math.floor(units + 1e-9))
+    return (290 + min(increments, 35) * 21 + max(0, increments - 35) * 14) / 10
 
 
 class RuleError(ValueError):
@@ -53,7 +61,7 @@ class Order:
     pickup: str
     destination: str
     passenger: int
-    fare: int
+    fare: float
     expires: float
     source: str = "phone"
     deadline: float | None = None
@@ -91,14 +99,16 @@ class Session:
     paused: bool = True
     elapsed: float = 0
     fuel: float = 100
-    money: int = 120
+    money: float = 120
     trips: int = 0
     upgrades: list[str] = field(default_factory=list)
     phase: str = "available"
     pickup: str = ""
     destination: str = ""
     passenger: int = 0
-    fare: int = 0
+    fare: float = 0
+    meter_distance: float = 0
+    meter_units: float = 0
     seq: int = 0
     last_seen: float = field(default_factory=time.monotonic)
     last_response: dict | None = None
@@ -290,29 +300,32 @@ class Game:
                 start, edge, session.history, session.closed, session.traffic
             ):
                 continue
-            destination = next(
-                (
-                    s
-                    for s in destinations
-                    if s.id != origin.id
-                    and math.dist(s.point, origin.point) >= 60
-                    and self.roads.route(
-                        edge,
-                        self.roads.edges[s.edge],
-                        (edge.way,),
-                        session.closed,
-                        session.traffic,
-                    )
-                ),
-                None,
-            )
-            if destination:
+            for destination in destinations:
+                if destination.id == origin.id or math.dist(destination.point, origin.point) < 60:
+                    continue
+                route = self.roads.route(
+                    edge, self.roads.edges[destination.edge], (edge.way,),
+                    session.closed, session.traffic,
+                )
+                if not route:
+                    continue
+                last = self.roads.edges[route[-1]]
+                start = project(origin.point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[2]
+                end = project(destination.point, self.roads.nodes[last.a], self.roads.nodes[last.b])[2]
+                start_length = math.dist(self.roads.nodes[edge.a], self.roads.nodes[edge.b])
+                end_length = math.dist(self.roads.nodes[last.a], self.roads.nodes[last.b])
+                if len(route) == 1:
+                    distance = abs(end - start) * start_length
+                else:
+                    distance = ((1 - start) * start_length + end * end_length
+                                + sum(math.dist(self.roads.nodes[self.roads.edges[key].a],
+                                                self.roads.nodes[self.roads.edges[key].b]) for key in route[1:-1]))
                 return Order(
                     uuid4().hex,
                     origin.id,
                     destination.id,
                     session.rng.randrange(len(PASSENGERS)),
-                    45 + round(math.dist(origin.point, destination.point) * 0.07),
+                    urban_meter(max(0, distance - METER_BASE_DISTANCE) / METER_INCREMENT_DISTANCE) + 5,
                     session.elapsed + session.rng.uniform(30, 180),
                 )
         raise NoReachableTrip(
@@ -478,6 +491,8 @@ class Game:
             if not alighting:
                 session.phase, session.dialogue = "onboard", "pickup"
                 session.route_key = None
+                session.meter_distance = session.meter_units = 0
+                session.fare = urban_meter(0) + (5 if session.order and session.order.source == "phone" else 0)
         if session.phase == "available" and session.offers:
             self.display_order(session, session.offers[0], "available", "offer")
 
@@ -636,6 +651,15 @@ class Game:
                 session.selected_exit = session.selected_junction = None
         session.point, session.speed, session.heading = point, speed, heading
         session.elapsed += elapsed
+        if session.phase == "onboard":
+            before = max(0, session.meter_distance - METER_BASE_DISTANCE)
+            session.meter_distance += total_distance
+            distance_units = (max(0, session.meter_distance - METER_BASE_DISTANCE) - before) / METER_INCREMENT_DISTANCE
+            waiting_units = (elapsed / METER_WAIT_SECONDS
+                             if elapsed > 0 and total_distance / elapsed < METER_INCREMENT_DISTANCE / METER_WAIT_SECONDS
+                             else 0)
+            session.meter_units += max(distance_units, waiting_units)
+            session.fare = urban_meter(session.meter_units) + (5 if session.order and session.order.source == "phone" else 0)
         efficiency = 0.65 if "efficiency" in session.upgrades else 1
         session.fuel = max(0, session.fuel - total_distance * 0.006 * efficiency)
         if session.fuel <= 0:
@@ -728,7 +752,7 @@ class Game:
                     "ends": session.elapsed + 1.8,
                 }
             else:
-                session.money += session.fare
+                session.money = round(session.money + session.fare, 1)
                 session.trips += 1
                 session.phase = "complete"
                 session.dialogue = "arrival"
@@ -905,6 +929,7 @@ class Game:
             "upgrades": session.upgrades[:],
             "phase": session.phase,
             "fare": session.fare,
+            "meter": urban_meter(session.meter_units) if session.phase in {"onboard", "complete"} else None,
             "pickup": session.pickup,
             "destination": ""
             if session.phase == "boarding"

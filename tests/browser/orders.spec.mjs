@@ -121,7 +121,7 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
   let state = {
     id: "orders", version: "orders", seq: 0, x: 50, y: 0, heading: 0, edge: "road", speed: 0,
     paused: true, elapsed: 0, fuel: 100, money: 120, trips: 0, upgrades: [], phase: "available",
-    pickup: "pickup", destination: "dest", fare: 60, passenger, dialogue: "offer",
+    pickup: "pickup", destination: "dest", fare: 60, meter: null, passenger, dialogue: "offer",
     warning: "", route: null, no_route: false, closed: [], traffic: {}, options: [],
     selected_exit: null, selected_junction: null, service_ready: true, depot_ready: false,
     offers: Array.from({ length: 8 }, (_, index) => order(`offer-${index}`)), accepted_orders: [],
@@ -217,6 +217,223 @@ test("fuel exhaustion during an onboard trip discards buffered movement without 
     expect(command.y).toBe(moves[exhausted].y);
     expect(command.speed).toBe(0);
   }
+});
+
+test("dashboard shows the live meter, speed, wallet and garage icon on desktop and phone", async ({ page }, testInfo) => {
+  const fixture = await dispatchFixture(page);
+  await expect(page.locator("#meter-status")).toHaveText("VACANT");
+  await page.locator("#phone-toggle").click();
+  await expect(page.locator(".order-fare").first()).toHaveText("Estimated fare · HK$ 60.0");
+  await page.locator("#phone-close").click();
+  await expect(page.locator("#phone-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => page.locator("#game").evaluate(game => game.scrollLeft)).toBe(0);
+  fixture.state.phase = "onboard";
+  fixture.state.meter = 29;
+  fixture.state.fare = 34;
+  fixture.state.order_source = "phone";
+  fixture.state.active_order = "passenger";
+  fixture.state.service_ready = false;
+  await page.keyboard.down("w");
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 29.0");
+  await expect(page.locator("#meter-status")).toHaveText("HIRED");
+  fixture.state.meter = 31.1;
+  fixture.state.fare = 36.1;
+  fixture.state.money = 120.1;
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 31.1");
+  await expect(page.locator("#money")).toHaveText("$120.1");
+  await expect(page.locator("#garage")).toHaveAttribute("aria-label", "Rest stop / garage");
+  await page.locator("#phone-toggle").click();
+  await page.locator("#accepted-tab").click();
+  await expect(page.locator("#fare")).toHaveText("HK$ 36.1");
+  await expect(page.locator("#fare-label")).toHaveText("Includes $5 phone booking");
+  await page.locator("#phone-close").click();
+  await expect.poll(async () => page.locator("#speed-needle").getAttribute("transform"))
+    .not.toBe("rotate(-90 60 60)");
+  await page.keyboard.up("w");
+  await page.screenshot({ path: testInfo.outputPath("dashboard-desktop.png") });
+  fixture.state.meter = 102.5;
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 102.5");
+  await page.setViewportSize({ width: 320, height: 720 });
+  const boxes = await page.locator(".dashboard").evaluate(dashboard => {
+    const box = element => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    };
+    return [dashboard, ...[...dashboard.children].filter(child => !child.matches(".pickup-controls"))].map(box);
+  });
+  for (const box of boxes.slice(1)) {
+    expect(box.left).toBeGreaterThanOrEqual(boxes[0].left);
+    expect(box.right).toBeLessThanOrEqual(boxes[0].right);
+  }
+  const meterBounds = await page.locator(".taxi-meter").evaluate(meter => ({
+    right: meter.getBoundingClientRect().right,
+    digitsRight: meter.querySelector("#meter-digits").getBoundingClientRect().right,
+  }));
+  expect(meterBounds.digitsRight).toBeLessThanOrEqual(meterBounds.right);
+  const controls = await page.locator(".pickup-controls").boundingBox();
+  expect(controls.y + controls.height).toBeLessThanOrEqual(boxes[0].top);
+  await expect(page.locator("#clock")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("dashboard-phone.png") });
+  fixture.state.phase = "complete";
+  await expect(page.locator("#meter-status")).toHaveText("PAID");
+  await page.locator("#phone-toggle").click();
+  await page.locator("#accepted-tab").click();
+  await expect(page.locator("#fare-label")).toHaveText("Final fare · Includes $5 phone booking");
+});
+
+test("speed reading and pickup controls stay aligned with the dashboard", async ({ page }) => {
+  await dispatchFixture(page);
+  for (const size of [
+    { width: 1280, height: 720 },
+    { width: 800, height: 720 },
+    { width: 390, height: 844 },
+    { width: 320, height: 720 },
+    { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(size);
+    for (const language of ["en", "zh"]) {
+      if (language === "zh") await page.locator("#language").click();
+      const positions = await page.locator(".dashboard").evaluate(dashboard => {
+        const speed = dashboard.querySelector("#speed");
+        const previousSpeed = speed.textContent;
+        speed.textContent = "160";
+        const rect = selector => dashboard.querySelector(selector).getBoundingClientRect().toJSON();
+        const positions = { dashboard: dashboard.getBoundingClientRect().toJSON(),
+          dial: rect(".speed-dial"), reading: rect(".speed-reading"), door: rect("#door") };
+        speed.textContent = previousSpeed;
+        return positions;
+      });
+      expect(positions.door.bottom).toBeLessThanOrEqual(positions.dashboard.top - 8);
+      expect(positions.door.right).toBeLessThanOrEqual(positions.dashboard.right);
+      expect(positions.reading.left).toBeGreaterThanOrEqual(positions.dial.right);
+      expect(positions.reading.right).toBeLessThanOrEqual(positions.dashboard.right);
+      if (size.width === 1280) expect(positions.dial.width).toBeGreaterThan(112);
+      if (size.width === 320) expect(positions.dial.width).toBeGreaterThan(78);
+    }
+    await page.locator("#language").click();
+  }
+  await toggleDrivingView(page);
+  await expect(page.locator("#view-status")).toBeHidden();
+  const dashboard = await page.locator(".dashboard").boundingBox();
+  const door = await page.locator("#door").boundingBox();
+  expect(door.y + door.height).toBeLessThanOrEqual(dashboard.y - 8);
+  await page.setViewportSize({ width: 320, height: 720 });
+  const mobileDoor = await page.locator("#door").boundingBox();
+  const minimap = await page.locator("#minimap-panel").boundingBox();
+  expect(minimap.y + minimap.height).toBeLessThanOrEqual(mobileDoor.y);
+});
+
+test("speed dial stays still and the reading aligns with its bottom as speed changes", async ({ page }) => {
+  await page.goto("/");
+  for (const size of [{ width: 1280, height: 720 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(size);
+    const measurements = await page.locator(".speed-display").evaluate(display => {
+      const dial = display.querySelector(".speed-dial");
+      const reading = display.querySelector(".speed-reading");
+      const speed = display.querySelector("#speed");
+      return ["0", "1", "8", "99", "100", "160"].map(value => {
+        speed.textContent = value;
+        const displayRect = display.getBoundingClientRect();
+        const dialRect = dial.getBoundingClientRect();
+        const readingRect = reading.getBoundingClientRect();
+        return { value, left: dialRect.left, width: dialRect.width,
+          displayLeft: displayRect.left, dialBottom: dialRect.bottom, readingBottom: readingRect.bottom,
+          readingRight: readingRect.right, speedRight: speed.getBoundingClientRect().right };
+      });
+    });
+    for (const measurement of measurements) {
+      expect(measurement.left, measurement.value).toBeCloseTo(measurements[0].left, 2);
+      expect(measurement.left, measurement.value).toBeCloseTo(measurement.displayLeft, 2);
+      expect(measurement.width, measurement.value).toBeCloseTo(measurements[0].width, 2);
+      expect(measurement.readingBottom, measurement.value).toBeCloseTo(measurement.dialBottom, 2);
+      expect(measurement.speedRight, measurement.value).toBeLessThanOrEqual(measurement.readingRight);
+    }
+  }
+});
+
+test("reverse and fuel are centered below the dial, not the speed reading", async ({ page }) => {
+  await page.goto("/");
+  for (const size of [{ width: 1280, height: 720 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+    await page.setViewportSize(size);
+    for (const [text, fuelLabel] of [["REVERSE", "FUEL"], ["倒車", "油量"]]) {
+      const positions = await page.locator(".speed").evaluate((container, [text, fuelLabel]) => {
+        const indicator = container.querySelector("#drive-mode");
+        indicator.textContent = text;
+        indicator.hidden = false;
+        const fuel = container.querySelector(".fuel-stat");
+        fuel.firstElementChild.textContent = fuelLabel;
+        return ["0", "160"].flatMap(speed => ["0%", "100%"].map(amount => {
+          container.querySelector("#speed").textContent = speed;
+          fuel.lastElementChild.textContent = amount;
+          const dial = container.querySelector(".speed-dial").getBoundingClientRect();
+          const reverse = indicator.getBoundingClientRect();
+          const first = fuel.firstElementChild.getBoundingClientRect();
+          const last = fuel.lastElementChild.getBoundingClientRect();
+          return { dial: (dial.left + dial.right) / 2, reverse: (reverse.left + reverse.right) / 2,
+            fuel: (first.left + last.right) / 2, dialLeft: dial.left, dialRight: dial.right,
+            fuelLeft: first.left, fuelRight: last.right };
+        }));
+      }, [text, fuelLabel]);
+      for (const position of positions) {
+        expect(position.reverse, text).toBeCloseTo(position.dial, 1);
+        expect(position.fuel, text).toBeCloseTo(position.dial, 1);
+        expect(position.fuelLeft, text).toBeGreaterThanOrEqual(position.dialLeft - 1);
+        expect(position.fuelRight, text).toBeLessThanOrEqual(position.dialRight + 1);
+      }
+    }
+  }
+});
+
+test("reverse indicator does not move the dashboard or speedometer", async ({ page }) => {
+  await page.goto("/");
+  for (const size of [
+    { width: 1280, height: 720 }, { width: 390, height: 844 },
+    { width: 320, height: 720 }, { width: 844, height: 390 },
+  ]) {
+    await page.setViewportSize(size);
+    for (const text of ["REVERSE", "倒車"]) {
+      const positions = await page.locator(".dashboard").evaluate((dashboard, text) => {
+        const indicator = dashboard.querySelector("#drive-mode");
+        indicator.textContent = text;
+        const measure = () => [dashboard, dashboard.querySelector(".speed-dial"),
+          dashboard.querySelector(".fuel-stat")].map(element => {
+          const rect = element.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom, height: rect.height };
+        });
+        indicator.hidden = true;
+        const before = measure();
+        indicator.hidden = false;
+        const visible = measure();
+        indicator.hidden = true;
+        return { before, visible, after: measure() };
+      }, text);
+      expect(positions.visible).toEqual(positions.before);
+      expect(positions.after).toEqual(positions.before);
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await dispatchFixture(page);
+  const dashboardBefore = await page.locator(".dashboard").boundingBox();
+  await expect(page.locator("#drive-mode")).toBeHidden();
+  await page.keyboard.down("s");
+  await expect(page.locator("#drive-mode")).toBeVisible();
+  await expect(page.locator("#drive-mode")).toHaveText("REVERSE");
+  expect(await page.locator(".dashboard").boundingBox()).toEqual(dashboardBefore);
+  await page.keyboard.up("s");
+});
+
+test("3D dashboard and minimap fit without overlapping", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 720 });
+  await dispatchFixture(page);
+  await toggleDrivingView(page);
+  await expect(page.locator("#map-3d")).toBeVisible();
+  const dashboard = await page.locator(".dashboard").boundingBox();
+  expect(dashboard.x).toBeGreaterThanOrEqual(0);
+  expect(dashboard.x + dashboard.width).toBeLessThanOrEqual(900);
+  await page.setViewportSize({ width: 320, height: 720 });
+  const mobileDashboard = await page.locator(".dashboard").boundingBox();
+  const minimap = await page.locator("#minimap-panel").boundingBox();
+  expect(minimap.y + minimap.height).toBeLessThanOrEqual(mobileDashboard.y);
 });
 
 test("phone slides from the edge, counts uncapped offers, keeps keyboard focus, and hides expired offers", async ({ page }) => {

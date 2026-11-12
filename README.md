@@ -95,7 +95,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 - **Available** lists fictional customers, reachable street pickups/destinations,
   estimated fares, and distance to pickup. Offers arrive every random **45–180
   seconds** and disappear after **30–180 seconds**, with no offer cap or visible
-  countdown. One initial offer is available when the shift starts.
+  countdown. Estimates use the planned route without waiting time and include
+  the HK$5 phone-booking charge; the final fare depends on the meter.
+  One initial offer is available when the shift starts.
   If no legal passenger trip is reachable when a scheduled offer is due,
   dispatch logs the deferral and tries again after 45–180 seconds; driving
   continues without rejecting the movement update.
@@ -322,9 +324,20 @@ hints, and English / Traditional Chinese. Changes apply immediately. Settings
 are stored separately in this browser's local storage; read/write failures are
 shown in the interface.
 
+The taxi meter adapts the [urban taxi tariff](https://www.td.gov.hk/en/transport_in_hong_kong/public_transport/taxi/taxi_fare_of_hong_kong/index.html)
+to the small playable district: HK$29 for the first **500 m**, then HK$2.10
+per completed 200 m or minute of waiting, reduced to HK$1.40 after the meter
+reaches HK$102.50. Real urban taxis use a 2 km starting distance. The simulation treats
+movement below 12 km/h as waiting time, using each movement update's average
+speed, and does not charge distance and waiting time simultaneously. The
+phone-booking charge is added separately at drop-off. Luggage, animals and
+specific toll charges are not simulated.
+
 There is **no shift-progress saving**. Reloading starts a new shift, while
 settings remain in this browser. A server restart also clears sessions. Money
-and fares are arcade game values, not Hong Kong taxi tariffs.
+and fares are simulated and are not suitable for real-world fare calculation.
+The dashboard shows the current speed beside the dial, with fuel below it;
+pickup and drop-off controls sit just above the dashboard.
 
 ## What is included
 
