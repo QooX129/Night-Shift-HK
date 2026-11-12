@@ -1270,6 +1270,7 @@ export class Map3DView {
       }
       if (name === "route" && this.elevation && this.detailWorker && ids.length) {
         if (this.pendingRoute?.key === key) return;
+        if (previous) replaceLayer(name, [], color, height);
         const request = this.routeRequest = (this.routeRequest ?? 0) + 1;
         this.pendingRoute = { request, key, ids: [...ids], color, height };
         this.detailWorker.postMessage({ type: "route", request, ids, width, height });

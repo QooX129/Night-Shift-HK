@@ -6,6 +6,7 @@ import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCate
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
 import { interpolateCar } from "./visual-motion.mjs";
 import { routeDistance } from "./route-distance.mjs";
+import { upcomingRoute } from "./route-guide.mjs";
 
 const $ = id => document.getElementById(id);
 const loadedPreferences = loadSettings();
@@ -566,7 +567,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=tunnel-clearance-1");
+      const { Map3DView } = await import("./map3d.mjs?v=route-guide-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }
@@ -645,7 +646,8 @@ function frame(timestamp) {
     const approach = roads.preview(car, new Set(state.closed));
     const preview = $("junction").open ? previewExit : null;
     visualElapsed = Math.max(visualElapsed, state.elapsed + inFlightElapsed + elapsed);
-    const visualState = { ...state, elapsed: visualElapsed };
+    const visualState = { ...state, elapsed: visualElapsed,
+      route: upcomingRoute(state.route, roads.edges, car.edge) };
     const visualCar = interpolateCar(previousCar, car, stepBank * 60);
     view.render(visualCar, visualState, lang, approach, preview);
     if (popupMap && !$("map-popup").hidden) popupMap.render(visualCar, visualState, lang, approach, preview);

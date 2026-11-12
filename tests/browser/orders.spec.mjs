@@ -94,7 +94,7 @@ test("citizens and passengers stand on their road level after elevation is enabl
   expect(heights.legacy).toEqual([0, 0, 0, 0]);
 });
 
-async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false) {
+async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRoute = false) {
   const passenger = { name: "Mei", zh: "阿美", role: "Photographer", role_zh: "攝影師",
     pickup: "Thanks!", pickup_zh: "唔該！", arrival: "Here!", arrival_zh: "到喇！" };
   const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 300,
@@ -109,6 +109,13 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false) {
     { id: "dest", name: "Test Street destination", zh: "測試街落車", edge: "road", point: [200, 0] },
     { id: "depot", name: "Rest stop", zh: "休息站", edge: "road", point: [20, 0] },
   ];
+  if (guideRoute) {
+    map.nodes.c = [600, 0];
+    map.edges.push({ ...edge, id: "next", a: "b", b: "c", way: 2 },
+      { ...edge, id: "~next", a: "c", b: "b", way: 2 });
+    stops[1].edge = "next";
+    stops[1].point = [350, 0];
+  }
   const order = id => ({ id, pickup: "pickup", destination: "dest", passenger, fare: 60,
     source: "phone", distance: 0 });
   let state = {
@@ -176,7 +183,7 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false) {
       state.boarding = { point: [55, 6], starts: state.elapsed, ends: state.elapsed + 1.8 };
       state.destination = ""; state.citizens = []; state.dialogue = "boarding";
     } else throw new Error(`Unexpected command ${command.action}`);
-    state.route = ["pickup", "onboard"].includes(state.phase) ? ["road"] : null;
+    state.route = ["pickup", "onboard"].includes(state.phase) ? (guideRoute ? ["road", "next"] : ["road"]) : null;
     state.can_accept = !["pickup", "boarding"].includes(state.phase) && !state.accepted_orders.length;
     if (command.action === "move" && moveDelay) await new Promise(resolve => setTimeout(resolve, moveDelay));
     await route.fulfill({ json: state });
@@ -256,6 +263,48 @@ test("phone pickups are automatic and one waiting order is stored on Accepted", 
   await expect(page.locator("#accepted-orders .order-card")).toHaveCount(1);
   await page.locator("#available-tab").click();
   await expect(page.locator("#available-orders .order-accept").first()).toBeDisabled();
+});
+
+test("all views receive only the upcoming GPS segments without changing the route", async ({ page }) => {
+  await page.addInitScript(() => { window.routeGuides = []; });
+  await page.route(/\/app\.mjs\?/, async route => {
+    const response = await route.fetch();
+    const source = await response.text();
+    let instrumented = source;
+    for (const [renderer, mode] of [["view", 'view === map3d ? "3d" : "2d"'],
+      ["popupMap", '"popup"'], ["minimap", '"minimap"']]) {
+      const render = `${renderer}.render(visualCar, visualState, lang, approach, preview);`;
+      expect(instrumented).toContain(render);
+      instrumented = instrumented.replace(render, `{
+        if (state.phase === "onboard" && state.route?.length) {
+          window.routeGuides.push({ current: car.edge, route: state.route,
+            visible: visualState.route, mode: ${mode} });
+        }
+        ${render}
+      }`);
+    }
+    await route.fulfill({ response, body: instrumented });
+  });
+  const fixture = await dispatchFixture(page, 0, false, true);
+  fixture.state.phase = "onboard";
+  fixture.state.active_order = "passenger";
+  await expect.poll(() => page.evaluate(() => window.routeGuides.some(sample =>
+    sample.mode === "2d" && sample.visible?.length))).toBe(true);
+  await toggleDrivingView(page);
+  await expect(page.locator("#map-3d")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.routeGuides.some(sample =>
+    sample.mode === "3d" && sample.visible?.length))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.routeGuides.some(sample =>
+    sample.mode === "minimap" && sample.visible?.length))).toBe(true);
+  await page.locator("#view-mode").click();
+  await expect.poll(() => page.evaluate(() => window.routeGuides.some(sample =>
+    sample.mode === "popup" && sample.visible?.length))).toBe(true);
+  const samples = await page.evaluate(() => window.routeGuides.filter(sample => sample.visible?.length));
+  for (const sample of samples) {
+    expect(sample.current).toBe("road");
+    expect(sample.route).toEqual(["road", "next"]);
+    expect(sample.visible).toEqual(["next"]);
+  }
 });
 
 test("trip panel shows the pickup, then the destination, and closes after drop-off", async ({ page }) => {
@@ -402,7 +451,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=tunnel-clearance-1`);
+      const module = await import(`/${path}?v=${path === "map3d.mjs" ? "route-guide-1" : "tunnel-clearance-1"}`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

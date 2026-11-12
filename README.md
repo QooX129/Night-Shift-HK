@@ -112,6 +112,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   with remaining distance along the GPS route. Use its arrow to hide or reopen it;
   it reopens after boarding and slides away when the trip ends. Distance is
   unavailable when the GPS has no usable route.
+- The GPS line starts after the taxi's current road segment in all views. The
+  full route still determines junction suggestions and the displayed distance;
+  if you leave the route, the line waits for an updated plan.
 - Citizens walk along safe roadside paths on both sides of nearby ground-level
   streets, never through road surfaces or building footprints. Blocked paths
   turn back rather than cutting through buildings or across junction roads.
@@ -472,8 +475,8 @@ the exposed perimeter, preventing faded seams along sloped roads.
 Reroutes reuse a bounded cache of 512 sampled road-segment shapes, assembling
 the new guide without retriangulating roads already used by the same view.
 In the elevated view, new GPS geometry is prepared in the terrain worker so
-first-time routes do not block acceleration after pickup. The previous guide
-stays visible until its replacement arrives; obsolete worker replies are ignored.
+first-time routes do not block acceleration after pickup. An obsolete guide is
+cleared while its replacement is prepared; obsolete worker replies are ignored.
 Advancing along the same route while its worker build is pending keeps that
 request alive. Its completed geometry is trimmed to the latest remaining legs,
 so crossing short road segments cannot repeatedly cancel and hide the guide.

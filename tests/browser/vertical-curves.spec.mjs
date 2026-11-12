@@ -205,12 +205,12 @@ test("first passenger routes build in the worker without blocking launch or appl
         === movingLayer?.mesh.geometry.userData.edgeStarts[6];
       const visibleMovingRoute = movingLayer?.mesh.geometry.drawRange.count > 0;
       update(pickup);
-      const retained = view.overlayLayers.get("route") === movingLayer;
+      const clearedBeforeReroute = !view.overlayLayers.has("route");
       const cancelledRequest = view.pendingRoute.request;
       update({ ...onboard, route: null });
       await reply(cancelledRequest);
       update({ ...onboard, route: null });
-      return { maxUpdateMs: Math.max(...times), identical, startsMatch, correctPhase, retained,
+      return { maxUpdateMs: Math.max(...times), identical, startsMatch, correctPhase, clearedBeforeReroute,
         launched: car.speed > 0 && Math.hypot(car.x - (a[0] + b[0]) / 2, car.y - (a[1] + b[1]) / 2) > 0,
         maxLaunchMs: Math.max(...launchTimes),
         reusedPending, followsMovingRoute, visibleMovingRoute,
@@ -226,7 +226,7 @@ test("first passenger routes build in the worker without blocking launch or appl
   expect(result.maxLaunchMs).toBeLessThan(16.7);
   expect(result.launched).toBe(true);
   expect(result.identical && result.startsMatch && result.correctPhase).toBe(true);
-  expect(result.retained && result.superseded && result.cleared).toBe(true);
+  expect(result.clearedBeforeReroute && result.superseded && result.cleared).toBe(true);
   expect(result.reusedPending && result.followsMovingRoute && result.visibleMovingRoute).toBe(true);
 });
 

@@ -6,7 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   graphics: "auto",
   cameraSmoothness: 60,
   cameraRotationSpeed: 90,
-  chaseDistance: 100,
+  chaseDistance: 70,
   reducedMotion: false,
   steeringSensitivity: 300,
   junctionGrace: 150,
