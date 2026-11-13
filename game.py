@@ -83,6 +83,7 @@ class Order:
     deadline: float | None = None
     pickup_point: Point | None = None
     destination_point: Point | None = None
+    customer_point: Point | None = None
 
 
 @dataclass
@@ -442,6 +443,9 @@ class Game:
             origin_point = origin.point if pickup or origin.group is None else self.randomized_stop_point(session, origin)
             if origin_point is None:
                 continue
+            customer_point = None if pickup else self.phone_customer_point(edge, origin_point)
+            if not pickup and customer_point is None:
+                continue
             start_route = self.roads.route(
                 start_edge, edge, session.history, session.closed, session.traffic
             )
@@ -491,10 +495,22 @@ class Game:
                     session.elapsed + session.rng.uniform(30, 180),
                     pickup_point=origin_point,
                     destination_point=destination_point,
+                    customer_point=customer_point,
                 )
         raise NoReachableTrip(
             "No reachable passenger trip. Clear the closure or return to the depot."
         )
+
+    def phone_customer_point(self, edge: Edge, pickup: Point) -> Point | None:
+        a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+        for side, path in self.sidewalks.paths(edge):
+            if side != 1:
+                continue
+            point = project(pickup, *path)[0]
+            centre = project(point, a, b)[0]
+            if math.dist(centre, pickup) < 1e-6 and self.flyover_clear(point):
+                return point
+        return None
 
     def display_order(
         self, session: Session, order: Order, phase: str, dialogue: str
@@ -935,7 +951,7 @@ class Game:
             if session.phase == "pickup":
                 session.phase = session.dialogue = "boarding"
                 session.boarding = {
-                    "point": self.curb_point(target),
+                    "point": session.order.customer_point,
                     "starts": session.elapsed,
                     "ends": session.elapsed + 1.8,
                 }
@@ -1134,7 +1150,7 @@ class Game:
             and session.order
             and session.order.source == "street"
             else session.destination_point,
-            "customer": self.curb_point(target) if session.phase == "pickup" and target else None,
+            "customer": session.order.customer_point if session.phase == "pickup" and session.order else None,
             "passenger": PASSENGERS[session.passenger],
             "dialogue": session.dialogue,
             "route": session.route,

@@ -97,6 +97,53 @@ test("narrow-road assist smoothly aligns toward either road direction in forward
   }
 });
 
+test("narrow-road assist releases steering near the end in both travel directions", () => {
+  for (const { x, heading, speed, input } of [
+    { x: 58, heading: -.15, speed: 3, input: { right: true } },
+    { x: 58, heading: Math.PI - .15, speed: -3, input: { left: true } },
+    { x: 2, heading: -.15, speed: -3, input: { left: true } },
+    { x: 2, heading: Math.PI - .15, speed: 3, input: { right: true } },
+  ]) {
+    const roads = network({ body: true });
+    roads.edges.get("ab").width = roads.edges.get("~ab").width = 3.9;
+    const car = { ...carAt(x), heading, speed };
+    const reference = { ...car };
+    stepCar(reference, input, 1 / 60, freeDriving);
+    stepCar(car, input, 1 / 60, { roads });
+    assert.ok(Math.abs(angleDifference(car.heading, reference.heading)) < 1e-10,
+      `steering should remain manual near the end: ${JSON.stringify({ x, heading, speed })}`);
+  }
+});
+
+test("narrow-road assist only releases within one taxi length in the direction of travel", () => {
+  for (const { x, speed, assisted } of [
+    { x: 54.59, speed: 3, assisted: true },
+    { x: 54.61, speed: 3, assisted: false },
+    { x: 58, speed: -3, assisted: true },
+  ]) {
+    const roads = network({ body: true });
+    roads.edges.get("ab").width = roads.edges.get("~ab").width = 3.9;
+    const car = { ...carAt(x), heading: -.15, speed };
+    const input = speed > 0 ? { right: true } : { left: true };
+    const reference = { ...car };
+    stepCar(reference, input, 1 / 60, freeDriving);
+    stepCar(car, input, 1 / 60, { roads });
+    const extraRotation = angleDifference(car.heading, reference.heading);
+    assert.equal(extraRotation > 1e-8, assisted, JSON.stringify({ x, speed }));
+  }
+});
+
+test("manual steering turns safely from a narrow road into a junction", () => {
+  const roads = network({ body: true });
+  roads.edges.get("ab").width = roads.edges.get("~ab").width = 3.9;
+  const car = { ...carAt(57), heading: -.15, speed: 3 };
+  for (let frame = 0; frame < 40; frame++) {
+    stepCar(car, { gas: true, right: true }, 1 / 60, { roads });
+    assert.ok(roads.bodyFits(car, car.heading, roads.edges.get(car.edge)));
+  }
+  assert.equal(car.edge, "bd");
+});
+
 test("narrow-road assist checks the exact angle threshold and has a timestep-independent response", () => {
   for (const angle of [Math.PI / 6 - 1e-6, Math.PI / 6, Math.PI / 6 + 1e-6]) {
     const roads = network({ body: true });

@@ -1,8 +1,11 @@
+import math
+import random
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from pedestrians import Sidewalks, advance_walk, path_pose
+from game import Game
+from pedestrians import Sidewalks, advance_walk, path_pose, segment_distance
 from roads import Edge
 
 
@@ -35,6 +38,61 @@ class SidewalkTests(unittest.TestCase):
             self.assertTrue(sidewalks.safe(*points))
             if points[0][1] > 0:
                 self.assertFalse(points[0][0] < 41 < points[1][0])
+
+    def test_spawned_citizens_and_their_paths_avoid_flyovers(self):
+        roads = self.roads()
+        roads.nodes.update({"c": (50, -30), "d": (50, 30)})
+        flyover = Edge("cd", "c", "d", 2, 60, "Flyover", "Flyover", "primary",
+                       False, "1", "yes", "no", width=10)
+        roads.edges[flyover.id] = flyover
+        game = Game.__new__(Game)
+        game.roads, game.sidewalks, game.stops = roads, Sidewalks(roads), {}
+        session = SimpleNamespace(point=(50, 0), rng=random.Random(2026), elapsed=0, citizens=[])
+        for _ in range(100):
+            game.spawn_citizen(session)
+        self.assertEqual(len(session.citizens), 100)
+        for citizen in session.citizens:
+            self.assertTrue(game.sidewalks.safe(*citizen.path))
+            self.assertGreaterEqual(
+                segment_distance(*citizen.path, roads.nodes["c"], roads.nodes["d"]), 5.35
+            )
+            self.assertLessEqual(math.dist(session.point, game.citizen_point(citizen)), 220)
+
+    def test_motorways_and_trunk_roads_are_not_spawn_paths(self):
+        for kind in ("motorway", "trunk"):
+            roads = self.roads()
+            edge = roads.edges["ab"]
+            roads.edges["ab"] = Edge(edge.id, edge.a, edge.b, edge.way, edge.length,
+                                     edge.name, edge.zh, kind, False, "0", "no", "no", width=10)
+            game = Game.__new__(Game)
+            game.roads, game.sidewalks, game.stops = roads, Sidewalks(roads), {}
+            session = SimpleNamespace(point=(50, 0), rng=random.Random(2026), elapsed=0, citizens=[])
+            game.spawn_citizen(session)
+            self.assertEqual(session.citizens, [], kind)
+
+    def test_bridges_block_sidewalks_but_tunnels_do_not(self):
+        for layer, bridge, tunnel, blocked in [
+            ("0", "yes", "no", True),
+            ("1", "no", "no", True),
+            ("-1", "no", "yes", False),
+        ]:
+            roads = self.roads()
+            roads.nodes.update({"c": (50, -30), "d": (50, 30)})
+            roads.edges["cd"] = Edge("cd", "c", "d", 2, 60, "Other", "Other", "primary",
+                                     False, layer, bridge, tunnel, width=10)
+            sidewalks = Sidewalks(roads)
+            self.assertEqual(sidewalks.safe((50, 7), (50, 7)), not blocked)
+
+    def test_spawning_does_not_fall_back_when_flyover_blocks_all_paths(self):
+        roads = self.roads()
+        roads.nodes.update({"c": (50, -30), "d": (50, 30)})
+        roads.edges["cd"] = Edge("cd", "c", "d", 2, 60, "Flyover", "Flyover", "primary",
+                                 False, "1", "yes", "no", width=200)
+        game = Game.__new__(Game)
+        game.roads, game.sidewalks, game.stops = roads, Sidewalks(roads), {}
+        session = SimpleNamespace(point=(50, 0), rng=random.Random(2026), elapsed=0, citizens=[])
+        game.spawn_citizen(session)
+        self.assertEqual(session.citizens, [])
 
     def test_entering_new_areas_uses_prepared_geometry(self):
         sidewalks = Sidewalks(self.roads())

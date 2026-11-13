@@ -15,7 +15,7 @@ test("layer-only OSM roads build an elevated deck instead of a ground road", asy
       data: { driving: { widths: { primary: 16 } } },
       elevation: { node_heights: { a: 6, b: 6 }, road_profiles: {}, road_junctions: {},
         pilot: { triangles: [] } },
-      groundMap: { unique: [edge] }, camera: { x: 0, y: 0 }, stream: null,
+      groundMap: { unique: [edge] }, camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
       addRoadTile(road) { tiles.push(road); }, scene: { add() {} },
     });
     const task = view.roadSurfaceGeometry();

@@ -71,7 +71,7 @@ test("alignment assistance works safely on the actual map's narrow roads in eith
     const data = await (await fetch("/api/map")).json();
     const roads = new RoadNetwork(data);
     const rotationFits = roads.rotationFits.bind(roads);
-    let checked = 0, unsafe = 0;
+    let checked = 0, unsafe = 0, nearEnd = 0;
     for (const edge of roads.edges.values()) {
       if (edge.width > data.driving.taxi_width * 2) continue;
       const a = roads.nodes[edge.a], b = roads.nodes[edge.b];
@@ -81,12 +81,18 @@ test("alignment assistance works safely on the actual map's narrow roads in eith
             heading: facing + .05, edge: edge.id, speed };
           const input = speed > 0 ? { left: true } : { right: true };
           const origin = { x: car.x, y: car.y };
-          let assisted = false;
+          let assisted = false, attempted = false;
           roads.rotationFits = (...args) => {
+            attempted = true;
             assisted = rotationFits(...args);
             return assisted;
           };
           stepCar(car, input, 1 / 60, { roads });
+          if (Math.hypot(b[0] - a[0], b[1] - a[1]) / 2 <= data.driving.taxi_length) {
+            if (attempted) throw new Error(`Assistance did not release near the end: ${edge.id}`);
+            nearEnd++;
+            continue;
+          }
           if (!assisted) {
             if (rotationFits(origin, facing + .05, facing, edge))
               throw new Error(`Safe alignment did not gain assistance: ${edge.id}`);
@@ -103,8 +109,9 @@ test("alignment assistance works safely on the actual map's narrow roads in eith
         }
       }
     }
-    return { checked, unsafe };
+    return { checked, unsafe, nearEnd };
   });
   expect(result.checked).toBeGreaterThan(0);
   expect(result.unsafe).toBeGreaterThan(0);
+  expect(result.nearEnd).toBeGreaterThan(0);
 });

@@ -463,7 +463,7 @@ export class Map3DView {
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(
         pilot.triangles.flatMap(triangle => triangle.flatMap(([x, y, z]) =>
           [x, z + pilot.estimated_vertical_offset_m, y])), 3));
-      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+      geometry.computeVertexNormals(); geometry.computeBoundingSphere(); geometry.computeBoundingBox();
       const material = new THREE.MeshStandardMaterial({ color: "#8b9693", roughness: 1, side: THREE.DoubleSide });
       const faded = material.clone();
       faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
@@ -475,6 +475,9 @@ export class Map3DView {
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
     const material = new THREE.MeshBasicMaterial({ color: "#46545a", side: THREE.DoubleSide });
+    const faded = material.clone();
+    faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
+    this.resources.push(faded);
     const jointTiles = new Map();
     for (const [node, radius] of nodeRadii) {
       const [x, y] = this.nodes[node];
@@ -492,10 +495,11 @@ export class Map3DView {
     for (const positions of jointTiles.values()) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+      geometry.computeVertexNormals(); geometry.computeBoundingSphere(); geometry.computeBoundingBox();
       const joints = new THREE.Mesh(geometry, material);
       joints.name = "continuous-shared-node-road-joints";
       this.scene.add(joints);
+      this.structures.push({ mesh: joints, material, faded });
       yield;
     }
   }
@@ -504,19 +508,17 @@ export class Map3DView {
       if (!positions.length) continue;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-      geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+      geometry.computeVertexNormals(); geometry.computeBoundingSphere(); geometry.computeBoundingBox();
       const material = new THREE.MeshBasicMaterial({ color: { deck: "#46545a", shell: "#788483",
         elevatedDeck: "#46545a", markings: "#c2d0bf" }[kind], side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = kind === "deck" || kind === "elevatedDeck"
         ? "level-separated-solid-road-decks" : "bridge-and-tunnel-shells";
       this.scene.add(mesh);
-      if (kind === "shell" || kind === "elevatedDeck") {
-        const faded = material.clone();
-        faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
-        this.resources.push(material, faded);
-        this.structures.push({ mesh, material, faded });
-      }
+      const faded = material.clone();
+      faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
+      this.resources.push(material, faded);
+      this.structures.push({ mesh, material, faded });
     }
   }
   refreshGroundDetail(x, y, image = null) {
@@ -1386,12 +1388,12 @@ export class Map3DView {
         && sphere.center.distanceTo(position) < distance + sphere.radius;
       building.material = !this.overview && obstructs ? this.fadedCityMaterial : this.cityMaterial;
     }
+    const sightDirection = line.delta(new THREE.Vector3());
+    const raycaster = this.overview ? null
+      : new THREE.Raycaster(line.start, sightDirection.clone().normalize(), 0, sightDirection.length());
     for (const { mesh, material, faded } of this.structures || []) {
-      const sphere = mesh.geometry.boundingSphere;
-      line.closestPointToPoint(sphere.center, true, closest);
-      mesh.material = !this.overview && closest.distanceTo(sphere.center) < sphere.radius + 4
-        && sphere.center.y > position.y + 2
-        && sphere.center.distanceTo(position) < distance + sphere.radius ? faded : material;
+      if (raycaster) mesh.updateWorldMatrix(true, false);
+      mesh.material = raycaster && raycaster.intersectObject(mesh, false).length ? faded : material;
     }
     if (state) {
       this.updateCitizens(state, car, lang);

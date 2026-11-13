@@ -122,7 +122,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   [Transport Department's Road Users' Code](https://www.td.gov.hk/en/road_safety/road_users_code/index/chapter_5_for_all_drivers/where_not_to_stop_/index.html)
   also advises against stopping near junctions.
 - Accept a phone order, then stop at its **green** pickup marker. The customer
-  waits waving at the curb and walks into the taxi automatically once you stop.
+  waits waving on a clear sidewalk beside the pickup and walks into the taxi
+  automatically once you stop. Pickups without a suitable sidewalk or with a
+  sidewalk too close to a mapped flyover are skipped.
   **Accepted** stores the current pickup and any waiting order.
   Carry one passenger per trip; while carrying one, you can accept **one pending
   phone order**. Waiting accepted customers cancel after **120–300 seconds**,
@@ -135,7 +137,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   full route still determines junction suggestions and the displayed distance;
   if you leave the route, the line waits for an updated plan.
 - Citizens walk along safe roadside paths on both sides of nearby ground-level
-  streets, never through road surfaces or building footprints. Blocked paths
+  streets, never through road surfaces, flyover footprints or buildings.
+  Motorways and trunk roads are not used as walking paths. Blocked paths
   turn back rather than cutting through buildings or across junction roads.
   Movement is sampled continuously between server updates, with varied walking
   speeds, alternating arms/legs, and eased facing changes.
@@ -709,8 +712,10 @@ the heading difference is **strictly below 30 degrees**. This works forward and
 in reverse, ignoring official road direction for alignment only. Assistance
 changes heading, never teleports sideways, and adds rotation only if the entire
 angular sweep fits the connected road footprint. Steering away, no steering,
-stationary taxis and wider roads retain manual steering; closures and route
-restrictions are unchanged. The assist's exponential response time is
+stationary taxis and wider roads retain manual steering. Assistance also releases
+within one taxi length of the end of the current segment in the direction of
+travel, so the driver can turn at junctions. Closures and route restrictions
+are unchanged. The assist's exponential response time is
 `NARROW_ROAD_ASSIST_SECONDS` (0.25 seconds) in `web/physics.mjs`, separate from
 manual steering response and sensitivity.
 During forced turns, browser and server matching both exclude unselected exits.

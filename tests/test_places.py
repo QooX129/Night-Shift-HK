@@ -112,7 +112,7 @@ class PlaceTests(unittest.TestCase):
         session = game.sessions[data["id"]]
         session.rng = random.Random(2026)
         named = set()
-        for _ in range(25):
+        for _ in range(50):
             order = game.make_order(session)
             destination = game.stops[order.destination]
             origin = game.stops[order.pickup]

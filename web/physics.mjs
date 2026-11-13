@@ -348,12 +348,17 @@ export function stepCar(car, input, dt, {
     let manualSteering = steeringTravel * steeringSensitivity
       * Math.max(-1, Math.min(1, car.speed / 3));
     if (previous && roadWidth(roads.driving, previous) <= roads.driving.taxi_width * 2) {
+      const a = roads.nodes[previous.a], b = roads.nodes[previous.b];
+      const fraction = project(car, a, b).t;
+      const towardsEnd = car.speed * Math.cos(car.heading - roads.angle(previous)) > 0;
+      const distanceToEnd = (towardsEnd ? 1 - fraction : fraction) * Math.hypot(b[0] - a[0], b[1] - a[1]);
       let alignment = angleDifference(roads.angle(previous), car.heading);
       if (Math.abs(alignment) > Math.PI / 2) {
         alignment = angleDifference(roads.angle(previous) + Math.PI, car.heading);
       }
       // Angle wrapping must not pull exactly 30 degrees inside the threshold.
-      if (Math.abs(alignment) < Math.PI / 6 - 1e-12 && steeringTarget * Math.sign(car.speed) * alignment > 0) {
+      if ((!roads.driving.taxi_length || distanceToEnd > roads.driving.taxi_length)
+          && Math.abs(alignment) < Math.PI / 6 - 1e-12 && steeringTarget * Math.sign(car.speed) * alignment > 0) {
         const rotation = Math.sign(alignment) * Math.min(Math.abs(alignment),
           Math.max(0, manualSteering * Math.sign(alignment))
           + Math.abs(alignment) * -Math.expm1(-step / NARROW_ROAD_ASSIST_SECONDS));

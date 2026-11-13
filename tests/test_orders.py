@@ -7,7 +7,8 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import app, game as api_game
-from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, RuleError, Stop, urban_meter
+from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, NoReachableTrip, RuleError, Stop, urban_meter
+from pedestrians import segment_distance
 from roads import RoadMap, project
 
 
@@ -356,7 +357,9 @@ class OrderTests(unittest.TestCase):
     def test_phone_customer_waits_at_pickup_then_walks_in(self):
         self.cmd("accept", order=self.session.offers[0].id)
         state = self.game.snapshot(self.session)
-        self.assertTrue(4 <= math.dist(state["customer"], state["pickup_point"]) <= 16 / 2 + 1)
+        edge = self.game.roads.edges[self.game.stops[self.session.pickup].edge]
+        self.assertAlmostEqual(math.dist(state["customer"], state["pickup_point"]),
+                               self.game.roads.radius(edge) + 2)
         self.at_stop(self.session.pickup)
         self.session.paused = False
         response = self.cmd("service")
@@ -369,6 +372,33 @@ class OrderTests(unittest.TestCase):
                      heading=self.session.heading, dt=0.1)
         self.advance(1.8)
         self.assertEqual(self.session.phase, "onboard")
+
+    def test_phone_customers_use_safe_sidewalks_at_the_pickup(self):
+        for _ in range(30):
+            order = self.game.make_order(self.session)
+            self.session.order = order
+            self.game.display_order(self.session, order, "pickup", "accepted")
+            point = self.game.snapshot(self.session)["customer"]
+            edge = self.game.roads.edges[self.game.stops[order.pickup].edge]
+            self.assertTrue(self.game.sidewalks.safe(point, point), (order.pickup, point))
+            self.assertTrue(self.game.flyover_clear(point), (order.pickup, point))
+            self.assertTrue(any(
+                project(point, *path)[1] < 1e-6
+                for side, path in self.game.sidewalks.paths(edge) if side == 1
+            ), (order.pickup, point))
+            centre = project(point, self.game.roads.nodes[edge.a], self.game.roads.nodes[edge.b])[0]
+            self.assertLess(math.dist(centre, order.pickup_point), 1e-6)
+
+    def test_phone_order_rejects_pickups_without_a_clear_sidewalk(self):
+        order = self.game.make_order(self.session)
+        stop = self.game.stops[order.pickup]
+        edge = self.game.roads.edges[stop.edge]
+        with patch.object(self.game, "flyover_clear", return_value=False):
+            self.assertIsNone(self.game.phone_customer_point(edge, order.pickup_point))
+        with patch.object(self.game, "pickup_stops", [stop]), \
+             patch.object(self.game.sidewalks, "paths", return_value=[]):
+            with self.assertRaises(NoReachableTrip):
+                self.game.make_order(self.session)
 
     def test_dropoff_plays_alighting_animation_that_holds_the_taxi(self):
         self.phone_pickup()
@@ -583,6 +613,22 @@ class OrderTests(unittest.TestCase):
             self.assertFalse(citizen.hailing)
             self.assertTrue(self.game.sidewalks.safe(*citizen.path))
             self.assertLessEqual(math.dist(self.session.point, self.game.citizen_point(citizen)), CITIZEN_RADIUS + 1e-9)
+
+    def test_spawns_near_mapped_flyovers_stay_clear_of_their_footprints(self):
+        self.session.point = self.game.midpoint(self.game.flyover_edges[0])
+        self.session.citizens = []
+        for _ in range(30):
+            self.game.spawn_citizen(self.session)
+        self.assertEqual(len(self.session.citizens), 30)
+        for citizen in self.session.citizens:
+            edge = self.game.roads.edges[self.game.stops[citizen.stop].edge]
+            self.assertNotIn(edge.kind, {"motorway", "trunk"})
+            for flyover in self.game.flyover_edges:
+                self.assertGreaterEqual(
+                    segment_distance(*citizen.path, self.game.roads.nodes[flyover.a],
+                                     self.game.roads.nodes[flyover.b]),
+                    self.game.roads.radius(flyover) + .35 - 1e-8,
+                )
 
     def test_walking_beyond_range_retains_citizen_until_expiry(self):
         citizen = self.citizen(hailing=False)

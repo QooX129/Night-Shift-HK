@@ -137,3 +137,61 @@ test("progressive building groups preserve streamed elevation and dispose distan
   assert(disposed);
   view.cityMaterial.dispose();
 });
+
+test("3D road surfaces and tunnel shells blocking the taxi become transparent", () => {
+  const previousDocument = globalThis.document;
+  const previousWidth = globalThis.innerWidth, previousHeight = globalThis.innerHeight;
+  globalThis.document = { timeline: { currentTime: 1000 } };
+  globalThis.innerWidth = 1280; globalThis.innerHeight = 720;
+  try {
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      camera: { x: 0, y: 0 }, cameraSmoothness: 1, chaseDistanceScale: 1, zoom: 1.65,
+      edges: new Map([["road", { id: "road", tunnel: "yes" }]]), elevation: {},
+      scene: new THREE.Scene(), lens: new THREE.PerspectiveCamera(), resources: [], structures: [],
+      cameraReady: true, cameraHeading: 0, lastRender: 900, frameTimes: [],
+      ground: { material: {} }, terrainTiles: [], boundaryOutline: { children: [] }, directionLines: {},
+      taxi: new THREE.Object3D(), buildings: [], roadLabel: {}, updateStreamedCity() {},
+      updateGroundDetail() {}, drawScene() {},
+    });
+    view.scene.fog = { near: 0, far: 0 };
+    view.lens.position.set(-43.2, 20, 0);
+    const plane = (height, left, right) => [
+      left, height, -5, right, height, -5, right, height, 5,
+      left, height, -5, right, height, 5, left, height, 5,
+    ];
+    view.addRoadTile({ shell: [...plane(5.08, -16, -8), ...plane(-20, -90, -80)],
+      deck: plane(7, -23, -14), elevatedDeck: plane(9, -28, -20),
+      markings: plane(7.04, -23, -14) });
+    view.addRoadTile({ deck: plane(.08, -20, 0) });
+    const shell = view.scene.children.find(mesh => mesh.name === "bridge-and-tunnel-shells");
+    const [deck, elevatedDeck, markings, road] = view.scene.children.filter(mesh => mesh !== shell);
+    view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);
+    assert.equal(shell.material.opacity, 0.12, "tunnel shell blocks the camera");
+    assert.equal(deck.material.opacity, 0.12, "road deck blocks the camera");
+    assert.equal(elevatedDeck.material.opacity, 0.12, "flyover deck blocks the camera");
+    assert.equal(markings.material.opacity, 0.12, "road markings block the camera");
+    assert.equal(road.material.opacity, 1, "the road underneath the taxi stays opaque");
+    view.overview = true;
+    view.data = { bounds: [-100, -100, 100, 100] };
+    view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);
+    for (const mesh of [shell, deck, elevatedDeck, markings, road]) {
+      assert.equal(mesh.material.opacity, 1, "overview restores road surfaces");
+    }
+    view.overview = false;
+    view.cameraReady = false;
+    view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);
+    for (const mesh of [shell, deck, elevatedDeck, markings, road]) {
+      assert.equal(mesh.material.opacity, 1, "unobstructed surfaces return to normal");
+    }
+    view.edges.get("road").tunnel = "no";
+    view.lens.position.set(-43.2, 10, 0);
+    view.cameraReady = true;
+    view.lastRender = 900;
+    view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);
+    assert.equal(elevatedDeck.material.opacity, .12, "flyover also fades outside a tunnel");
+    assert.equal(road.material.opacity, 1, "the current road remains opaque outside a tunnel");
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.innerWidth = previousWidth; globalThis.innerHeight = previousHeight;
+  }
+});

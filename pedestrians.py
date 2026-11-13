@@ -1,4 +1,4 @@
-"""Conservative roadside walking paths clipped against roads and buildings."""
+"""Conservative roadside walking paths clipped against roads, flyovers and buildings."""
 
 import math
 from collections import defaultdict
@@ -65,13 +65,18 @@ class Sidewalks:
         seen = set()
         for edge in roads.edges.values():
             key = (edge.way, *sorted((edge.a, edge.b)))
-            if key in seen or edge.layer != "0" or edge.bridge != "no" or edge.tunnel != "no":
+            if key in seen or edge.tunnel != "no":
                 continue
             seen.add(key)
+            ground = edge.layer == "0" and edge.bridge == "no"
+            flyover = edge.bridge != "no" or (edge.layer != "0" and not edge.layer.startswith("-"))
+            if not ground and not flyover:
+                continue
             a, b = roads.nodes[edge.a], roads.nodes[edge.b]
             radius = (edge.width or DRIVING["widths"].get(edge.kind, 10)) / 2
             self.add(("road", (a, b), radius), (a, b), radius + 1)
-            if edge.length >= 30 and edge.kind != "service" and not edge.kind.endswith("_link"):
+            if (ground and edge.length >= 30 and edge.kind not in {"service", "motorway", "trunk"}
+                    and not edge.kind.endswith("_link")):
                 self.edges.append(edge)
         for shape in roads.document["backdrop"]:
             if shape["kind"] == "building":
