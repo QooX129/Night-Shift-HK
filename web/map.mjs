@@ -272,7 +272,8 @@ export class MapView {
       for (const stop of this.stops) {
         const active = state.phase === "pickup" ? stop.id === state.pickup : state.phase === "onboard" ? stop.id === state.destination : false;
         if (!active && stop.id !== "depot") continue;
-        const [x, y] = stop.point, color = stop.id === "depot" ? "#85bada" : state.phase === "pickup" ? "#92d7b6" : "#f5c65a";
+        const point = active ? (state.phase === "pickup" ? state.pickup_point : state.destination_point) : null;
+        const [x, y] = point || stop.point, color = stop.id === "depot" ? "#85bada" : state.phase === "pickup" ? "#92d7b6" : "#f5c65a";
         c.fillStyle = color + "20"; c.beginPath(); c.arc(x, y, 18 / zoom, 0, Math.PI * 2); c.fill();
         c.fillStyle = color; c.strokeStyle = "#13252b"; c.lineWidth = 3 / zoom;
         c.beginPath(); c.arc(x, y, 7 / zoom, 0, Math.PI * 2); c.fill(); c.stroke();

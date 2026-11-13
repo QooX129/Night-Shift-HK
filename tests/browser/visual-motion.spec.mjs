@@ -1,5 +1,44 @@
 import { test, expect } from "@playwright/test";
 
+test("3D chase camera follows the taxi evenly when render start time jitters", async ({ page }) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({
+    defaultView: "3d", junctionSelector: false,
+  })));
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled({ timeout: 30000 });
+  await page.locator("#start").click();
+  await expect(page.locator("#map-3d")).toBeVisible({ timeout: 30000 });
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=route-guide-1");
+    const render = Map3DView.prototype.render;
+    let frame = 0;
+    window.cameraSamples = [];
+    Map3DView.prototype.render = function (...args) {
+      // Simulate uneven physics/UI work before the render call within one animation frame.
+      const until = performance.now() + (frame++ % 2 ? 6 : 0);
+      while (performance.now() < until);
+      const result = render.apply(this, args);
+      window.cameraSamples.push({ camera: { x: this.lens.position.x, z: this.lens.position.z },
+        taxi: { x: this.taxi.position.x, z: this.taxi.position.z } });
+      return result;
+    };
+  });
+  await page.keyboard.down("w");
+  await page.waitForTimeout(4000);
+  const samples = await page.evaluate(() => window.cameraSamples.splice(0));
+  await page.keyboard.up("w");
+  const ratios = [];
+  for (let i = 1; i < samples.length; i++) {
+    const [a, b] = [samples[i - 1], samples[i]];
+    const taxi = Math.hypot(b.taxi.x - a.taxi.x, b.taxi.z - a.taxi.z);
+    if (taxi > 0.2) ratios.push(Math.hypot(b.camera.x - a.camera.x, b.camera.z - a.camera.z) / taxi);
+  }
+  expect(ratios.length).toBeGreaterThan(30);
+  const worst = Math.max(...ratios.map(ratio => Math.abs(ratio - 1)));
+  expect(worst).toBeLessThan(0.15);
+});
+
 for (const mode of ["2d", "3d"]) test(`${mode} renders interpolated motion and snaps when paused`, async ({ page }) => {
   test.setTimeout(90000);
   await page.addInitScript(mode => {

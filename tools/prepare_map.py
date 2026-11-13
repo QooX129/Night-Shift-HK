@@ -30,10 +30,21 @@ QUERY = """
  way["highway"~"^(motorway|trunk|motorway_link|trunk_link|primary|secondary|tertiary|unclassified|residential|living_street|service|primary_link|secondary_link|tertiary_link)$"](22.304,114.161,22.324,114.178);
  way["building"](22.304,114.161,22.324,114.178);
  way["leisure"="park"](22.304,114.161,22.324,114.178);
+ nwr["tourism"~"^(attraction|hotel|hostel|museum|gallery|guest_house)$"](22.304,114.161,22.324,114.178);
+ nwr["amenity"~"^(arts_centre|cinema|community_centre|hospital|clinic|library|marketplace|restaurant|school|theatre|university|place_of_worship)$"](22.304,114.161,22.324,114.178);
+ nwr["shop"~"^(department_store|mall|supermarket)$"](22.304,114.161,22.324,114.178);
+ nwr["leisure"~"^(park|sports_centre|stadium|garden)$"](22.304,114.161,22.324,114.178);
+ nwr["railway"="station"](22.304,114.161,22.324,114.178);
+ nwr["amenity"="taxi"](22.304,114.161,22.324,114.178);
+ nwr["amenity"="parking"](22.304,114.161,22.324,114.178);
+ node["entrance"](22.304,114.161,22.324,114.178);
+ node["highway"~"^(entrance|crossing|traffic_signals|bus_stop)$"](22.304,114.161,22.324,114.178);
+ node["public_transport"~"^(stop_position|platform)$"](22.304,114.161,22.324,114.178);
+ relation["type"="site"](22.304,114.161,22.324,114.178);
  relation["type"="restriction"](22.304,114.161,22.324,114.178);
 );
 out body;
->;
+>>;
 out skel qt;
 """
 

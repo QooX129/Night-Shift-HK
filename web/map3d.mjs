@@ -953,7 +953,9 @@ export class Map3DView {
     this.scene.add(this.taxi);
   }
   buildMarkers() {
-    this.markers = this.stops.map(stop => {
+    const depot = this.stops.find(stop => stop.id === "depot");
+    const templates = depot ? [depot, depot] : this.stops.slice(0, 1);
+    this.markers = templates.map((stop, index) => {
       const color = stop.id === "depot" ? "#85bada" : "#92d7b6";
       const marker = new THREE.Group();
       const ring = new THREE.Mesh(new THREE.TorusGeometry(3, 0.3, 8, 32),
@@ -975,7 +977,7 @@ export class Map3DView {
       }
       marker.name = `stop-${stop.id}`;
       this.scene.add(marker);
-      return { stop, marker, ring, beacon };
+      return { stop, marker, ring, beacon, dynamic: !depot || index === 1, positionKey: null };
     });
     this.label = document.createElement("div");
     this.label.className = "world-label";
@@ -1300,7 +1302,9 @@ export class Map3DView {
     this.cameraHeading += Math.max(-limit, Math.min(limit, change));
   }
   render(car, state, lang, approach, previewExit = null) {
-    const now = performance.now(), dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
+    // Use the animation-frame time the taxi was stepped with; performance.now() jitters with prior work.
+    const now = document.timeline?.currentTime ?? performance.now();
+    const dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
     this.updateCameraHeading(car.heading, dt);
     this.camera.x = car.x; this.camera.y = car.y;
     if (this.roadBuildTask) {
@@ -1394,14 +1398,34 @@ export class Map3DView {
       this.updateOverlays(state, approach, previewExit);
       let activeLabel = null;
       for (const item of this.markers) {
-        const { stop, marker, ring, beacon } = item;
-        const active = state.phase === "pickup" ? stop.id === state.pickup
-          : state.phase === "onboard" ? stop.id === state.destination : false;
-        marker.visible = active || stop.id === "depot";
+        const { marker, ring, beacon } = item;
+        const targetId = state.phase === "pickup" ? state.pickup
+          : state.phase === "onboard" ? state.destination : null;
+        const stop = item.dynamic ? this.stops.find(candidate => candidate.id === targetId) : item.stop;
+        const active = item.dynamic && Boolean(stop);
+        marker.visible = active || !item.dynamic;
+        if (!stop) continue;
+        item.stop = stop;
+        const point = active ? ((state.phase === "pickup" ? state.pickup_point : state.destination_point) || stop.point) : stop.point;
+        const positionKey = `${stop.id}:${point[0]}:${point[1]}`;
+        if (item.positionKey !== positionKey) {
+          marker.name = `stop-${stop.id}`;
+          const edge = this.edges.get(stop.edge);
+          const pose = edge ? surfacePose(this, edge, { x: point[0], y: point[1] }, 0) : { height: 0 };
+          marker.position.set(point[0], pose.height + (this.elevation ? .1 : 0), point[1]);
+          if (edge && this.elevation) {
+            const a = this.nodes[edge.a], b = this.nodes[edge.b];
+            const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+            const grade = surfacePose(this, edge, { x: point[0], y: point[1] }, angle).grade;
+            ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1),
+              new THREE.Vector3(-grade * Math.cos(angle), 1, -grade * Math.sin(angle)).normalize());
+          }
+          item.positionKey = positionKey;
+        }
         beacon.visible = marker.position.distanceTo(position) > 12;
-        const color = stop.id === "depot" ? "#85bada" : state.phase === "pickup" ? "#92d7b6" : "#f5c65a";
+        const color = !item.dynamic ? "#85bada" : state.phase === "pickup" ? "#92d7b6" : "#f5c65a";
         ring.material.color.set(color); beacon.material.color.set(color);
-        if (active || (!activeLabel && stop.id === "depot")) activeLabel = item;
+        if (active || (!activeLabel && !item.dynamic)) activeLabel = item;
       }
       this.label.hidden = true;
       if (activeLabel && !this.overview) {

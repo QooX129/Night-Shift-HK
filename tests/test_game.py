@@ -138,7 +138,12 @@ class GameTests(unittest.TestCase):
     def at_stop(self, key):
         stop = self.game.stops[key]
         edge = self.roads.edges[stop.edge]
-        self.session.point = stop.point
+        point = stop.point
+        if key == self.session.pickup and self.session.pickup_point is not None:
+            point = self.session.pickup_point
+        elif key == self.session.destination and self.session.destination_point is not None:
+            point = self.session.destination_point
+        self.session.point = point
         self.session.edge, self.session.heading = edge.id, self.roads.angle(edge)
         self.session.history = (edge.way,)
         self.session.speed = 0

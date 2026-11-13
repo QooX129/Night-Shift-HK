@@ -101,9 +101,26 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   If no legal passenger trip is reachable when a scheduled offer is due,
   dispatch logs the deferral and tries again after 45–180 seconds; driving
   continues without rejecting the movement update.
-- Destinations also include randomly selected named places from the district's
-  offline OpenStreetMap extract, such as hotels, parks and shopping centres.
-  Their markers are approximate nearby road stops, not verified entrances.
+  If a displayed pickup becomes unreachable before acceptance, dispatch leaves
+  the offer unaccepted and shows a notice without interrupting the current trip.
+  Turn restrictions, closures or the district boundary can prevent a route;
+  try another road or use recovery.
+- Phone pickups and all drop-offs are drawn from reachable street segments and
+  named places, weighted by road or OpenStreetMap place category as a proxy for
+  popularity (not actual passenger counts). Points vary along the road, at
+  least 5 m from segment ends; named-place points stay within 100 m of the place.
+  Mapped taxi stands have a higher pickup weight. A mapped car-park entrance
+  explicitly linked to a place is preferred for its drop-off when an eligible
+  road is within 30 m; otherwise the nearby place stop is used.
+  The current source extract has no taxi stands or explicitly linked car-park
+  entrances, so those cases use the normal fallback.
+- Stops exclude mapped no-stopping road segments, crossings and traffic signals,
+  tunnels, elevated roads, expressways and points within 30 m of a mapped
+  flyover. Conditional no-stopping tags are treated as always restricted.
+  This is a conservative approximation, **not a legal guarantee**: the offline
+  map lacks a complete set of signs, markings and control areas. The
+  [Transport Department's Road Users' Code](https://www.td.gov.hk/en/road_safety/road_users_code/index/chapter_5_for_all_drivers/where_not_to_stop_/index.html)
+  also advises against stopping near junctions.
 - Accept a phone order, then stop at its **green** pickup marker. The customer
   waits waving at the curb and walks into the taxi automatically once you stop.
   **Accepted** stores the current pickup and any waiting order.

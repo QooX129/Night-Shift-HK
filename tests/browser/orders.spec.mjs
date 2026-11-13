@@ -138,6 +138,7 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
     const body = route.request().postDataJSON(), command = body.command;
     commands.push(command);
     state = { ...state, seq: body.seq };
+    delete state.command_error;
     if (command.action === "pause") state.paused = command.paused;
     else if (command.action === "move") {
       if (exhausted && (Math.hypot(command.x - state.x, command.y - state.y) > .01
@@ -160,6 +161,11 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
       }
     } else if (command.action === "accept") {
       const chosen = state.offers.find(item => item.id === command.order);
+      if (state.rejectPickup) {
+        state.command_error = "pickup_unreachable";
+        await route.fulfill({ json: state });
+        return;
+      }
       state.offers = state.offers.filter(item => item.id !== command.order);
       state.accepted_orders.push(chosen);
       if (state.phase !== "onboard") {
@@ -572,6 +578,52 @@ test("all views receive only the upcoming GPS segments without changing the rout
     expect(sample.route).toEqual(["road", "next"]);
     expect(sample.visible).toEqual(["next"]);
   }
+});
+
+test("unreachable phone pickup is declined without interrupting the current trip", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.phase = "onboard";
+  fixture.state.order_source = "phone";
+  fixture.state.active_order = "current";
+  fixture.state.rejectPickup = true;
+  await page.locator("#phone-toggle").click();
+  await page.locator(".order-accept").first().click();
+  await expect(page.locator("#order-notice")).toContainText("order was not accepted");
+  await expect(page.locator("#error-dialog")).not.toBeVisible();
+  await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
+  expect(fixture.state.phase).toBe("onboard");
+  expect(fixture.state.active_order).toBe("current");
+  expect(fixture.state.offers).toHaveLength(8);
+  expect(fixture.state.accepted_orders).toHaveLength(0);
+});
+
+test("randomized order points drive the trip distance and 3D marker", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.pickup_point = [75, 0];
+  fixture.state.destination_point = [230, 0];
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=route-guide-1");
+    const render = Map3DView.prototype.render;
+    Map3DView.prototype.render = function (...args) {
+      window.randomPointView = this;
+      return render.apply(this, args);
+    };
+  });
+  await page.locator("#phone-toggle").click();
+  await page.locator(".order-accept").first().click();
+  await expect(page.locator("#trip-distance")).toContainText("25 m");
+  await toggleDrivingView(page);
+  await expect.poll(() => page.evaluate(() => {
+    const marker = window.randomPointView?.markers.find(item => item.dynamic && item.marker.visible);
+    return marker && [marker.marker.position.x, marker.marker.position.z];
+  })).toEqual([75, 0]);
+
+  fixture.state.phase = "onboard";
+  await page.locator("#pause").click();
+  await expect.poll(() => page.evaluate(() => {
+    const marker = window.randomPointView?.markers.find(item => item.dynamic && item.marker.visible);
+    return marker && [marker.marker.position.x, marker.marker.position.z];
+  })).toEqual([230, 0]);
 });
 
 test("trip panel shows the pickup, then the destination, and closes after drop-off", async ({ page }) => {

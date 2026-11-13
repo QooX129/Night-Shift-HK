@@ -97,11 +97,27 @@ class RoadMap:
         self.version: str = self.document["version"]
         places_path = path.with_name("places.json")
         self.places = []
+        self.taxi_stands = []
+        self.no_stopping_ways: set[int] = set()
+        self.no_stopping_points: list[Point] = []
         if places_path.exists():
             places = json.loads(places_path.read_text(encoding="utf-8"))
             if places["map_version"] != self.version:
                 raise ValueError("Place package is stale; rebuild tools/prepare_places.py")
+            if not {"places", "taxi_stands", "no_stopping_ways", "no_stopping_points"} <= places.keys():
+                raise ValueError("Place package lacks stop metadata; rebuild tools/prepare_places.py")
             self.places = places["places"]
+            if any(
+                not isinstance(place.get("popularity"), (int, float))
+                or not math.isfinite(place["popularity"])
+                or place["popularity"] <= 0
+                or "parking_entrances" not in place
+                for place in self.places
+            ):
+                raise ValueError("Place package has invalid stop metadata; rebuild tools/prepare_places.py")
+            self.taxi_stands = places["taxi_stands"]
+            self.no_stopping_ways = set(places["no_stopping_ways"])
+            self.no_stopping_points = [tuple(point) for point in places["no_stopping_points"]]
         elif path.name == "district.json":
             raise ValueError("Missing place package; run tools/prepare_places.py")
         width_path = path.with_name("road-widths.json")

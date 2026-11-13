@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from app import app, game as api_game
 from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, RuleError, Stop, urban_meter
-from roads import RoadMap
+from roads import RoadMap, project
 
 
 class OrderTests(unittest.TestCase):
@@ -33,7 +33,12 @@ class OrderTests(unittest.TestCase):
     def at_stop(self, key):
         stop = self.game.stops[key]
         edge = self.game.roads.edges[stop.edge]
-        self.session.point = stop.point
+        point = stop.point
+        if key == self.session.pickup and self.session.pickup_point is not None:
+            point = self.session.pickup_point
+        elif key == self.session.destination and self.session.destination_point is not None:
+            point = self.session.destination_point
+        self.session.point = point
         self.session.edge = edge.id
         self.session.heading = self.game.roads.angle(edge)
         self.session.history = (edge.way,)
@@ -64,6 +69,18 @@ class OrderTests(unittest.TestCase):
             self.assertTrue(self.game.roads.route(start, target, self.session.history, set(), {}))
             self.assertTrue(self.game.roads.route(
                 target, self.game.roads.edges[destination.edge], (target.way,), set(), {}))
+            self.assertGreaterEqual(math.dist(order.pickup_point, order.destination_point), 60)
+            for stop, point in ((pickup, order.pickup_point), (destination, order.destination_point)):
+                a = self.game.roads.nodes[self.game.roads.edges[stop.edge].a]
+                b = self.game.roads.nodes[self.game.roads.edges[stop.edge].b]
+                self.assertGreaterEqual(math.dist(point, a), 5 - 1e-8)
+                self.assertGreaterEqual(math.dist(point, b), 5 - 1e-8)
+                self.assertTrue(all(
+                    project(point, self.game.roads.nodes[flyover.a],
+                            self.game.roads.nodes[flyover.b])[1] >= 30
+                    for flyover in self.game.flyover_edges
+                ))
+                self.assertNotIn(self.game.roads.edges[stop.edge].way, self.game.roads.no_stopping_ways)
             pickups.add(order.pickup)
             destinations.add(order.destination)
             passengers.add(order.passenger)
@@ -72,6 +89,41 @@ class OrderTests(unittest.TestCase):
         self.assertGreater(len(destinations), 1)
         self.assertGreater(len(passengers), 1)
         self.assertTrue(any(fare > 34 for fare in fares))
+
+    def test_weighted_selection_prefers_more_popular_stops(self):
+        stops = [Stop("low", "", "", "x", (0, 0), 1),
+                 Stop("high", "", "", "x", (0, 0), 3)]
+        counts = {"low": 0, "high": 0}
+        for _ in range(4000):
+            counts[next(self.game.weighted_stops(self.session, stops)).id] += 1
+        self.assertTrue(2.6 < counts["high"] / counts["low"] < 3.4)
+
+    def test_same_road_gets_distinct_safe_points(self):
+        stop = next(stop for stop in self.game.street_stops if stop.id.startswith("street-")
+                    and self.game.flyover_clear(stop.point))
+        points = [self.game.randomized_stop_point(self.session, stop) for _ in range(30)]
+        self.assertTrue(all(point is not None and self.game.flyover_clear(point) for point in points))
+        self.assertGreater(len(set(points)), 20)
+
+    def test_explicit_parking_entrance_and_taxi_stand_are_candidates(self):
+        road = next(stop for stop in self.game.street_stops if stop.id.startswith("street-")
+                    and self.game.flyover_clear(stop.point))
+        places = [{"id": "test-place", "name": "Mall", "zh": "Mall",
+                   "point": road.point, "popularity": 3,
+                   "parking_entrances": [road.point]}]
+        stands = [{"id": "test-stand", "name": "Taxi stand", "zh": "Taxi stand",
+                   "point": road.point}]
+        with patch.object(self.game.roads, "places", places), \
+             patch.object(self.game.roads, "taxi_stands", stands), \
+             patch("game.Sidewalks"):
+            game = Game(self.game.roads)
+        destination = next(stop for stop in game.destination_stops if stop.group == "test-place")
+        pickup = next(stop for stop in game.pickup_stops if stop.id == "test-stand")
+        self.assertIn(":parking:", destination.id)
+        self.assertLessEqual(math.dist(destination.point, road.point), 30)
+        self.assertEqual(game.randomized_stop_point(self.session, destination), destination.point)
+        self.assertEqual(game.randomized_stop_point(self.session, pickup), pickup.point)
+        self.assertGreater(pickup.popularity, destination.popularity)
 
     def test_urban_meter_increment_and_discount_boundaries(self):
         self.assertEqual(urban_meter(0), 29)
@@ -304,8 +356,7 @@ class OrderTests(unittest.TestCase):
     def test_phone_customer_waits_at_pickup_then_walks_in(self):
         self.cmd("accept", order=self.session.offers[0].id)
         state = self.game.snapshot(self.session)
-        stop = self.game.stops[self.session.pickup]
-        self.assertTrue(4 <= math.dist(state["customer"], stop.point) <= 16 / 2 + 1)
+        self.assertTrue(4 <= math.dist(state["customer"], state["pickup_point"]) <= 16 / 2 + 1)
         self.at_stop(self.session.pickup)
         self.session.paused = False
         response = self.cmd("service")
@@ -420,6 +471,7 @@ class OrderTests(unittest.TestCase):
         response = self.cmd("door", citizen=citizen.id)
         self.assertEqual(response["phase"], "boarding")
         self.assertEqual(response["destination"], "")
+        self.assertIsNone(response["destination_point"])
         self.assertIsNone(response["route"])
         self.assertEqual(response["order_source"], "street")
         self.assertEqual(self.session.citizens, [])
@@ -433,6 +485,7 @@ class OrderTests(unittest.TestCase):
         state = self.game.snapshot(self.session)
         self.assertEqual(state["phase"], "onboard")
         self.assertTrue(state["destination"])
+        self.assertEqual(state["destination_point"], self.session.order.destination_point)
         self.assertIsNone(state["boarding"])
 
     def test_cannot_drive_or_recover_while_boarding(self):
@@ -593,13 +646,36 @@ class OrderTests(unittest.TestCase):
         self.game.advance_city(self.session, 0)
         self.assertEqual(len(self.session.citizens), 100)
 
-    def nearby_walker(self):
-        citizen = self.session.citizens[0]
+    def nearby_walker(self, require_legal=False):
+        citizens = self.session.citizens
+        if require_legal:
+            eligible = []
+            for candidate in citizens:
+                edge = self.game.roads.edges[self.game.stops[candidate.stop].edge]
+                point = self.game.citizen_point(candidate)
+                centre = project(point, self.game.roads.nodes[edge.a], self.game.roads.nodes[edge.b])[0]
+                angle = self.game.roads.angle(edge)
+                offset = (edge.width or 10) / 2 + .8
+                curb = (centre[0] - math.sin(angle) * offset * candidate.side,
+                        centre[1] + math.cos(angle) * offset * candidate.side)
+                if self.game.street_pickup_allowed(edge, centre) and self.game.sidewalks.safe(point, curb):
+                    eligible.append(candidate)
+            self.assertTrue(eligible, "No legal local curb approach")
+            citizens = eligible
+        citizen = citizens[0]
         self.session.citizens = [citizen]
         self.session.point = self.game.citizen_point(citizen)
         self.session.paused = False
         self.session.next_citizen = self.session.next_offer = math.inf
         return citizen
+
+    def test_hailing_citizen_cannot_be_collected_on_mapped_no_stopping_road(self):
+        citizen = self.citizen()
+        way = self.game.roads.edges[self.game.stops[citizen.stop].edge].way
+        with patch.object(self.game.roads, "no_stopping_ways", {way}):
+            self.assertFalse(self.game.citizen_ready(self.session, citizen))
+            with self.assertRaisesRegex(RuleError, "hailing citizen"):
+                self.cmd("door", citizen=citizen.id)
 
     def test_only_visible_empty_taxi_rolls_hail_and_respects_cooldown(self):
         citizen = self.nearby_walker()
@@ -641,7 +717,7 @@ class OrderTests(unittest.TestCase):
         self.assertFalse(citizen.seeking_curb)
 
     def test_hail_timeout_starts_at_curb_then_cools_down_and_returns_to_original_walk(self):
-        citizen = self.nearby_walker()
+        citizen = self.nearby_walker(require_legal=True)
         path, distance, direction = citizen.path, citizen.distance, citizen.direction
         with patch.object(self.session.rng, "random", return_value=0):
             self.game.advance_city(self.session, 0, [citizen.id])
@@ -675,23 +751,7 @@ class OrderTests(unittest.TestCase):
         self.assertTrue(citizen.seeking_curb)
 
     def test_successful_hail_walks_to_safe_curb_before_waving(self):
-        # Pick an unobstructed curb approach from the actual local paths.
-        for candidate in self.session.citizens:
-            edge = self.game.roads.edges[self.game.stops[candidate.stop].edge]
-            point = self.game.citizen_point(candidate)
-            centre = self.game.roads.nodes[edge.a]
-            angle = self.game.roads.angle(edge)
-            from roads import project
-            centre = project(point, centre, self.game.roads.nodes[edge.b])[0]
-            offset = (edge.width or 10) / 2 + .8
-            curb = (centre[0] - math.sin(angle) * offset * candidate.side,
-                    centre[1] + math.cos(angle) * offset * candidate.side)
-            if self.game.sidewalks.safe(point, curb):
-                self.session.citizens = [candidate]
-                break
-        else:
-            self.fail("No safe local curb approach")
-        citizen = self.nearby_walker()
+        citizen = self.nearby_walker(require_legal=True)
         with patch.object(self.session.rng, "random", return_value=0):
             self.game.advance_city(self.session, 0, [citizen.id])
         self.assertTrue(citizen.seeking_curb)
@@ -720,6 +780,46 @@ class OrderTests(unittest.TestCase):
 
 
 class OrderApiTests(unittest.TestCase):
+    def test_unreachable_phone_pickup_is_declined_without_interrupting_trip(self):
+        with TestClient(app) as client:
+            initial = client.post("/api/sessions").json()
+            session = api_game.sessions[initial["id"]]
+            api_game.offer(session)
+            session.edge = "151226328:7:1172757994"
+            session.point = (-779.387294143514, -965.3947039211315)
+            session.history = (api_game.roads.edges[session.edge].way,)
+            session.closed = {30151133}
+            session.phase = "onboard"
+            session.order = session.offers.pop()
+            offer = session.offers[-1]
+            offer.pickup = "street-101183499:1:6386068430"
+            current_order = session.order
+            url = f"/api/sessions/{session.id}/commands"
+            request = {"seq": 1, "command": {"action": "accept", "order": offer.id}}
+            result = client.post(url, json=request)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json()["command_error"], "pickup_unreachable")
+            self.assertEqual(result.json()["phase"], "onboard")
+            self.assertIs(session.order, current_order)
+            self.assertIn(offer, session.offers)
+            self.assertEqual(session.queue, [])
+            self.assertEqual(client.post(url, json=request).json(), result.json())
+            session.closed = set()
+            self.assertIsNone(api_game.roads.route(
+                api_game.roads.edges[session.edge],
+                api_game.roads.edges[api_game.stops[offer.pickup].edge],
+                session.history, session.closed, session.traffic,
+            ))
+            pickup = api_game.roads.edges[api_game.stops[offer.pickup].edge]
+            session.edge = pickup.id
+            session.point = api_game.roads.nodes[pickup.a]
+            session.history = (pickup.way,)
+            request["seq"] = 2
+            accepted = client.post(url, json=request)
+            self.assertEqual(accepted.status_code, 200)
+            self.assertNotIn("command_error", accepted.json())
+            self.assertEqual(session.queue, [offer])
+
     def test_live_waterloo_dead_end_does_not_fail_scheduled_offer_move(self):
         with TestClient(app) as client:
             initial = client.post("/api/sessions").json()

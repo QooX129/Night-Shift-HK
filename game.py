@@ -1,6 +1,7 @@
 """Session rules. Browser movement is an arcade simulation, not anti-cheat."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from collections.abc import Iterator
 import logging
 import math
 import random
@@ -22,8 +23,18 @@ CITIZEN_HAIL_DURATION = (45, 120)
 METER_BASE_DISTANCE = 500
 METER_INCREMENT_DISTANCE = 200
 METER_WAIT_SECONDS = 60
+STOP_ENDPOINT_CLEARANCE = 5
+FLYOVER_CLEARANCE = 30
+PLACE_STOP_RADIUS = 100
+TAXI_STAND_STOP_RADIUS = 30
+MAPPED_STOP_CLEARANCE = 10
 
 logger = logging.getLogger(__name__)
+
+ROAD_POPULARITY = {
+    "primary": 1.6, "secondary": 1.4, "tertiary": 1.2,
+    "residential": 1.0, "unclassified": 1.0, "living_street": 0.9,
+}
 
 
 def urban_meter(units: float) -> float:
@@ -53,6 +64,11 @@ class Stop:
     zh: str
     edge: str
     point: Point
+    popularity: float = 1.0
+    anchor: Point | None = None
+    radius: float | None = None
+    group: str | None = None
+    fixed: bool = False
 
 
 @dataclass
@@ -65,6 +81,8 @@ class Order:
     expires: float
     source: str = "phone"
     deadline: float | None = None
+    pickup_point: Point | None = None
+    destination_point: Point | None = None
 
 
 @dataclass
@@ -105,6 +123,8 @@ class Session:
     phase: str = "available"
     pickup: str = ""
     destination: str = ""
+    pickup_point: Point | None = None
+    destination_point: Point | None = None
     passenger: int = 0
     fare: float = 0
     meter_distance: float = 0
@@ -175,6 +195,32 @@ class Game:
         self.roads = roads
         self.sidewalks = Sidewalks(roads)
         self.sessions: dict[str, Session] = {}
+        self.flyover_edges = [
+            edge for edge in roads.edges.values()
+            if edge.tunnel == "no"
+            and (edge.bridge != "no" or (edge.layer != "0" and not edge.layer.startswith("-")))
+        ]
+        self.flyover_grid: dict[tuple[int, int], list[Edge]] = {}
+        for edge in self.flyover_edges:
+            a, b = roads.nodes[edge.a], roads.nodes[edge.b]
+            for x in range(math.floor((min(a[0], b[0]) - FLYOVER_CLEARANCE) / 100),
+                           math.floor((max(a[0], b[0]) + FLYOVER_CLEARANCE) / 100) + 1):
+                for y in range(math.floor((min(a[1], b[1]) - FLYOVER_CLEARANCE) / 100),
+                               math.floor((max(a[1], b[1]) + FLYOVER_CLEARANCE) / 100) + 1):
+                    self.flyover_grid.setdefault((x, y), []).append(edge)
+        self.street_edges = [
+            edge
+            for edge in roads.edges.values()
+            if not edge.wrongway
+            and edge.way not in roads.no_stopping_ways
+            and edge.length >= 30
+            and edge.layer == "0"
+            and edge.bridge == "no"
+            and edge.tunnel == "no"
+            and edge.kind
+            not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
+                    "primary_link", "secondary_link", "tertiary_link"}
+        ]
         anchors = [
             ("market", "Near Yau Ma Tei market", "油麻地街市附近", 22.3102, 114.1702),
             ("temple", "Near Temple Street", "廟街附近", 22.3075, 114.1703),
@@ -189,65 +235,163 @@ class Game:
         for key, name, zh, stop_lat, stop_lon in anchors:
             x = (stop_lon - lon) * 111_320 * math.cos(math.radians(lat))
             y = (lat - stop_lat) * 111_320
-            candidates = [
-                e
-                for e in roads.edges.values()
-                if e.length >= 30
-                and e.layer == "0"
-                and e.bridge == "no"
-                and e.tunnel == "no"
-                and e.kind
-                not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
-                        "primary_link", "secondary_link", "tertiary_link"}
-            ]
-            edge = min(candidates, key=lambda e: math.dist((x, y), self.midpoint(e)))
-            self.stops[key] = Stop(key, name, zh, edge.id, self.midpoint(edge))
+            nearest = self.nearest_road_stop((x, y), PLACE_STOP_RADIUS)
+            if nearest is None:
+                edge = min(
+                    self.street_edges,
+                    key=lambda e: project((x, y), roads.nodes[e.a], roads.nodes[e.b])[1],
+                )
+                point = self.midpoint(edge)
+            else:
+                edge, point, _ = nearest
+            self.stops[key] = Stop(
+                key, name, zh, edge.id, point, self.road_popularity(edge),
+                anchor=(x, y), radius=PLACE_STOP_RADIUS, group=key,
+            )
         self.depot = self.stops["depot"]
-        street_edges = [
-            e
-            for e in roads.edges.values()
-            if not e.wrongway
-            and e.length >= 30
-            and e.layer == "0"
-            and e.bridge == "no"
-            and e.tunnel == "no"
-            and e.kind
-            not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
-                    "primary_link", "secondary_link", "tertiary_link"}
-        ]
-        for edge in random.Random(29).sample(street_edges, min(96, len(street_edges))):
+        for edge in self.street_edges:
             key = f"street-{edge.id}"
             self.stops[key] = Stop(
-                key, edge.name, edge.zh, edge.id, self.midpoint(edge)
+                key, edge.name, edge.zh, edge.id, self.midpoint(edge),
+                self.road_popularity(edge), group=key,
             )
         self.street_stops = [s for s in self.stops.values() if s.id != "depot"]
-        place_stops = []
+        place_stops: list[Stop] = []
+        place_destinations: list[Stop] = []
         for place in roads.places:
             location = tuple(place["point"])
-            edge = min(street_edges, key=lambda e: project(location, roads.nodes[e.a], roads.nodes[e.b])[1])
-            _, distance, fraction = project(location, roads.nodes[edge.a], roads.nodes[edge.b])
-            fraction = max(8 / edge.length, min(1 - 8 / edge.length, fraction))
-            a, b = roads.nodes[edge.a], roads.nodes[edge.b]
-            point = (a[0] + (b[0] - a[0]) * fraction, a[1] + (b[1] - a[1]) * fraction)
-            if distance > 100 or math.dist(location, point) > 100:
+            nearest = self.nearest_road_stop(location, PLACE_STOP_RADIUS)
+            if nearest is None:
                 continue
+            edge, point, _ = nearest
             if any(s.name == f"Near {place['name']}" and math.dist(s.point, point) < 40 for s in place_stops):
                 continue
-            stop = Stop(place["id"], f"Near {place['name']}", f"{place['zh']}附近", edge.id, point)
+            stop = Stop(
+                place["id"], f"Near {place['name']}", f"{place['zh']}附近",
+                edge.id, point, float(place["popularity"]),
+                anchor=location, radius=PLACE_STOP_RADIUS, group=place["id"],
+            )
             self.stops[stop.id] = stop
             place_stops.append(stop)
+            entrances = place["parking_entrances"]
+            parking_stop = None
+            for index, entrance in enumerate(entrances):
+                parking_location = tuple(entrance)
+                nearest = self.nearest_road_stop(parking_location, TAXI_STAND_STOP_RADIUS)
+                if nearest is None:
+                    continue
+                parking_edge, parking_point, _ = nearest
+                parking_stop = Stop(
+                    f"{place['id']}:parking:{index}", stop.name, stop.zh,
+                    parking_edge.id, parking_point, stop.popularity,
+                    anchor=parking_location, radius=TAXI_STAND_STOP_RADIUS,
+                    group=place["id"], fixed=True,
+                )
+                self.stops[parking_stop.id] = parking_stop
+                break
+            place_destinations.append(parking_stop or stop)
         if roads.places and not place_stops:
             logger.warning("No named places are close enough to an eligible surface street")
-        self.destination_stops = [*self.street_stops, *place_stops]
+        taxi_stops = []
+        for taxi_stand in roads.taxi_stands:
+            location = tuple(taxi_stand["point"])
+            nearest = self.nearest_road_stop(location, TAXI_STAND_STOP_RADIUS)
+            if nearest is None:
+                continue
+            edge, point, _ = nearest
+            stop = Stop(
+                taxi_stand["id"], taxi_stand["name"], taxi_stand["zh"],
+                edge.id, point, 5.0, anchor=location,
+                radius=TAXI_STAND_STOP_RADIUS, group=taxi_stand["id"], fixed=True,
+            )
+            self.stops[stop.id] = stop
+            taxi_stops.append(stop)
+        self.pickup_stops = [*self.street_stops, *place_stops, *taxi_stops]
+        self.destination_stops = [*self.street_stops, *place_destinations]
+        incident_exclusions = random.Random(29).sample(self.street_edges, min(96, len(self.street_edges)))
         self.incident_ways = sorted(
             {
                 e.way
                 for e in roads.edges.values()
                 if e.kind == "residential"
                 and e.name != "Local road"
-                and all(roads.edges[s.edge].way != e.way for s in [*self.street_stops, self.depot])
+                and e.way != roads.edges[self.depot.edge].way
+                and all(stop_edge.way != e.way for stop_edge in incident_exclusions)
             }
         )
+
+    def road_popularity(self, edge: Edge) -> float:
+        return ROAD_POPULARITY.get(edge.kind, 1.0)
+
+    def nearest_road_stop(
+        self, location: Point, radius: float
+    ) -> tuple[Edge, Point, float] | None:
+        nearest = None
+        for edge in self.street_edges:
+            a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+            _, distance, fraction = project(location, a, b)
+            margin = STOP_ENDPOINT_CLEARANCE / math.dist(a, b)
+            fraction = max(margin, min(1 - margin, fraction))
+            point = (a[0] + (b[0] - a[0]) * fraction,
+                     a[1] + (b[1] - a[1]) * fraction)
+            distance = math.dist(location, point)
+            if distance > radius or (nearest is not None and distance >= nearest[2]):
+                continue
+            if not self.flyover_clear(point):
+                continue
+            nearest = edge, point, distance
+        return nearest
+
+    def flyover_clear(self, point: Point) -> bool:
+        cell = (math.floor(point[0] / 100), math.floor(point[1] / 100))
+        return all(
+            project(point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[1]
+            >= FLYOVER_CLEARANCE
+            for edge in self.flyover_grid.get(cell, [])
+        ) and all(
+            math.dist(point, restricted) >= MAPPED_STOP_CLEARANCE
+            for restricted in self.roads.no_stopping_points
+        )
+
+    def randomized_stop_point(self, session: Session, stop: Stop) -> Point | None:
+        if stop.fixed:
+            return stop.point
+        edge = self.roads.edges[stop.edge]
+        a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+        length = math.dist(a, b)
+        margin = STOP_ENDPOINT_CLEARANCE / length
+        low, high = margin, 1 - margin
+        if stop.anchor is not None:
+            _, distance, fraction = project(stop.anchor, a, b)
+            radius = stop.radius or 0
+            if distance > radius:
+                return None
+            reach = math.sqrt(max(0, radius * radius - distance * distance)) / length
+            low, high = max(low, fraction - reach), min(high, fraction + reach)
+        if low > high:
+            return None
+        for _ in range(12):
+            fraction = session.rng.uniform(low, high)
+            point = (a[0] + (b[0] - a[0]) * fraction,
+                     a[1] + (b[1] - a[1]) * fraction)
+            if self.flyover_clear(point):
+                return point
+        if self.flyover_clear(stop.point) and (
+            stop.anchor is None or math.dist(stop.point, stop.anchor) <= (stop.radius or 0)
+        ):
+            return stop.point
+        return None
+
+    @staticmethod
+    def weighted_stops(session: Session, stops: list[Stop]) -> Iterator[Stop]:
+        remaining = list(stops)
+        while remaining:
+            index = session.rng.choices(
+                range(len(remaining)),
+                weights=[stop.popularity for stop in remaining],
+                k=1,
+            )[0]
+            yield remaining.pop(index)
 
     def midpoint(self, edge: Edge) -> Point:
         a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
@@ -291,17 +435,33 @@ class Game:
             self.display_order(session, session.offers[0], "available", "offer")
 
     def make_order(self, session: Session, pickup: Stop | None = None) -> Order:
-        candidates = session.rng.sample(self.street_stops, len(self.street_stops))
-        destinations = session.rng.sample(self.destination_stops, len(self.destination_stops))
-        start = self.roads.edges[session.edge]
-        for origin in [pickup] if pickup else candidates:
+        start_edge = self.roads.edges[session.edge]
+        candidates = [pickup] if pickup else self.weighted_stops(session, self.pickup_stops)
+        for origin in candidates:
             edge = self.roads.edges[origin.edge]
-            if not self.roads.route(
-                start, edge, session.history, session.closed, session.traffic
-            ):
+            origin_point = origin.point if pickup or origin.group is None else self.randomized_stop_point(session, origin)
+            if origin_point is None:
                 continue
-            for destination in destinations:
-                if destination.id == origin.id or math.dist(destination.point, origin.point) < 60:
+            start_route = self.roads.route(
+                start_edge, edge, session.history, session.closed, session.traffic
+            )
+            if not start_route:
+                continue
+            if not pickup and len(start_route) == 1:
+                taxi_fraction = project(session.point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[2]
+                origin_fraction = project(origin_point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[2]
+                if origin_fraction < taxi_fraction:
+                    continue
+            for destination in self.weighted_stops(session, self.destination_stops):
+                if destination.id == origin.id or (
+                    destination.group is not None and destination.group == origin.group
+                ):
+                    continue
+                destination_point = (
+                    self.randomized_stop_point(session, destination)
+                    if destination.group is not None else destination.point
+                )
+                if destination_point is None or math.dist(destination_point, origin_point) < 60:
                     continue
                 route = self.roads.route(
                     edge, self.roads.edges[destination.edge], (edge.way,),
@@ -310,8 +470,10 @@ class Game:
                 if not route:
                     continue
                 last = self.roads.edges[route[-1]]
-                start = project(origin.point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[2]
-                end = project(destination.point, self.roads.nodes[last.a], self.roads.nodes[last.b])[2]
+                start = project(origin_point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[2]
+                end = project(destination_point, self.roads.nodes[last.a], self.roads.nodes[last.b])[2]
+                if len(route) == 1 and end < start:
+                    continue
                 start_length = math.dist(self.roads.nodes[edge.a], self.roads.nodes[edge.b])
                 end_length = math.dist(self.roads.nodes[last.a], self.roads.nodes[last.b])
                 if len(route) == 1:
@@ -327,6 +489,8 @@ class Game:
                     session.rng.randrange(len(PASSENGERS)),
                     urban_meter(max(0, distance - METER_BASE_DISTANCE) / METER_INCREMENT_DISTANCE) + 5,
                     session.elapsed + session.rng.uniform(30, 180),
+                    pickup_point=origin_point,
+                    destination_point=destination_point,
                 )
         raise NoReachableTrip(
             "No reachable passenger trip. Clear the closure or return to the depot."
@@ -336,6 +500,7 @@ class Game:
         self, session: Session, order: Order, phase: str, dialogue: str
     ) -> None:
         session.pickup, session.destination = order.pickup, order.destination
+        session.pickup_point, session.destination_point = order.pickup_point, order.destination_point
         session.passenger, session.fare = order.passenger, order.fare
         session.phase, session.dialogue = phase, dialogue
 
@@ -375,9 +540,11 @@ class Game:
             )
         )
 
-    def curb_point(self, stop: Stop, fraction: float = 0.5) -> Point:
+    def curb_point(self, stop: Stop, fraction: float | None = None) -> Point:
         edge = self.roads.edges[stop.edge]
         a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+        if fraction is None:
+            fraction = project(stop.point, a, b)[2]
         angle = self.roads.angle(edge)
         offset = DRIVING["widths"].get(edge.kind, 10) / 2 + 0.8
         return (
@@ -476,6 +643,8 @@ class Game:
                     continue
                 edge = self.roads.edges[self.stops[citizen.stop].edge]
                 centre = project(point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[0]
+                if not self.street_pickup_allowed(edge, centre):
+                    continue
                 angle = self.roads.angle(edge)
                 offset = (edge.width or DRIVING["widths"].get(edge.kind, 10)) / 2 + .8
                 curb = (centre[0] - math.sin(angle) * offset * citizen.side,
@@ -496,10 +665,24 @@ class Game:
         if session.phase == "available" and session.offers:
             self.display_order(session, session.offers[0], "available", "offer")
 
+    def street_pickup_allowed(self, edge: Edge, point: Point) -> bool:
+        a, b = self.roads.nodes[edge.a], self.roads.nodes[edge.b]
+        return (
+            edge.way not in self.roads.no_stopping_ways
+            and edge.layer == "0" and edge.bridge == "no" and edge.tunnel == "no"
+            and edge.kind not in {"service", "motorway", "trunk", "motorway_link", "trunk_link",
+                                  "primary_link", "secondary_link", "tertiary_link"}
+            and math.dist(point, a) >= STOP_ENDPOINT_CLEARANCE
+            and math.dist(point, b) >= STOP_ENDPOINT_CLEARANCE
+            and self.flyover_clear(point)
+        )
+
     def citizen_ready(self, session: Session, citizen: Citizen) -> bool:
         stop = self.stops[citizen.stop]
         point = self.citizen_point(citizen)
-        return citizen.hailing and self.stop_valid(
+        edge = self.roads.edges[stop.edge]
+        centre = project(point, self.roads.nodes[edge.a], self.roads.nodes[edge.b])[0]
+        return citizen.hailing and self.street_pickup_allowed(edge, centre) and self.stop_valid(
             session, Stop(stop.id, stop.name, stop.zh, stop.edge, point)
         )
 
@@ -513,7 +696,10 @@ class Game:
             raise RuleError(
                 "Stop beside a hailing citizen on the same road before opening the door."
             )
-        order = self.make_order(session, self.stops[citizen.stop])
+        citizen_stop = self.stops[citizen.stop]
+        edge = self.roads.edges[citizen_stop.edge]
+        point = project(self.citizen_point(citizen), self.roads.nodes[edge.a], self.roads.nodes[edge.b])[0]
+        order = self.make_order(session, replace(citizen_stop, point=point))
         order.source, order.passenger = "street", citizen.passenger
         if session.order and session.phase == "pickup":
             session.queue.insert(0, session.order)
@@ -539,9 +725,11 @@ class Game:
 
     def target(self, session: Session) -> Stop | None:
         if session.phase == "pickup":
-            return self.stops[session.pickup]
+            stop = self.stops[session.pickup]
+            return replace(stop, point=session.pickup_point) if session.pickup_point is not None else stop
         if session.phase == "onboard":
-            return self.stops[session.destination]
+            stop = self.stops[session.destination]
+            return replace(stop, point=session.destination_point) if session.destination_point is not None else stop
         return None
 
     def update_position(self, session: Session, payload: dict) -> None:
@@ -690,6 +878,7 @@ class Game:
         if seq != session.seq + 1:
             raise RuleError("Commands are out of sequence. Restart the shift.")
         session.last_seen = time.monotonic()
+        command_error = None
         if action == "move":
             self.update_position(session, payload)
         elif action == "pause":
@@ -724,16 +913,15 @@ class Game:
                 # The pickup becomes the active target, so cache it for the snapshot.
                 reachable = self.plan(session, pickup_edge)
             if not reachable:
-                raise RuleError(
-                    "This pickup is currently unreachable because of road closures."
-                )
-            order.deadline = session.elapsed + session.rng.uniform(120, 300)
-            session.offers.remove(order)
-            if session.phase == "onboard":
-                session.queue.append(order)
+                command_error = "pickup_unreachable"
             else:
-                session.order = order
-                self.display_order(session, order, "pickup", "accepted")
+                order.deadline = session.elapsed + session.rng.uniform(120, 300)
+                session.offers.remove(order)
+                if session.phase == "onboard":
+                    session.queue.append(order)
+                else:
+                    session.order = order
+                    self.display_order(session, order, "pickup", "accepted")
         elif action == "door":
             self.open_door(session, payload["citizen"])
         elif action == "service":
@@ -817,6 +1005,8 @@ class Game:
         session.seq = seq
         session.last_request = (action, payload.copy())
         result = self.snapshot(session)
+        if command_error:
+            result["command_error"] = command_error
         session.last_response = result
         return result
 
@@ -901,11 +1091,13 @@ class Game:
                 "id": order.id,
                 "pickup": order.pickup,
                 "destination": order.destination,
+                "pickup_point": order.pickup_point,
+                "destination_point": order.destination_point,
                 "passenger": PASSENGERS[order.passenger],
                 "fare": order.fare,
                 "source": order.source,
                 "distance": round(
-                    math.dist(session.point, self.stops[order.pickup].point)
+                    math.dist(session.point, order.pickup_point or self.stops[order.pickup].point)
                 ),
             }
 
@@ -936,9 +1128,13 @@ class Game:
             and session.order
             and session.order.source == "street"
             else session.destination,
-            "customer": self.curb_point(self.stops[session.pickup])
-            if session.phase == "pickup"
-            else None,
+            "pickup_point": session.pickup_point,
+            "destination_point": None
+            if session.phase == "boarding"
+            and session.order
+            and session.order.source == "street"
+            else session.destination_point,
+            "customer": self.curb_point(target) if session.phase == "pickup" and target else None,
             "passenger": PASSENGERS[session.passenger],
             "dialogue": session.dialogue,
             "route": session.route,

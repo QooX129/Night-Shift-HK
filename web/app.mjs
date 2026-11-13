@@ -25,6 +25,7 @@ let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 
 let previewExit = null;
 let movementRecoveryUntil = 0;
 let phoneTab = "available";
+let orderNotice = null;
 let tripPanelPhase = null, tripPanelOrder = null;
 let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
   : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
@@ -105,6 +106,12 @@ async function send(action, fields = {}) {
     });
     pending = null;
     if (action === "move") inFlightElapsed = 0;
+    if (action === "accept") {
+      if (next.command_error && next.command_error !== "pickup_unreachable") {
+        throw new Error(`Unknown order response: ${next.command_error}`);
+      }
+      orderNotice = next.command_error === "pickup_unreachable" ? "pickupUnreachable" : null;
+    }
     applyState(next);
     return next;
   } catch (error) {
@@ -392,9 +399,9 @@ function renderOrders(id, orders, accepted = false) {
       card.dataset.order = order.id;
       card.querySelector(".order-accept").addEventListener("click", () => perform(async () => {
         const wasPaused = paused; paused = true; await flush();
-        await send("accept", { order: order.id });
+        const result = await send("accept", { order: order.id });
         paused = wasPaused;
-        selectPhoneTab("accepted");
+        if (!result.command_error) selectPhoneTab("accepted");
       }));
       list.append(card);
     }
@@ -436,7 +443,9 @@ function updateTripPanel() {
   tripPanelPhase = active ? state.phase : null;
   tripPanelOrder = active ? state.active_order : null;
   if (!active) return;
-  const stop = stops.find(item => item.id === (pickup ? state.pickup : state.destination));
+  const found = stops.find(item => item.id === (pickup ? state.pickup : state.destination));
+  const point = pickup ? state.pickup_point : state.destination_point;
+  const stop = found && point ? { ...found, point } : found;
   $("trip-label").textContent = t(pickup ? "pickup" : "destination");
   $("trip-name").textContent = stop ? stop[lang === "zh" ? "zh" : "name"] : t("destinationHidden");
   const distance = routeDistance(state.route, roads, { x: state.x, y: state.y }, stop);
@@ -486,7 +495,7 @@ function updateUI() {
   $("phone-toggle").setAttribute("aria-label", `${t("phoneToggle")} · ${state.offers?.length ?? 0} ${t("availableTab")}`);
   $("no-offers").hidden = Boolean(state.offers?.length);
   $("no-accepted").hidden = state.phase !== "available" || Boolean(state.accepted_orders?.length);
-  $("order-notice").textContent = state.cancelled_orders
+  $("order-notice").textContent = orderNotice ? t(orderNotice) : state.cancelled_orders
     ? `${t("waitingCancelled")} (${state.cancelled_orders})` : t("queueHelp");
   $("door").disabled = busy || paused || !state.citizens?.some(citizen => citizen.ready);
   $("door").hidden = state.phase === "onboard" || state.phase === "boarding";
