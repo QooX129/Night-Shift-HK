@@ -1,5 +1,8 @@
 export const zh = {
   taxiMeter:"的士咪錶", meterHired:"載客中", meterVacant:"空車", meterPaid:"已付款",
+  fareCounter:"車資", extraFare:"附加費", meterFare:"咪錶車資", phoneBooking:"電召費",
+  largeLuggage:"大型行李", handbag:"手袋（免費）", backpack:"背囊（免費）",
+  dog:"狗", cat:"貓", bird:"籠裝雀鳥", wheelchair:"輪椅（免費）",
   estimatedFare:"預計車資", totalFare:"實際車資", bookingIncluded:"已包括 $5 電召費",
   tripShow:"顯示行程目的地", tripHide:"隱藏行程目的地", routeDistance:"路線距離", routeDistanceUnavailable:"路線距離未能提供",
   movementRecovered:"已返回上次確認位置並停車。可繼續駕駛，或倒車離開路邊。",
@@ -63,6 +66,9 @@ export const zh = {
 };
 export const en = {
   taxiMeter:"TAXI METER", meterHired:"HIRED", meterVacant:"VACANT", meterPaid:"PAID",
+  fareCounter:"FARE", extraFare:"EXTRAS", meterFare:"Meter fare", phoneBooking:"Phone booking",
+  largeLuggage:"Large luggage", handbag:"Handbag (free)", backpack:"Backpack (free)",
+  dog:"Dog", cat:"Cat", bird:"Caged bird", wheelchair:"Wheelchair (free)",
   estimatedFare:"Estimated fare", totalFare:"Final fare", bookingIncluded:"Includes $5 phone booking",
   tripShow:"Show trip destination", tripHide:"Hide trip destination", routeDistance:"Route distance", routeDistanceUnavailable:"Route distance unavailable",
   movementRecovered:"Returned to the last confirmed position and stopped. Keep driving or reverse away from the boundary.",

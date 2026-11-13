@@ -31,6 +31,23 @@ export function doorSide(state, car) {
   return -Math.sin(car.heading) * dx + Math.cos(car.heading) * dy >= 0 ? 1 : -1;
 }
 
+export function describeTraits(traits = {}, messages) {
+  return [
+    traits.luggage ? `${messages.largeLuggage} ×${traits.luggage}` : "",
+    traits.bag ? messages[traits.bag] : "",
+    traits.animal ? `${messages[traits.animal]} ×1` : "",
+    traits.wheelchair ? messages.wheelchair : "",
+  ].filter(Boolean).join(" · ");
+}
+
+export function describeCharges(charges = {}, traits = {}, messages) {
+  return [
+    charges.luggage ? `${messages.largeLuggage} ×${traits.luggage} · HK$ ${charges.luggage}` : "",
+    charges.animal ? `${messages[traits.animal]} ×1 · HK$ ${charges.animal}` : "",
+    charges.booking ? `${messages.phoneBooking} · HK$ ${charges.booking}` : "",
+  ].filter(Boolean).join("; ");
+}
+
 export function peopleOnMap(state, car) {
   const people = (state.citizens ?? []).map(person => {
     const motion = person.motion;
@@ -56,7 +73,8 @@ export function peopleOnMap(state, car) {
       walking: motion.speed > 0 && (!motion.seeking_curb || distance < length),
       walkSpeed: motion.speed };
   });
-  if (state.customer) people.push({ id: "customer", point: state.customer, hailing: true });
+  if (state.customer) people.push({ id: "customer", point: state.customer, hailing: true,
+    ...(state.traits ? { traits: state.traits } : {}) });
   if (state.boarding) {
     const { point, starts, ends, alighting } = state.boarding;
     const progress = Math.max(0, Math.min(1, (state.elapsed - starts) / (ends - starts)));
@@ -69,7 +87,68 @@ export function peopleOnMap(state, car) {
       id: alighting ? "alighting" : "boarding", point: [point[0] + (door[0] - point[0]) * walk,
         point[1] + (door[1] - point[1]) * walk],
       hailing: false, boarding: true, scale: t > 0.8 ? (1 - t) / 0.2 : 1,
+      traits: state.boarding.traits ?? state.traits,
+      heading: Math.atan2(alighting ? point[1] - door[1] : door[1] - point[1],
+        alighting ? point[0] - door[0] : door[0] - point[0]),
+      walking: t < .8, walkSpeed: 1.1,
     });
   }
   return people;
+}
+
+export function drawCitizen(context, person, elapsed) {
+  const c = context, traits = person.traits ?? {};
+  const swing = person.walking ? Math.sin(elapsed * (person.walkSpeed ?? 1.1) * 7) * .6 : 0;
+  c.strokeStyle = person.hailing ? "#ffac6e" : "#c3d1dc";
+  c.fillStyle = person.boarding ? "#92d7b6" : person.hailing ? "#ffac6e" : "#c3d1dc";
+  c.lineWidth = 1; c.lineCap = "round";
+  c.beginPath(); c.moveTo(0, -0.5); c.lineTo(0, 1.5);
+  c.moveTo(-1.5, 1 + (traits.wheelchair ? 0 : swing)); c.lineTo(0, 0);
+  c.lineTo(2, person.hailing ? -3 : 1 - (traits.wheelchair ? 0 : swing));
+  c.moveTo(0, 1); c.lineTo(-.8, traits.wheelchair ? 1.8 : 2.5 + swing);
+  c.moveTo(0, 1); c.lineTo(.8, traits.wheelchair ? 1.8 : 2.5 - swing); c.stroke();
+  c.beginPath(); c.arc(0, -1.6, 1, 0, Math.PI * 2); c.fill();
+  if (traits.wheelchair) {
+    c.strokeStyle = "#91a4aa"; c.lineWidth = .4;
+    c.beginPath(); c.arc(-.6, 1.8, 1.2, 0, Math.PI * 2);
+    c.moveTo(-1.6, 0); c.lineTo(-1.6, 1.5); c.lineTo(1.3, 1.5); c.lineTo(1.8, 2.8);
+    const spin = person.walking ? elapsed * (person.walkSpeed ?? 1.1) * 3 : 0;
+    c.moveTo(-.6, 1.8); c.lineTo(-.6 + Math.cos(spin), 1.8 + Math.sin(spin)); c.stroke();
+    c.beginPath(); c.arc(1.8, 2.8, .35, 0, Math.PI * 2); c.stroke();
+  }
+  c.lineWidth = .25; c.fillStyle = "#bb8556"; c.strokeStyle = "#e9cf9a";
+  for (let i = 0; i < (traits.luggage ?? 0); i++) {
+    const x = i === 0 ? -3.1 : 1.8;
+    c.fillRect(x, .2, 1.3, 2); c.strokeRect(x, .2, 1.3, 2);
+    c.strokeRect(x + .35, -.4, .6, .6);
+  }
+  if (traits.bag) {
+    c.fillStyle = traits.bag === "backpack" ? "#729b80" : "#c48bb3";
+    const x = traits.bag === "backpack" ? -1.1 : 1.8;
+    const y = traits.bag === "handbag" && traits.luggage === 2 ? -1.1 : .2;
+    c.fillRect(x, y, 1, 1.2); c.strokeRect(x + .2, y - .4, .6, .4);
+  }
+  if (traits.animal === "bird") {
+    c.strokeStyle = "#e9cf9a"; c.strokeRect(3, .3, 1.8, 1.8);
+    for (const x of [3.5, 4, 4.5]) {
+      c.beginPath(); c.moveTo(x, .3); c.lineTo(x, 2.1); c.stroke();
+    }
+    c.fillStyle = "#f5c65a"; c.beginPath(); c.arc(3.9, 1.2, .4, 0, Math.PI * 2); c.fill();
+  } else if (traits.animal) {
+    c.strokeStyle = "#e9cf9a";
+    c.beginPath(); c.moveTo(1.8, 1); c.lineTo(4.2, 2); c.stroke();
+    c.fillStyle = traits.animal === "cat" ? "#cfb4a1" : "#a9794f";
+    c.fillRect(3.8, 1.8, 1.6, .8);
+    c.beginPath(); c.arc(5.3, 1.7, .55, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = c.fillStyle; c.lineWidth = .3;
+    c.beginPath();
+    c.moveTo(4, 2.5); c.lineTo(4 + swing * .3, 3);
+    c.moveTo(5, 2.5); c.lineTo(5 - swing * .3, 3);
+    c.moveTo(3.8, 2); c.lineTo(3.2, traits.animal === "cat" ? 1 : 1.7);
+    if (traits.animal === "cat") {
+      c.moveTo(5, 1.3); c.lineTo(5, .8); c.lineTo(5.3, 1.3);
+      c.moveTo(5.4, 1.3); c.lineTo(5.7, .8); c.lineTo(5.7, 1.5);
+    }
+    c.stroke();
+  }
 }

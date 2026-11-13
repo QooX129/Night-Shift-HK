@@ -93,11 +93,17 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   the phone does not pause driving. Each time it opens, it starts on **Available**;
   accepting an order still switches to **Accepted** to show the trip.
 - **Available** lists fictional customers, reachable street pickups/destinations,
-  estimated fares, and distance to pickup. Offers arrive every random **45–180
+  estimated fares, and planned driving-route distance to the exact pickup point,
+  using the same calculation and metre/kilometre format as the trip panel.
+  Unreachable routes show a distance-unavailable notice rather than straight-line
+  distance. Pickup routes are cached and carried into the trip when accepted.
+  Offers arrive every random **45–180
   seconds** and disappear after **30–180 seconds**, with no offer cap or visible
   countdown. Estimates use the planned route without waiting time and include
   the HK$5 phone-booking charge; the final fare depends on the meter.
   One initial offer is available when the shift starts.
+  Orders show each customer's luggage, bags, animal and wheelchair, with an
+  itemized surcharge estimate.
   If no legal passenger trip is reachable when a scheduled offer is due,
   dispatch logs the deferral and tries again after 45–180 seconds; driving
   continues without rejecting the movement update.
@@ -142,12 +148,35 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   turn back rather than cutting through buildings or across junction roads.
   Movement is sampled continuously between server updates, with varied walking
   speeds, alternating arms/legs, and eased facing changes.
+  Citizens and phone customers independently have a **15%** chance of carrying
+  **1–2 large luggage items**, **20%** a handbag, **20%** a backpack, **5%** a pet
+  (dog or cat), **2%** a caged bird, and **3%** a wheelchair. Traits can overlap,
+  but handbags/backpacks and pets/birds are mutually exclusive. Accessories are
+  visible in both 2D and 3D and persist through boarding and alighting.
+  Two suitcases sit on opposite sides of their citizen; a single suitcase
+  retains its original position.
+  Wheelchair users sit and roll rather than walk; pickup rules, speed and
+  boarding duration remain unchanged.
+  The taxi meter has line-bordered **FARE** and **EXTRAS** counters with matching
+  seven-segment digits; extras are 4 px shorter. Fare reserves three integer
+  positions, extras reserve two, and both show one decimal, leaving unused
+  positions dim. Narrow screens put
+  the meter on its own dashboard row without shrinking the digits; the fuel
+  bar retains its existing appearance. Meter fare excludes
+  extras: **HK$6 per large luggage item**, **HK$5 per animal**, and **HK$5 once per
+  phone-booked trip**. Handbags, backpacks and wheelchairs are free. Extras are
+  applied automatically when boarding finishes, stay fixed as the meter runs,
+  and are paid together with the meter fare once at drop-off. The phone shows
+  traits, itemized extras and the combined total; cancelled or uncollected phone
+  bookings do not charge the wallet. Tunnel fees are not implemented.
   Only the normal **3D view** can trigger a new street hail: a citizen must be
   inside its screen bounds and within **80 m** of an empty taxi. Buildings do not
   block this eligibility check; overview, 2D and the minimap never trigger it.
   Accepted phone orders prevent new street hails; existing hails and curb
-  approaches continue. Each eligible citizen gets a **5%** chance per **300 seconds** of simulation
-  time. There are no hails at spawn. Successful citizens walk to a validated
+  approaches continue. Each eligible citizen gets a **4%** chance per **300 seconds** of simulation
+  time; carrying exactly two large suitcases adds **2 percentage points**, for
+  a **6%** chance with the same eligibility checks and cooldown. There are no
+  hails at spawn. Successful citizens walk to a validated
   roadside curb before stopping and waving for a random **45–120 seconds**.
   Uncollected hails then stop, enter a **300-second** cooldown, and walk back
   to their original sidewalk path. These timers use simulation time and pause
@@ -167,8 +196,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   in about 10 seconds when safe sidewalks are available; moving can keep the
   nearby count below 100. `CITIZEN_LIMIT`, `CITIZEN_SPAWN_BATCH`, and
   `CITIZEN_SPAWN_INTERVAL` control this gradual refill. Citizens outside the radius do not
-  count toward this local limit. `CITIZEN_HAIL_PROBABILITY = 0.05` controls the passenger
-  chance; `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
+  count toward this local limit. `CITIZEN_HAIL_PROBABILITY = 0.04` controls the base
+  chance; `CITIZEN_TWO_LUGGAGE_HAIL_BONUS = 0.02` adds the two-suitcase bonus.
+  `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
   `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
   `CITIZEN_HAIL_DURATION = (45, 120)` controls the waving timeout range.
   Drop-off animations always use the taxi's left door relative to its heading;
@@ -350,8 +380,9 @@ per completed 200 m or minute of waiting, reduced to HK$1.40 after the meter
 reaches HK$102.50. Real urban taxis use a 2 km starting distance. The simulation treats
 movement below 12 km/h as waiting time, using each movement update's average
 speed, and does not charge distance and waiting time simultaneously. The
-phone-booking charge is added separately at drop-off. Luggage, animals and
-specific toll charges are not simulated.
+phone-booking, large-luggage and animal charges appear in the separate EXTRA
+counter after boarding and are paid with the meter fare at drop-off. Toll
+charges are not simulated.
 
 There is **no shift-progress saving**. Reloading starts a new shift, while
 settings remain in this browser. A server restart also clears sessions. Money

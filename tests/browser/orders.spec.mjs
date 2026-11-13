@@ -94,7 +94,87 @@ test("citizens and passengers stand on their road level after elevation is enabl
   expect(heights.legacy).toEqual([0, 0, 0, 0]);
 });
 
-async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRoute = false) {
+test("3D accessories persist through boarding and pooled citizens reset their seated pose", async ({ page }, testInfo) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=passenger-extras-2");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data: { driving: { taxi_width: 1.7 } },
+      scene: new THREE.Scene(), taxi: new THREE.Group(), resources: [],
+    });
+    view.buildCitizens();
+    try {
+      const car = { x: 0, y: 0, heading: 0 };
+      const traits = { luggage: 2, bag: "backpack", animal: "bird", wheelchair: true };
+      const citizen = { id: "rider", point: [3, 4], walking: true, traits };
+      view.updateCitizens({ citizens: [citizen], elapsed: 0 }, car);
+      const item = view.people[0], accessories = item.accessories.group;
+      const luggage = accessories.children.filter(mesh => mesh.material === view.propMaterials.luggage);
+      const single = view.citizenAccessories({ luggage: 1 }).group.children
+        .filter(mesh => mesh.material === view.propMaterials.luggage);
+      const first = { props: accessories.children.length, wheels: item.accessories.wheels.length,
+        luggage: luggage.map(mesh => mesh.position.toArray()),
+        single: single.map(mesh => mesh.position.toArray()),
+        wheelSides: item.accessories.wheels.map(wheel => Math.sign(wheel.position.z)),
+        seated: item.legs.every(leg => leg.rotation.z === Math.PI / 2) };
+      view.updateCitizens({ citizens: [citizen], elapsed: .1 }, car);
+      const rolling = item.accessories.wheels.every(wheel => wheel.rotation.z !== 0);
+      view.updateCitizens({ elapsed: .5, traits,
+        boarding: { point: [3, 4], starts: 0, ends: 2, traits } }, car);
+      const preserved = item.accessories.group === accessories && item.legs[0].rotation.z === Math.PI / 2;
+      view.updateCitizens({ elapsed: .6, citizens: [{ id: "plain", point: [3, 4], walking: false }] }, car);
+      const reset = item.accessories.group.children.length === 0
+        && item.legs.every(leg => leg.rotation.z === 0 && leg.position.x === 0)
+        && item.head.position.y === 1.65;
+      const animals = ["dog", "cat"].map(animal => {
+        view.updateCitizens({ elapsed: .7, citizens: [{ ...citizen, traits: { animal } }] }, car);
+        return { legs: item.accessories.animalLegs.length, props: item.accessories.group.children.length };
+      });
+      view.updateCitizens({ elapsed: 0, citizens: [
+        { id: "luggage", point: [-3.5, 0], traits: { luggage: 2, bag: "handbag" } },
+        { id: "dog", point: [-1.2, 0], traits: { animal: "dog", bag: "backpack" } },
+        { id: "cat", point: [1, 0], traits: { animal: "cat" } },
+        { id: "wheelchair", point: [3.3, 0], traits: { wheelchair: true, animal: "bird" } },
+      ] }, car);
+      view.scene.background = new THREE.Color("#172b34");
+      view.scene.add(new THREE.HemisphereLight("#ffffff", "#64727c", 3));
+      const camera = new THREE.PerspectiveCamera(42, 900 / 420, .1, 100);
+      camera.position.set(3, 4, 12); camera.lookAt(0, .75, 0);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+      renderer.setSize(900, 420);
+      document.body.replaceChildren(renderer.domElement);
+      renderer.domElement.id = "citizen-preview";
+      renderer.render(view.scene, camera);
+      renderer.dispose();
+      return { first, rolling, preserved, reset, animals };
+    } finally {
+      for (const resource of view.resources) resource.dispose();
+      view.door.geometry.dispose(); view.door.material.dispose();
+    }
+  });
+  expect(result.first.props).toBeGreaterThan(10);
+  expect(result.first.wheels).toBe(8);
+  expect(result.first.luggage).toHaveLength(2);
+  const [left, right] = result.first.luggage;
+  expect(left[2]).toBeLessThan(0);
+  expect(right[2]).toBe(-left[2]);
+  expect(right.slice(0, 2)).toEqual(left.slice(0, 2));
+  expect(result.first.single).toEqual([left]);
+  expect(result.first.wheelSides.filter(side => side < 0)).toHaveLength(4);
+  expect(result.first.wheelSides.filter(side => side > 0)).toHaveLength(4);
+  expect(result.first.seated).toBe(true);
+  expect(result.rolling).toBe(true);
+  expect(result.preserved).toBe(true);
+  expect(result.reset).toBe(true);
+  for (const animal of result.animals) {
+    expect(animal.legs).toBe(4);
+    expect(animal.props).toBeGreaterThanOrEqual(2);
+  }
+  await page.locator("#citizen-preview").screenshot({ path: testInfo.outputPath("citizen-accessories.png") });
+});
+
+async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRoute = false, pickupDetour = false) {
   const passenger = { name: "Mei", zh: "阿美", role: "Photographer", role_zh: "攝影師",
     pickup: "Thanks!", pickup_zh: "唔該！", arrival: "Here!", arrival_zh: "到喇！" };
   const edge = { id: "road", a: "a", b: "b", way: 1, kind: "residential", length: 300,
@@ -116,12 +196,25 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
     stops[1].edge = "next";
     stops[1].point = [350, 0];
   }
+  if (pickupDetour) {
+    map.nodes.c = [300, 600]; map.nodes.d = [0, 600];
+    map.edges.push({ ...edge, id: "north", a: "b", b: "c", way: 2, length: 600 },
+      { ...edge, id: "west", a: "c", b: "d", way: 3 });
+    map.bounds[3] = 750;
+    stops[0].edge = "west"; stops[0].point = [50, 600];
+  }
+  const pickupRoute = pickupDetour ? ["road", "north", "west"] : ["road"];
+  const traits = { luggage: 0, bag: "", animal: "", wheelchair: false };
+  const fare_breakdown = { luggage: 0, animal: 0, booking: 5 };
   const order = id => ({ id, pickup: "pickup", destination: "dest", passenger, fare: 60,
-    source: "phone", distance: 0 });
+    traits, fare_breakdown, extra_fare: 5,
+    source: "phone", distance: pickupDetour ? 600 : 0, pickup_route: pickupRoute,
+    pickup_point: stops[0].point });
   let state = {
     id: "orders", version: "orders", seq: 0, x: 50, y: 0, heading: 0, edge: "road", speed: 0,
     paused: true, elapsed: 0, fuel: 100, money: 120, trips: 0, upgrades: [], phase: "available",
     pickup: "pickup", destination: "dest", fare: 60, meter: null, passenger, dialogue: "offer",
+    traits, fare_breakdown, extra_fare: 5,
     warning: "", route: null, no_route: false, closed: [], traffic: {}, options: [],
     selected_exit: null, selected_junction: null, service_ready: true, depot_ready: false,
     offers: Array.from({ length: 8 }, (_, index) => order(`offer-${index}`)), accepted_orders: [],
@@ -189,7 +282,8 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
       state.boarding = { point: [55, 6], starts: state.elapsed, ends: state.elapsed + 1.8 };
       state.destination = ""; state.citizens = []; state.dialogue = "boarding";
     } else throw new Error(`Unexpected command ${command.action}`);
-    state.route = ["pickup", "onboard"].includes(state.phase) ? (guideRoute ? ["road", "next"] : ["road"]) : null;
+    state.route = state.phase === "pickup" ? pickupRoute
+      : state.phase === "onboard" ? (guideRoute ? ["road", "next"] : ["road"]) : null;
     state.can_accept = !["pickup", "boarding"].includes(state.phase) && !state.accepted_orders.length;
     if (command.action === "move" && moveDelay) await new Promise(resolve => setTimeout(resolve, moveDelay));
     await route.fulfill({ json: state });
@@ -201,11 +295,27 @@ async function dispatchFixture(page, moveDelay = 0, exhaustFuel = false, guideRo
   return { commands, get state() { return state; }, expireOffers() { expire = true; } };
 }
 
+test("phone pickup route distance matches the trip panel before and after accepting", async ({ page }) => {
+  const fixture = await dispatchFixture(page, 0, false, false, true);
+  fixture.state.service_ready = false;
+  fixture.state.pickup_point = [50, 600];
+  await page.locator("#phone-toggle").click();
+  await expect(page.locator(".order-distance").first()).toHaveText("1.1 km · to pickup");
+  fixture.state.offers[0].pickup_route = null;
+  await expect(page.locator(".order-distance").first()).toHaveText("Route distance unavailable · to pickup");
+  fixture.state.offers[0].pickup_route = ["road", "north", "west"];
+  await expect(page.locator(".order-distance").first()).toHaveText("1.1 km · to pickup");
+  await page.locator(".order-accept").first().click();
+  await expect(page.locator("#trip-distance")).toHaveText("Route distance · 1.1 km");
+  await expect(page.locator("#accepted-tab")).toHaveAttribute("aria-selected", "true");
+});
+
 test("fuel exhaustion during an onboard trip discards buffered movement without a crash", async ({ page }) => {
   const fixture = await dispatchFixture(page, 400, true);
   fixture.state.phase = "onboard";
   fixture.state.service_ready = false;
   fixture.state.order_source = "phone";
+  fixture.state.extra_fare = 5;
   fixture.state.active_order = "passenger";
   await page.keyboard.down("w");
   await expect(page.locator("#fuel")).toHaveText("0%");
@@ -250,8 +360,10 @@ test("dashboard shows the live meter, speed, wallet and garage icon on desktop a
   await expect(page.locator("#garage")).toHaveAttribute("aria-label", "Rest stop / garage");
   await page.locator("#phone-toggle").click();
   await page.locator("#accepted-tab").click();
-  await expect(page.locator("#fare")).toHaveText("HK$ 36.1");
-  await expect(page.locator("#fare-label")).toHaveText("Includes $5 phone booking");
+  await expect(page.locator("#fare")).toHaveText("HK$ 31.1");
+  await expect(page.locator("#fare-label")).toHaveText("Meter fare");
+  await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "EXTRAS HK$ 5.0");
+  await expect(page.locator("#fare-breakdown")).toHaveText("Phone booking · HK$ 5 · Final fare · HK$ 36.1");
   await page.locator("#phone-close").click();
   await expect.poll(async () => page.locator("#speed-needle").getAttribute("transform"))
     .not.toBe("rotate(-90 60 60)");
@@ -284,7 +396,104 @@ test("dashboard shows the live meter, speed, wallet and garage icon on desktop a
   await expect(page.locator("#meter-status")).toHaveText("PAID");
   await page.locator("#phone-toggle").click();
   await page.locator("#accepted-tab").click();
-  await expect(page.locator("#fare-label")).toHaveText("Final fare · Includes $5 phone booking");
+  await expect(page.locator("#fare-label")).toHaveText("Meter fare");
+});
+
+test("itemized extras stay to the right of the meter on narrow screens and switch language", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.phase = "onboard";
+  fixture.state.meter = 29;
+  fixture.state.fare = 51;
+  fixture.state.extra_fare = 22;
+  fixture.state.traits = { luggage: 2, bag: "backpack", animal: "bird", wheelchair: true };
+  fixture.state.fare_breakdown = { luggage: 12, animal: 5, booking: 5 };
+  fixture.state.order_source = "phone";
+  fixture.state.active_order = "rider";
+  fixture.state.service_ready = false;
+  await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "EXTRAS HK$ 22.0");
+  await page.locator("#phone-toggle").click();
+  await page.locator("#accepted-tab").click();
+  await expect(page.locator("#fare")).toHaveText("HK$ 29.0");
+  await expect(page.locator("#passenger-traits")).toContainText("Large luggage ×2");
+  await expect(page.locator("#passenger-traits")).toContainText("Wheelchair (free)");
+  await expect(page.locator("#fare-breakdown")).toContainText("Caged bird ×1 · HK$ 5");
+  await expect(page.locator("#fare-breakdown")).toContainText("Final fare · HK$ 51.0");
+  await page.locator("#phone-close").click();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 720 });
+    const bounds = await page.evaluate(() => {
+      const box = id => {
+        const { left, right, width, height } = document.getElementById(id).getBoundingClientRect();
+        return { left, right, width, height };
+      };
+      const meter = document.querySelector(".taxi-meter").getBoundingClientRect();
+      const fareDigit = document.querySelector("#meter-digits .meter-digit").getBoundingClientRect();
+      const extraDigit = document.querySelector("#meter-extra .meter-digit").getBoundingClientRect();
+      const fuel = document.querySelector(".fuel-track").getBoundingClientRect();
+      return { main: box("meter-digits"), extra: box("meter-extra"), right: meter.right,
+        heightDifference: fareDigit.height - extraDigit.height,
+        baselineAligned: fareDigit.bottom === extraDigit.bottom,
+        fuelWidth: fuel.width, fuelHeight: fuel.height };
+    });
+    expect(bounds.extra.left).toBeGreaterThanOrEqual(bounds.main.right);
+    expect(bounds.extra.right).toBeLessThanOrEqual(bounds.right);
+    expect(bounds.heightDifference).toBe(4);
+    expect(bounds.baselineAligned).toBe(true);
+    expect(bounds.fuelWidth).toBe(width > 800 ? 66 : 35);
+    expect(bounds.fuelHeight).toBe(3);
+  }
+  await page.locator("#language").click();
+  await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "附加費 HK$ 22.0");
+  await page.locator("#phone-toggle").click();
+  await page.locator("#accepted-tab").click();
+  await expect(page.locator("#passenger-traits")).toContainText("大型行李 ×2");
+  await expect(page.locator("#fare-breakdown")).toContainText("電召費 · HK$ 5");
+});
+
+test("bordered counters reserve dim digit slots and retain their layout as fares grow", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  for (const [id, slots] of [["meter-digits", 4], ["meter-extra", 3]]) {
+    await expect(page.locator(`#${id} .meter-digit`)).toHaveCount(slots);
+    await expect(page.locator(`#${id} .meter-digit.dim`)).toHaveCount(slots);
+    await expect(page.locator(`#${id} i.on`)).toHaveCount(0);
+    await expect(page.locator(`#${id}`)).toHaveAttribute("aria-label", "VACANT");
+  }
+  fixture.state.phase = "onboard";
+  fixture.state.meter = 29;
+  fixture.state.extra_fare = 0;
+  fixture.state.fare = 29;
+  fixture.state.active_order = "rider";
+  fixture.state.service_ready = false;
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 29.0");
+  await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "EXTRAS HK$ 0.0");
+  await expect(page.locator("#meter-digits .meter-digit.dim")).toHaveCount(1);
+  await expect(page.locator("#meter-extra .meter-digit.dim")).toHaveCount(1);
+  await expect(page.locator("#meter-digits .meter-digit.dim i.on")).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 720 });
+  const before = await page.locator(".taxi-meter").boundingBox();
+  fixture.state.meter = 102.5;
+  fixture.state.extra_fare = 22;
+  fixture.state.fare = 124.5;
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 102.5");
+  await expect(page.locator("#meter-digits .meter-digit.dim")).toHaveCount(0);
+  await expect(page.locator("#meter-extra .meter-digit.dim")).toHaveCount(0);
+  await expect(page.locator("#meter-extra .meter-digit")).toHaveCount(3);
+  expect(await page.locator(".taxi-meter").boundingBox()).toEqual(before);
+  const panels = await page.locator(".meter-amount").evaluateAll(elements => elements.map(element => {
+    const panel = element.getBoundingClientRect();
+    const digits = [...element.querySelectorAll(".meter-digit, .meter-decimal")].map(digit => digit.getBoundingClientRect());
+    const style = getComputedStyle(element);
+    return { fits: digits.every(digit => digit.left >= panel.left && digit.right <= panel.right),
+      divider: style.borderLeftWidth };
+  }));
+  expect(panels.every(panel => panel.fits)).toBe(true);
+  expect(panels[1].divider).toBe("1px");
+  fixture.state.meter = 1000;
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 1000.0");
+  await expect(page.locator("#meter-digits .meter-digit")).toHaveCount(5);
+  fixture.state.extra_fare = 100;
+  await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "EXTRAS HK$ 100.0");
+  await expect(page.locator("#meter-extra .meter-digit")).toHaveCount(4);
 });
 
 test("speed reading and pickup controls stay aligned with the dashboard", async ({ page }) => {
@@ -293,6 +502,7 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
     { width: 1280, height: 720 },
     { width: 800, height: 720 },
     { width: 390, height: 844 },
+    { width: 390, height: 664 },
     { width: 320, height: 720 },
     { width: 844, height: 390 },
   ]) {
@@ -305,7 +515,8 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
         speed.textContent = "160";
         const rect = selector => dashboard.querySelector(selector).getBoundingClientRect().toJSON();
         const positions = { dashboard: dashboard.getBoundingClientRect().toJSON(),
-          dial: rect(".speed-dial"), reading: rect(".speed-reading"), door: rect("#door") };
+          dial: rect(".speed-dial"), reading: rect(".speed-reading"), door: rect("#door"),
+          overview: document.getElementById("overview").getBoundingClientRect().toJSON() };
         speed.textContent = previousSpeed;
         return positions;
       });
@@ -313,6 +524,10 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
       expect(positions.door.right).toBeLessThanOrEqual(positions.dashboard.right);
       expect(positions.reading.left).toBeGreaterThanOrEqual(positions.dial.right);
       expect(positions.reading.right).toBeLessThanOrEqual(positions.dashboard.right);
+      expect(positions.overview.bottom <= positions.dashboard.top
+        || positions.overview.right <= positions.dashboard.left
+        || positions.overview.left >= positions.dashboard.right
+        || positions.overview.top >= positions.dashboard.bottom).toBe(true);
       expect(Math.abs((positions.dashboard.left + positions.dashboard.right) / 2 - size.width / 2)).toBeLessThanOrEqual(1);
       if (size.width === 1280) expect(positions.dial.width).toBeGreaterThan(112);
       if (size.width === 320) expect(positions.dial.width).toBeGreaterThan(78);
@@ -600,9 +815,10 @@ test("unreachable phone pickup is declined without interrupting the current trip
 test("randomized order points drive the trip distance and 3D marker", async ({ page }) => {
   const fixture = await dispatchFixture(page);
   fixture.state.pickup_point = [75, 0];
+  fixture.state.offers[0].pickup_point = [75, 0];
   fixture.state.destination_point = [230, 0];
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=route-guide-1");
+    const { Map3DView } = await import("/map3d.mjs?v=passenger-extras-2");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.randomPointView = this;
@@ -610,6 +826,7 @@ test("randomized order points drive the trip distance and 3D marker", async ({ p
     };
   });
   await page.locator("#phone-toggle").click();
+  await expect(page.locator(".order-distance").first()).toHaveText("25 m · to pickup");
   await page.locator(".order-accept").first().click();
   await expect(page.locator("#trip-distance")).toContainText("25 m");
   await toggleDrivingView(page);
@@ -738,7 +955,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=tunnel-clearance-1");
+    const { MapView } = await import("/map.mjs?v=passenger-extras-2");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -770,7 +987,7 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=${path === "map3d.mjs" ? "route-guide-1" : "tunnel-clearance-1"}`);
+      const module = await import(`/${path}?v=passenger-extras-2`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

@@ -1,7 +1,7 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=tunnel-clearance-1";
-import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=parabolic-steering-1";
-import { en, zh } from "./i18n.mjs?v=parabolic-steering-1";
+import { MapView } from "./map.mjs?v=passenger-extras-2";
+import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
+import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 import { surfacePose, surfaceSegments, terrainHeight, isElevatedRoad, isGroundRoad, isTunnelRoad }
   from "./elevation.mjs?v=tunnel-clearance-1";
@@ -1014,12 +1014,95 @@ export class Map3DView {
     this.skinMaterial = new THREE.MeshStandardMaterial({ color: "#edc59d" });
     this.resources.push(this.personBody, this.personHead, this.personLimb,
       this.personMaterial, this.hailMaterial, this.skinMaterial);
+    this.propBox = new THREE.BoxGeometry(1, 1, 1);
+    this.propBall = new THREE.SphereGeometry(1, 6, 6);
+    this.propWheel = new THREE.TorusGeometry(1, .1, 4, 10);
+    this.propMaterials = Object.fromEntries(Object.entries({
+      luggage: "#bb8556", handbag: "#c48bb3", backpack: "#729b80",
+      frame: "#91a4aa", tire: "#253039", dog: "#a9794f", cat: "#cfb4a1", bird: "#f5c65a",
+    }).map(([key, color]) => [key, new THREE.MeshStandardMaterial({ color })]));
+    this.resources.push(this.propBox, this.propBall, this.propWheel, ...Object.values(this.propMaterials));
     this.door = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.08),
       new THREE.MeshStandardMaterial({ color: "#f7cc65" }));
     this.door.position.set(-0.4, 0.9, (this.data.driving.taxi_width ?? 2.6) / 2 + 0.45);
     this.door.rotation.y = Math.PI / 3;
     this.door.visible = false;
     this.taxi.add(this.door);
+  }
+  citizenAccessories(traits) {
+    const group = new THREE.Group(), wheels = [], animalLegs = [];
+    const box = (parent, material, position, scale, geometry = this.propBox) => {
+      const mesh = new THREE.Mesh(geometry, this.propMaterials[material]);
+      mesh.position.set(...position); mesh.scale.set(...scale); parent.add(mesh);
+      return mesh;
+    };
+    const wheel = (x, y, z, radius) => {
+      const rolling = new THREE.Group();
+      rolling.position.set(x, y, z);
+      box(rolling, "tire", [0, 0, 0], [radius, radius, radius], this.propWheel);
+      box(rolling, "frame", [0, 0, 0], [radius * 1.8, .025, .025]);
+      group.add(rolling); wheels.push(rolling);
+    };
+    if (traits.wheelchair) {
+      box(group, "backpack", [0, .6, 0], [.65, .12, .7]);
+      box(group, "backpack", [-.3, .95, 0], [.1, .65, .7]);
+      for (const z of [-.48, .48]) {
+        wheel(-.15, .43, z, .4); wheel(.6, .14, z, .12);
+        box(group, "frame", [.1, .85, z], [.7, .04, .04]);
+        box(group, "frame", [-.3, .65, z], [.04, 1, .04]);
+      }
+      box(group, "frame", [.6, .22, 0], [.3, .05, .65]);
+    }
+    for (let i = 0; i < (traits.luggage ?? 0); i++) {
+      const z = i === 0 ? -.75 : .75;
+      box(group, "luggage", [-.2, .45, z], [.38, .75, .35]);
+      box(group, "frame", [-.2, .95, z], [.04, .3, .04]);
+      box(group, "frame", [-.2, 1.1, z], [.24, .04, .04]);
+      wheel(-.2, .1, z - .18, .075);
+      wheel(-.2, .1, z + .18, .075);
+    }
+    if (traits.bag === "backpack") {
+      box(group, "backpack", [-.3, traits.wheelchair ? .9 : 1, 0], [.3, .55, .45]);
+      for (const z of [-.2, .2]) box(group, "frame", [0, 1.1, z], [.5, .04, .04]);
+    } else if (traits.bag === "handbag") {
+      const x = traits.luggage === 2 ? .25 : .1;
+      box(group, "handbag", [x, .65, .65], [.3, .3, .18]);
+      box(group, "frame", [x, .88, .65], [.2, .18, .025], this.propWheel);
+    }
+    if (traits.animal === "bird") {
+      const cage = new THREE.Group();
+      cage.position.set(traits.luggage === 2 ? .25 : .1, .6, traits.bag === "handbag" ? 1.1 : .8);
+      group.add(cage);
+      for (const y of [0, .5]) box(cage, "frame", [0, y, 0], [.42, .03, .42]);
+      for (const offset of [-.2, 0, .2]) for (const side of [-.2, .2]) {
+        box(cage, "frame", [offset, .25, side], [.015, .5, .015]);
+        box(cage, "frame", [side, .25, offset], [.015, .5, .015]);
+      }
+      box(cage, "frame", [0, .1, 0], [.4, .025, .025]);
+      box(cage, "bird", [0, .22, 0], [.1, .13, .08], this.propBall);
+      box(cage, "bird", [.06, .34, 0], [.07, .07, .07], this.propBall);
+      box(cage, "luggage", [.14, .34, 0], [.08, .025, .025]);
+      box(cage, "frame", [0, .58, 0], [.12, .08, .02], this.propWheel);
+    } else if (traits.animal) {
+      const animal = new THREE.Group(), cat = traits.animal === "cat";
+      animal.position.set(-.1, 0, 1.15); group.add(animal);
+      if (cat) animal.scale.setScalar(.75);
+      box(animal, traits.animal, [0, .35, 0], [.65, .28, .26]);
+      box(animal, traits.animal, [.35, .55, 0], [.18, .18, .16], this.propBall);
+      box(animal, traits.animal, [.5, .5, 0], [cat ? .08 : .2, .1, .14]);
+      for (const z of [-.12, .12]) {
+        const ear = box(animal, traits.animal, [.3, cat ? .75 : .55, z], [.08, .22, .07]);
+        ear.rotation.z = cat ? -.2 : .3;
+        for (const x of [-.23, .23]) {
+          animalLegs.push(box(animal, traits.animal, [x, .15, z], [.065, .3, .065]));
+        }
+      }
+      const tail = box(animal, traits.animal, [-.4, cat ? .5 : .4, 0], [.06, cat ? .4 : .25, .06]);
+      tail.rotation.z = cat ? -.3 : -.9;
+      const leash = box(group, "frame", [0, .7, .75], [.015, .015, .8]);
+      leash.rotation.x = .7;
+    }
+    return { group, wheels, animalLegs };
   }
   updateCitizens(state, car, lang = "en") {
     const people = peopleOnMap(state, car);
@@ -1049,7 +1132,7 @@ export class Map3DView {
         leg.position.set(0, 0.35, z); group.add(leg); return leg;
       });
       this.scene.add(group);
-      this.people.push({ group, body, arm, otherArm, legs, bubble });
+      this.people.push({ group, body, head, arm, otherArm, legs, bubble });
     }
     this.people.forEach((item, index) => {
       const person = people[index];
@@ -1079,15 +1162,33 @@ export class Map3DView {
         * (1 - Math.exp(-10 * delta));
       item.group.rotation.y = -item.heading;
       item.group.scale.setScalar(person.scale ?? 1);
+      const traits = person.traits ?? {};
+      const appearance = `${traits.luggage ?? 0}:${traits.bag ?? ""}:${traits.animal ?? ""}:${Boolean(traits.wheelchair)}`;
+      if (item.appearance !== appearance) {
+        if (item.accessories) item.group.remove(item.accessories.group);
+        item.accessories = this.citizenAccessories(traits);
+        item.group.add(item.accessories.group);
+        item.appearance = appearance;
+      }
+      item.body.position.y = traits.wheelchair ? .9 : 1;
+      item.head.position.y = traits.wheelchair ? 1.5 : 1.65;
       item.body.material = person.hailing ? this.hailMaterial : this.personMaterial;
       item.arm.position.set(0, person.hailing ? 1.7 : 1, 0.5);
       const walking = person.walking ?? !person.hailing;
-      const swing = walking ? Math.sin(state.elapsed * (person.walkSpeed ?? 1.1) * 7 + index) * .45 : 0;
+      const swing = walking ? Math.sin(state.elapsed * (person.walkSpeed ?? 1.1)
+        * (traits.wheelchair ? 4 : 7) + index) * (traits.wheelchair ? .25 : .45) : 0;
       item.arm.rotation.x = person.hailing ? -.7 + Math.sin(state.elapsed * 5 + index) * .25 : 0;
       item.arm.rotation.z = person.hailing ? 0 : -swing;
       item.otherArm.rotation.z = swing;
       item.legs.forEach((leg, side) => {
-        leg.rotation.z = side ? swing : -swing;
+        leg.position.set(traits.wheelchair ? .35 : 0, traits.wheelchair ? .5 : .35, side ? .16 : -.16);
+        leg.rotation.z = traits.wheelchair ? Math.PI / 2 : side ? swing : -swing;
+      });
+      item.accessories.wheels.forEach(wheel => {
+        if (walking) wheel.rotation.z -= delta * (person.walkSpeed ?? 1.1) / .4;
+      });
+      item.accessories.animalLegs.forEach((leg, side) => {
+        leg.rotation.z = side % 2 ? swing : -swing;
       });
     });
   }

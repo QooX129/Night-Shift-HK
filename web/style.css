@@ -920,11 +920,11 @@ blockquote {
     left: 50%;
     transform: translateX(-50%);
     display: grid;
-    grid-template-columns: minmax(0, 1.18fr) minmax(0, 1fr) minmax(70px, .7fr) 42px;
+    grid-template-columns: minmax(250px, 1.3fr) minmax(0, 1fr) minmax(70px, .7fr) 42px;
     align-items: center;
     border-radius: 16px;
-    padding: 12px 18px;
-    gap: 16px;
+    padding: 12px;
+    gap: 12px;
     width: min(700px, calc(100% - 32px))
 }
 
@@ -947,22 +947,31 @@ blockquote {
 
 .meter-head small { font-size: inherit; font-weight: 700 }
 .meter-head span { color: var(--mint); letter-spacing: .5px }
-.meter-amount { display: flex; align-items: center; gap: 5px; margin: 5px 0 4px; color: var(--yellow); font-size: 10px; font-weight: 700 }
-.meter-digits { display: inline-flex; gap: 3px; align-items: center; height: 35px; font: 600 25px ui-monospace, monospace; color: #78878b }
-.meter-digit { position: relative; width: 19px; height: 34px }
+.meter-readings { display: grid; grid-template-columns: minmax(min-content, 1.1fr) minmax(min-content, 1fr); margin-top: 10px; border: 1px solid #4b5148; border-radius: 5px }
+.meter-amount { min-width: 0; margin: -7px 0 0; padding: 0 10px 7px; border: 0; text-align: right }
+.meter-amount+.meter-amount { border-left: 1px solid #4b5148 }
+.meter-amount legend { padding: 0 5px; background: #101d23; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: 1.8px; text-align: left }
+.meter-unit { display: block; margin-top: 6px; color: var(--muted); font-size: 9px; letter-spacing: .5px }
+#passenger-traits, #fare-breakdown, .order-traits, .order-extras { font-size: 11px; line-height: 1.5 }
+#passenger-traits:empty, .order-traits:empty, .order-extras:empty { display: none }
+.meter-digits { display: flex; gap: 3px; justify-content: flex-end; align-items: flex-end; height: 46px; margin-top: 2px; font: 600 25px ui-monospace, monospace }
+.meter-digit { position: relative; width: 19px; height: 34px; flex: 0 0 19px }
+.meter-extra .meter-digits { font-size: 21px }
+.meter-extra .meter-digit { width: 17px; height: 30px; flex-basis: 17px }
 .meter-digit i { position: absolute; background: var(--yellow); opacity: .09; border-radius: 2px }
+.meter-digit.dim i, .meter-decimal.dim { opacity: .04 }
 .meter-digit i.on { opacity: 1; box-shadow: 0 0 8px #f5c65a30 }
-.meter-digit .a, .meter-digit .g, .meter-digit .d { width: 13px; height: 3px; left: 3px; transform: skew(-12deg) }
+.meter-digit .a, .meter-digit .g, .meter-digit .d { width: 68.421%; height: 8.824%; left: 15.789%; transform: skew(-12deg) }
 .meter-digit .a { top: 0 }
-.meter-digit .g { top: 15px }
+.meter-digit .g { top: 44.118% }
 .meter-digit .d { bottom: 0 }
-.meter-digit .b, .meter-digit .c, .meter-digit .e, .meter-digit .f { width: 3px; height: 12px; transform: skew(-5deg) }
-.meter-digit .b { top: 2px; right: 0 }
-.meter-digit .c { bottom: 2px; right: 0 }
-.meter-digit .f { top: 2px; left: 0 }
-.meter-digit .e { bottom: 2px; left: 0 }
+.meter-digit .b, .meter-digit .c, .meter-digit .e, .meter-digit .f { width: 15.789%; height: 35.294%; transform: skew(-5deg) }
+.meter-digit .b { top: 5.882%; right: 0 }
+.meter-digit .c { bottom: 5.882%; right: 0 }
+.meter-digit .f { top: 5.882%; left: 0 }
+.meter-digit .e { bottom: 5.882%; left: 0 }
 .meter-decimal { width: 3px; height: 3px; background: var(--yellow); border-radius: 50%; align-self: flex-end; margin-bottom: 1px }
-.meter-wallet { display: flex; flex-wrap: wrap; gap: 3px 10px; color: var(--muted); font-size: 10px }
+.meter-wallet { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 10px; margin-top: 9px; color: var(--muted); font-size: 10px }
 .meter-wallet strong { color: var(--text); font-size: 12px }
 
 .speed-dial {
@@ -992,7 +1001,7 @@ blockquote {
     column-gap: 2px
 }
 .speed-reading {
-    width: 3ch;
+    width: calc(3ch + 1px);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1044,6 +1053,7 @@ blockquote {
 
 .fuel-track {
     width: 66px;
+    flex-shrink: 0;
     height: 3px;
     border-radius: 2px;
     background: #35433c;
@@ -1364,17 +1374,13 @@ dialog p {
 
     .dashboard {
         width: calc(100% - 32px);
-        grid-template-columns: minmax(0, .88fr) minmax(0, 1.32fr) minmax(42px, .48fr) 32px;
-        gap: 5px;
+        grid-template-columns: minmax(0, 1fr) 65px 32px;
+        gap: 12px;
         padding: 9px;
         bottom: 65px
     }
 
-    .taxi-meter { padding: 7px }
-    .meter-head { display: block; font-size: 8px; letter-spacing: .4px }
-    .meter-head span { display: block }
-    .meter-amount { flex-direction: column; align-items: flex-start; gap: 2px; font-size: 8px }
-    .meter-digits { flex: none; transform: scale(.6); transform-origin: left center; margin-right: -35px }
+    .taxi-meter { grid-column: 1 / -1; padding: 10px 12px }
     .meter-wallet { font-size: 8px; gap: 2px 5px }
     .meter-wallet strong { font-size: 10px }
     .speed-display { grid-template-columns: minmax(0, 90px) max-content }
@@ -1411,6 +1417,16 @@ dialog p {
     }
 }
 
+@media(max-width:400px) {
+    .dashboard {
+        width: calc(100% - 16px);
+        grid-template-columns: minmax(0, 1fr) 65px 28px;
+        padding: 6px;
+        gap: 4px
+    }
+    .dashboard>.quiet { width: 28px }
+}
+
 @media(max-width:800px) and (pointer:coarse) {
     .minimap {
         bottom: 302px
@@ -1434,11 +1450,15 @@ dialog p {
 }
 
 @media(max-width:800px) and (min-height:600px) {
-    .view-3d .minimap { bottom: 270px }
+    .view-3d .minimap { bottom: 370px }
 }
 
 @media(max-width:800px) and (min-height:600px) and (pointer:coarse) {
-    .view-3d .minimap { bottom: 350px }
+    .view-3d .minimap { bottom: 450px }
+}
+
+@media(max-width:800px) and (max-height:700px) {
+    .map-tools { flex-direction: row }
 }
 
 @media(max-width:800px) {
@@ -1522,10 +1542,13 @@ dialog p {
         right: auto;
         transform: translateX(-50%);
         width: min(330px, calc(100% - 30px));
+        grid-template-columns: minmax(0, 1fr) 65px 32px;
         bottom: 40px;
         gap: 12px;
         padding: 10px
     }
+
+    .taxi-meter { grid-column: 1 / -1 }
 
     .dashboard>.quiet {
         max-width: 75px

@@ -10,7 +10,7 @@ test("3D chase camera follows the taxi evenly when render start time jitters", a
   await page.locator("#start").click();
   await expect(page.locator("#map-3d")).toBeVisible({ timeout: 30000 });
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=route-guide-1");
+    const { Map3DView } = await import("/map3d.mjs?v=passenger-extras-2");
     const render = Map3DView.prototype.render;
     let frame = 0;
     window.cameraSamples = [];

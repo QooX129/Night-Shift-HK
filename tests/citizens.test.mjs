@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { doorSide, peopleOnMap, drawHailBubble } from "../web/citizens.mjs";
+import { doorSide, peopleOnMap, drawHailBubble, describeTraits, describeCharges, drawCitizen } from "../web/citizens.mjs";
+import { en, zh } from "../web/i18n.mjs";
 
 const near = (actual, expected) => assert.ok(Math.hypot(actual[0] - expected[0], actual[1] - expected[1]) < 1e-9, ` != ${expected}`);
 
@@ -76,6 +77,61 @@ test("phone customer waits waving at the pickup curb", () => {
   assert.deepEqual(people, [{ id: "customer", point: [7, 8], hailing: true }]);
 });
 
+test("traits persist from waiting through boarding and alighting", () => {
+  const traits = { luggage: 2, bag: "backpack", animal: "bird", wheelchair: true };
+  const car = { x: 0, y: 0, heading: 0 };
+  const waiting = peopleOnMap({ customer: [7, 8], traits, citizens: [] }, car)[0];
+  assert.deepEqual(waiting.traits, traits);
+  for (const alighting of [false, true]) {
+    const person = peopleOnMap({ elapsed: .5, traits,
+      boarding: { point: [7, 8], starts: 0, ends: 2, alighting, traits } }, car)[0];
+    assert.deepEqual(person.traits, traits);
+    assert.equal(person.walking, true);
+    assert.ok(Number.isFinite(person.heading));
+  }
+});
+
+test("trait and surcharge descriptions include counts and localize without charging free items", () => {
+  const traits = { luggage: 2, bag: "backpack", animal: "bird", wheelchair: true };
+  const charges = { luggage: 12, animal: 5, booking: 5 };
+  assert.equal(describeTraits(traits, en), "Large luggage ×2 · Backpack (free) · Caged bird ×1 · Wheelchair (free)");
+  assert.equal(describeCharges(charges, traits, en), "Large luggage ×2 · HK$ 12; Caged bird ×1 · HK$ 5; Phone booking · HK$ 5");
+  assert.equal(describeCharges(charges, traits, zh), "大型行李 ×2 · HK$ 12; 籠裝雀鳥 ×1 · HK$ 5; 電召費 · HK$ 5");
+  assert.equal(describeCharges({ luggage: 0, animal: 0, booking: 0 }, traits, en), "");
+  assert.equal(describeTraits(undefined, en), "");
+});
+
+test("2D wheelchair animation rolls wheels instead of swinging legs, with visible luggage and bird cage", () => {
+  const strokes = [], rectangles = [];
+  const context = {
+    beginPath() {}, fill() {}, stroke() {},
+    moveTo(...args) { strokes.push(["move", ...args]); },
+    lineTo(...args) { strokes.push(["line", ...args]); },
+    arc(...args) { strokes.push(["arc", ...args]); },
+    fillRect(...args) { rectangles.push(args); }, strokeRect() {},
+  };
+  const person = { walking: true, walkSpeed: 1, traits: { wheelchair: true, luggage: 2, animal: "bird" } };
+  drawCitizen(context, person, 0);
+  const initial = strokes.map(item => [...item]);
+  strokes.length = 0;
+  drawCitizen(context, person, 1);
+  assert.deepEqual(strokes.filter(item => item[0] === "arc"), initial.filter(item => item[0] === "arc"));
+  assert.notDeepEqual(strokes, initial);
+  const [left, right] = rectangles.slice(0, 2);
+  assert.ok(left[0] + left[2] / 2 < 0);
+  assert.ok(right[0] + right[2] / 2 > 0);
+  assert.ok(Math.abs(left[0] + left[2] / 2 + right[0] + right[2] / 2) < 1e-9);
+  assert.equal(left[1], right[1]);
+  assert.ok(strokes.some(([kind, x]) => kind === "move" && x === 4.5));
+  rectangles.length = 0;
+  drawCitizen(context, { traits: { luggage: 1 } }, 0);
+  assert.equal(rectangles.length, 1);
+  assert.deepEqual(rectangles[0], left);
+  rectangles.length = 0;
+  drawCitizen(context, { traits: { luggage: 2, bag: "handbag" } }, 0);
+  const bag = rectangles.find(([, , width]) => width === 1);
+  assert.ok(bag[1] + bag[3] <= rectangles[1][1]);
+});
 test("door opens on the side nearer the passenger", () => {
   const car = { x: 0, y: 0, heading: 0 };
   const at = point => ({ elapsed: 1.6, boarding: { point, starts: 0, ends: 2 } });

@@ -1,4 +1,4 @@
-import { Map3DView } from "./map3d.mjs?v=tunnel-clearance-1";
+import { Map3DView } from "./map3d.mjs?v=passenger-extras-2";
 import { MapView } from "./map.mjs?v=tunnel-clearance-1";
 
 let view;

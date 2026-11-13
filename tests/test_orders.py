@@ -1,5 +1,6 @@
 import copy
 import math
+import random
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -7,7 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app import app, game as api_game
-from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, NoReachableTrip, RuleError, Stop, urban_meter
+from game import CITIZEN_HAIL_COOLDOWN, CITIZEN_RADIUS, Citizen, Game, NoReachableTrip, PassengerTraits, RuleError, Stop, urban_meter
 from pedestrians import segment_distance
 from roads import RoadMap, project
 
@@ -45,7 +46,11 @@ class OrderTests(unittest.TestCase):
         self.session.history = (edge.way,)
         self.session.speed = 0
 
-    def phone_pickup(self):
+    def phone_pickup(self, traits=PassengerTraits()):
+        order = self.session.offers[0]
+        estimate = order.fare - order.extra_fare
+        order.traits = traits
+        order.fare = estimate + order.extra_fare
         self.cmd("accept", order=self.session.offers[0].id)
         self.at_stop(self.session.pickup)
         self.cmd("service")
@@ -191,6 +196,85 @@ class OrderTests(unittest.TestCase):
         self.assertEqual(self.session.fare, 29)
         self.assertEqual(self.game.snapshot(self.session)["meter"], 29)
 
+    def test_phone_extras_are_itemized_preserved_and_paid_once(self):
+        traits = PassengerTraits(2, "backpack", "bird", True)
+        money = self.session.money
+        self.phone_pickup(traits)
+        state = self.game.snapshot(self.session)
+        self.assertEqual(state["extra_fare"], 22)
+        self.assertEqual(state["fare_breakdown"], {"luggage": 12, "animal": 5, "booking": 5})
+        self.assertEqual(state["traits"], traits.data())
+        self.assertEqual(state["meter"], 29)
+        self.assertEqual(state["fare"], 51)
+        self.assertEqual(state["money"], money)
+        self.session.paused = False
+        self.session.next_offer = self.session.next_citizen = math.inf
+        for _ in range(15):
+            state = self.cmd("move", x=self.session.point[0], y=self.session.point[1],
+                             speed=0, heading=self.session.heading, dt=4)
+        self.assertEqual(state["meter"], 31.1)
+        self.assertEqual(state["extra_fare"], 22)
+        self.assertEqual(state["fare"], 53.1)
+        self.assertEqual(state["money"], money)
+        self.at_stop(self.session.destination)
+        completed = self.cmd("service")
+        self.assertEqual(completed["money"], round(money + 53.1, 1))
+        self.assertEqual(completed["boarding"]["traits"], traits.data())
+        self.assertEqual(self.game.command(self.session.id, self.session.seq, "service", {}), completed)
+        self.assertEqual(self.session.money, round(money + 53.1, 1))
+
+    def test_street_traits_survive_boarding_and_free_equipment_stays_free(self):
+        for animal in ("dog", "cat", "bird", ""):
+            with self.subTest(animal=animal):
+                self.setUp()
+                citizen = self.citizen()
+                citizen.traits = PassengerTraits(1 if animal else 0, "handbag", animal, True)
+                traits = citizen.traits.data()
+                self.assertEqual(self.game.snapshot(self.session)["citizens"][0]["traits"], traits)
+                state = self.cmd("door", citizen=citizen.id)
+                self.assertEqual(state["boarding"]["traits"], traits)
+                self.assertEqual(self.session.order.traits, citizen.traits)
+                self.advance(2)
+                state = self.game.snapshot(self.session)
+                extra = 11 if animal else 0
+                self.assertEqual(state["extra_fare"], extra)
+                self.assertEqual(state["fare"], 29 + extra)
+                self.assertEqual(state["fare_breakdown"]["booking"], 0)
+                self.assertEqual(state["traits"], traits)
+
+    def test_uncollected_phone_extras_are_not_charged_or_carried_to_next_order(self):
+        order = self.session.offers[0]
+        order.traits = PassengerTraits(2, "", "dog")
+        money = self.session.money
+        self.cmd("accept", order=order.id)
+        self.cmd("next")
+        self.assertEqual(self.session.money, money)
+        citizen = self.citizen()
+        self.cmd("door", citizen=citizen.id)
+        self.advance(2)
+        self.assertEqual(self.session.extra_fare, 0)
+        self.assertEqual(self.session.fare, 29)
+
+    def test_generated_traits_follow_rates_and_exclusive_categories(self):
+        rng = random.Random(914)
+        samples = [PassengerTraits.generate(rng) for _ in range(30000)]
+        for name, expected, predicate in [
+            ("luggage", .15, lambda t: t.luggage > 0),
+            ("handbag", .20, lambda t: t.bag == "handbag"),
+            ("backpack", .20, lambda t: t.bag == "backpack"),
+            ("pet", .05, lambda t: t.animal in ("dog", "cat")),
+            ("bird", .02, lambda t: t.animal == "bird"),
+            ("wheelchair", .03, lambda t: t.wheelchair),
+        ]:
+            with self.subTest(trait=name):
+                self.assertAlmostEqual(sum(map(predicate, samples)) / len(samples), expected, delta=.008)
+        self.assertEqual({t.luggage for t in samples}, {0, 1, 2})
+        self.assertEqual({t.bag for t in samples}, {"", "handbag", "backpack"})
+        self.assertEqual({t.animal for t in samples}, {"", "dog", "cat", "bird"})
+        self.assertTrue(any(t.luggage and t.bag and t.animal and t.wheelchair for t in samples))
+        self.assertTrue(any(t.animal == "dog" for t in samples))
+        self.assertTrue(any(t.animal == "cat" for t in samples))
+
     def test_stationary_waiting_accumulates_across_updates(self):
         self.phone_pickup()
         self.session.paused = False
@@ -231,7 +315,8 @@ class OrderTests(unittest.TestCase):
         pickup = Stop("meter-pickup", "Pickup", "上車", edge.id, self.session.point)
         destination = Stop("meter-destination", "Destination", "落車", edge.id,
                            (a[0] + 705 * dx, a[1] + 705 * dy))
-        with patch.object(self.game, "destination_stops", [destination]):
+        with patch.object(self.game, "destination_stops", [destination]), \
+             patch.object(PassengerTraits, "generate", return_value=PassengerTraits()):
             estimate = self.game.make_order(self.session, pickup).fare
         self.assertEqual(estimate, 36.1)
         for _ in range(21):
@@ -297,6 +382,29 @@ class OrderTests(unittest.TestCase):
         self.assertNotIn("deadline", state["offers"][0])
         self.assertIn("distance", state["offers"][0])
 
+    def test_phone_pickup_route_is_cached_and_preserved_after_accepting(self):
+        order = self.session.offers[0]
+        pickup_edge = self.game.stops[order.pickup].edge
+        expected = self.game.roads.route(
+            self.game.roads.edges[self.session.edge], self.game.roads.edges[pickup_edge],
+            self.session.history, self.session.closed, self.session.traffic,
+        )
+        order.route_key = None
+        with patch.object(self.game.roads, "route", wraps=self.game.roads.route) as search:
+            offered = self.game.snapshot(self.session)["offers"][0]
+            self.assertEqual(offered["pickup_route"], expected)
+            self.game.snapshot(self.session)
+            search.assert_called_once()
+            accepted = self.cmd("accept", order=order.id)
+            self.assertEqual(accepted["route"], offered["pickup_route"])
+            self.assertEqual(accepted["accepted_orders"][0]["pickup_route"], accepted["route"])
+            search.assert_called_once()
+
+    def test_phone_pickup_route_becomes_unavailable_when_closed(self):
+        order = self.session.offers[0]
+        self.session.closed = {self.game.roads.edges[self.game.stops[order.pickup].edge].way}
+        self.assertIsNone(self.game.snapshot(self.session)["offers"][0]["pickup_route"])
+
     def test_pause_does_not_advance_city_or_deadlines(self):
         before = self.game.snapshot(self.session)
         self.cmd("pause", paused=True)
@@ -344,6 +452,7 @@ class OrderTests(unittest.TestCase):
         roads.route = lambda *args: calls.append(1) or search(*args)
         try:
             self.cmd("accept", order=self.session.offers[0].id)
+            accepted_searches = len(calls)
             route = self.session.route
             for edge_id in route[1:6]:
                 self.session.edge = edge_id
@@ -352,7 +461,7 @@ class OrderTests(unittest.TestCase):
                 self.assertEqual(state["route"][0], edge_id)
         finally:
             del roads.route
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), accepted_searches)
 
     def test_phone_customer_waits_at_pickup_then_walks_in(self):
         self.cmd("accept", order=self.session.offers[0].id)
@@ -725,6 +834,7 @@ class OrderTests(unittest.TestCase):
 
     def test_only_visible_empty_taxi_rolls_hail_and_respects_cooldown(self):
         citizen = self.nearby_walker()
+        citizen.traits = PassengerTraits(luggage=2)
         with patch.object(self.session.rng, "random", return_value=.9) as roll:
             self.game.advance_city(self.session, 0)
             roll.assert_not_called()
@@ -741,6 +851,24 @@ class OrderTests(unittest.TestCase):
             self.session.phase = "onboard"
             self.game.advance_city(self.session, 0, [citizen.id])
             self.assertEqual(roll.call_count, 2)
+
+    def test_two_luggage_hail_boost_adds_two_percentage_points_only(self):
+        original = self.nearby_walker(require_legal=True)
+        for luggage, roll_value, expected in [
+            (0, .039, True), (1, .039, True), (2, .039, True),
+            (0, .04, False), (1, .04, False), (2, .04, True),
+            (0, .05, False), (1, .05, False), (2, .05, True),
+            (2, .059999, True), (2, .06, False),
+        ]:
+            with self.subTest(luggage=luggage, roll=roll_value):
+                citizen = copy.deepcopy(original)
+                citizen.traits = PassengerTraits(luggage=luggage)
+                self.session.citizens = [citizen]
+                with patch.object(self.session.rng, "random", return_value=roll_value) as roll:
+                    self.game.advance_city(self.session, 0, [citizen.id])
+                roll.assert_called_once()
+                self.assertEqual(citizen.seeking_curb, expected)
+                self.assertEqual(citizen.next_hail, CITIZEN_HAIL_COOLDOWN)
 
     def test_accepted_phone_order_blocks_new_hails_but_keeps_existing_hails(self):
         self.cmd("accept", order=self.session.offers[0].id)

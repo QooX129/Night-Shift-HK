@@ -1,6 +1,7 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=tunnel-clearance-1";
-import { MapView } from "./map.mjs?v=tunnel-clearance-1";
-import { en, zh } from "./i18n.mjs?v=taxi-meter-1";
+import { MapView } from "./map.mjs?v=passenger-extras-2";
+import { en, zh } from "./i18n.mjs?v=meter-panels-1";
+import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs";
@@ -384,6 +385,16 @@ function selectPhoneTab(tab, focus = false) {
   }
   if (focus) $(`${tab}-tab`).focus();
 }
+function renderMeterDigits(id, amount, label, integerPlaces) {
+  const digits = $(id);
+  digits.setAttribute("aria-label", label);
+  const value = amount === null ? `${" ".repeat(integerPlaces)}. `
+    : amount.toFixed(1).padStart(integerPlaces + 2, " ");
+  digits.innerHTML = [...value].map(char => char === "."
+    ? `<span class="meter-decimal${amount === null ? " dim" : ""}" aria-hidden="true"></span>`
+    : `<span class="meter-digit${char === " " ? " dim" : ""}" aria-hidden="true">${[..."abcdefg"].map(part =>
+      `<i class="${part}${char !== " " && meterSegments[Number(char)].includes(part) ? " on" : ""}"></i>`).join("")}</span>`).join("");
+}
 function renderOrders(id, orders, accepted = false) {
   const list = $(id);
   const ids = new Set(orders.map(order => order.id));
@@ -412,15 +423,24 @@ function renderOrders(id, orders, accepted = false) {
     };
     text(".order-customer", order.passenger[lang === "zh" ? "zh" : "name"]);
     text(".order-role", order.passenger[lang === "zh" ? "role_zh" : "role"]);
+    text(".order-traits", describeTraits(order.traits, lang === "zh" ? zh : en));
+    text(".order-extras", describeCharges(order.fare_breakdown, order.traits, lang === "zh" ? zh : en));
     text(".order-pickup", `${t("pickup")}: ${name(order.pickup)}`);
     text(".order-destination", `${t("destination")}: ${name(order.destination)}`);
     text(".order-fare", `${t("estimatedFare")} · HK$ ${order.fare.toFixed(1)}`);
-    text(".order-distance", `${order.distance} m · ${t("toPickup")}`);
+    const found = stops.find(stop => stop.id === order.pickup);
+    const pickup = found && order.pickup_point ? { ...found, point: order.pickup_point } : found;
+    const distance = routeDistance(order.pickup_route, roads, { x: state.x, y: state.y }, pickup);
+    text(".order-distance", `${formatRouteDistance(distance)} · ${t("toPickup")}`);
     const accept = card.querySelector(".order-accept");
     accept.textContent = t("accept");
     accept.hidden = accepted;
     accept.disabled = busy || !state.can_accept;
   }
+}
+function formatRouteDistance(distance) {
+  if (distance === null) return t("routeDistanceUnavailable");
+  return distance < 1000 ? `${Math.round(distance)} m` : `${(distance / 1000).toFixed(1)} km`;
 }
 function setTripPanelOpen(open) {
   $("trip-panel").classList.toggle("open", open);
@@ -450,7 +470,7 @@ function updateTripPanel() {
   $("trip-name").textContent = stop ? stop[lang === "zh" ? "zh" : "name"] : t("destinationHidden");
   const distance = routeDistance(state.route, roads, { x: state.x, y: state.y }, stop);
   $("trip-distance").textContent = distance === null ? t("routeDistanceUnavailable")
-    : `${t("routeDistance")} · ${distance < 1000 ? `${Math.round(distance)} m` : `${(distance / 1000).toFixed(1)} km`}`;
+    : `${t("routeDistance")} · ${formatRouteDistance(distance)}`;
 }
 function updateUI() {
   updateViewUI();
@@ -470,11 +490,15 @@ function updateUI() {
     const stop = stops.find(s => s.id === key);
     $(element).textContent = stop ? (lang === "zh" ? stop.zh : stop.name) : t("destinationHidden");
   }
-  $("fare").textContent = state.phase === "boarding" ? "—" : `HK$ ${state.fare.toFixed(1)}`;
-  const phoneBooking = state.order_source === "phone";
+  const extras = state.extra_fare ?? 0;
+  const messages = lang === "zh" ? zh : en;
+  $("fare").textContent = state.phase === "boarding" ? "—" : `HK$ ${(state.fare - extras).toFixed(1)}`;
   $("fare-label").textContent = state.phase === "pickup" ? t("estimatedFare")
-    : state.phase === "complete" ? `${t("totalFare")}${phoneBooking ? ` · ${t("bookingIncluded")}` : ""}`
-      : phoneBooking && state.phase === "onboard" ? t("bookingIncluded") : "";
+    : ["onboard", "complete"].includes(state.phase) ? t("meterFare") : "";
+  $("passenger-traits").textContent = describeTraits(state.traits, messages);
+  const charges = describeCharges(state.fare_breakdown, state.traits, messages);
+  $("fare-breakdown").textContent = state.phase === "boarding" ? charges
+    : `${charges}${charges ? " · " : ""}${t(state.phase === "pickup" ? "estimatedFare" : "totalFare")} · HK$ ${state.fare.toFixed(1)}`;
   $("status").textContent = t({ available: "available", pickup: "pickupStatus", boarding: "boarding", onboard: "onboard", complete: "complete" }[state.phase]);
   let dialogue;
   if (state.dialogue === "pickup" || state.dialogue === "arrival") dialogue = passenger[state.dialogue + (lang === "zh" ? "_zh" : "")];
@@ -503,14 +527,11 @@ function updateUI() {
   $("street-dropoff").hidden = state.phase !== "onboard";
   $("street-dropoff").disabled = busy || paused || !state.service_ready;
   const meterActive = state.meter !== null && state.meter !== undefined;
+  renderMeterDigits("meter-extra", meterActive ? extras : null,
+    meterActive ? `${t("extraFare")} HK$ ${extras.toFixed(1)}` : t("meterVacant"), 2);
   $("meter-status").textContent = t(!meterActive ? "meterVacant" : state.phase === "complete" ? "meterPaid" : "meterHired");
-  const digits = $("meter-digits");
-  digits.setAttribute("aria-label", meterActive ? `${t("taxiMeter")} HK$ ${state.meter.toFixed(1)}` : t("meterVacant"));
-  digits.innerHTML = meterActive ? [...state.meter.toFixed(1)].map(char => char === "."
-    ? '<span class="meter-decimal"></span>'
-    : `<span class="meter-digit">${[..."abcdefg"].map(part =>
-      `<i class="${part}${meterSegments[Number(char)].includes(part) ? " on" : ""}"></i>`).join("")}</span>`).join("")
-    : "— —";
+  renderMeterDigits("meter-digits", meterActive ? state.meter : null,
+    meterActive ? `${t("taxiMeter")} HK$ ${state.meter.toFixed(1)}` : t("meterVacant"), 3);
   $("garage").title = t("garage");
   $("money").textContent = `$${moneyText(state.money)}`;
   $("trips").textContent = `${state.trips} ${t("trips")}`;
@@ -591,7 +612,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=route-guide-1");
+      const { Map3DView } = await import("./map3d.mjs?v=passenger-extras-2");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       map3d.applyPreferences(preferences);
     }
