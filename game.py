@@ -12,7 +12,7 @@ from roads import DRIVING, Edge, Point, RoadMap, project
 from pedestrians import Sidewalks, advance_walk, path_pose
 
 CITIZEN_RADIUS = 220
-CITIZEN_LIMIT = 100
+CITIZEN_LIMIT = 15
 CITIZEN_SPAWN_INTERVAL = 0.5
 CITIZEN_SPAWN_BATCH = 5
 CITIZEN_HAIL_PROBABILITY = 0.04
@@ -538,7 +538,7 @@ class Game:
             session.traffic[way] = 0.48
         self.offer(session)
         session.next_offer = session.rng.uniform(120, 180)
-        for _ in range(60):
+        for _ in range(CITIZEN_LIMIT):
             self.spawn_citizen(session)
         session.next_citizen = CITIZEN_SPAWN_INTERVAL
         self.sessions[session.id] = session
@@ -740,6 +740,23 @@ class Game:
             return path_pose(citizen.path, citizen.distance)
         return self.curb_point(self.stops[citizen.stop], citizen.fraction)
 
+    def limit_local_citizens(self, session: Session) -> int:
+        nearby = []
+        retained = []
+        for citizen in session.citizens:
+            distance = math.dist(session.point, self.citizen_point(citizen))
+            if distance <= CITIZEN_RADIUS:
+                nearby.append((distance, citizen))
+                retained.append(citizen)
+            elif citizen.expires > session.elapsed:
+                retained.append(citizen)
+        if len(nearby) > CITIZEN_LIMIT:
+            nearby.sort(key=lambda entry: (not entry[1].hailing, entry[0]))
+            excess = {citizen.id for _, citizen in nearby[CITIZEN_LIMIT:]}
+            retained = [citizen for citizen in retained if citizen.id not in excess]
+        session.citizens = retained
+        return min(len(nearby), CITIZEN_LIMIT)
+
     def advance_city(
         self, session: Session, dt: float, visible_citizens: list[str] | None = None
     ) -> None:
@@ -818,17 +835,8 @@ class Game:
                     if not 0.15 <= citizen.fraction <= 0.85:
                         citizen.fraction = max(0.15, min(0.85, citizen.fraction))
                         citizen.direction *= -1
-        session.citizens = [
-            c
-            for c in session.citizens
-            if math.dist(session.point, self.citizen_point(c)) <= CITIZEN_RADIUS
-            or c.expires > session.elapsed
-        ]
+        local_count = self.limit_local_citizens(session)
         if session.elapsed >= session.next_citizen:
-            local_count = sum(
-                math.dist(session.point, self.citizen_point(c)) <= CITIZEN_RADIUS
-                for c in session.citizens
-            )
             for _ in range(min(CITIZEN_SPAWN_BATCH, CITIZEN_LIMIT - local_count)):
                 self.spawn_citizen(session)
             session.next_citizen = session.elapsed + CITIZEN_SPAWN_INTERVAL
@@ -1235,6 +1243,7 @@ class Game:
                 raise RuleError("Stop before calling recovery.")
             edge = self.roads.edges[self.depot.edge]
             session.point = self.depot.point
+            self.limit_local_citizens(session)
             session.edge, session.heading = edge.id, self.roads.angle(edge)
             session.history = (edge.way,)
             session.speed, session.paused = 0, True

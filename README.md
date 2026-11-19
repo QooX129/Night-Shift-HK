@@ -199,10 +199,10 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   require the door button. In 3D, citizens and waiting, boarding, and alighting
   passengers follow their road's elevation rather than the flat map plane.
   Citizen population is configured in `game.py`: `Game.create` starts
-  with 60 citizens, and `Game.advance_city` adds up to five every 0.5 simulation
-  seconds until 100 are within the spawn radius. An empty stationary area refills
-  in about 10 seconds when safe sidewalks are available; moving can keep the
-  nearby count below 100. `CITIZEN_LIMIT`, `CITIZEN_SPAWN_BATCH`, and
+  with up to 15 citizens, and `Game.advance_city` adds up to five every 0.5 simulation
+  seconds when safe sidewalks are available. At most 15 citizens are kept within
+  220 metres of the taxi. If crowds overlap, active hails are kept first, then
+  the nearest walkers. `CITIZEN_LIMIT`, `CITIZEN_SPAWN_BATCH`, and
   `CITIZEN_SPAWN_INTERVAL` control this gradual refill. Citizens outside the radius do not
   count toward this local limit. `CITIZEN_HAIL_PROBABILITY = 0.04` controls the base
   chance; `CITIZEN_TWO_LUGGAGE_HAIL_PROBABILITY = 0.20` applies to citizens with two suitcases.
