@@ -1,5 +1,5 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=passenger-extras-2";
+import { MapView } from "./map.mjs?v=hk-streets-2";
 import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
@@ -338,6 +338,7 @@ function updateHudLayout() {
   style.setProperty("--meter-scale", Math.max(.1, Math.min(short ? .75 : 1,
     (dashboard.clientWidth - (mobile ? 106 : 175)) / 430)));
   const bounds = dashboard.getBoundingClientRect();
+  if (map3d) map3d.dashboardTop = bounds.top;
   const dashboardTop = game.clientHeight - bounds.top;
   const toolWidth = mobile ? 34 : 40;
   const toolHeight = toolWidth * 3 + 12;
@@ -644,10 +645,11 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=chase-orbit-1");
+      const { Map3DView } = await import("./map3d.mjs?v=hk-streets-5");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
+      updateHudLayout();
     }
     if (preferredViewRequest === "2d") return;
     map3d.cameraReady = false;

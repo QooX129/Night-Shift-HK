@@ -9,7 +9,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await expect(page.locator("#start")).toBeEnabled();
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const render = Map3DView.prototype.render;
     await new Promise(resolve => {
       Map3DView.prototype.render = function (...args) {
@@ -49,7 +49,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await page.keyboard.press("m");
   await expect(page.locator("#map-popup")).toBeVisible();
   const farURL = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
+    const { MapView } = await import("/map.mjs?v=hk-streets-2");
     const view = window.streamingView;
     const key = [...view.stream.keys].sort((a, b) => {
       const distance = key => {

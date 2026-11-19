@@ -21,7 +21,7 @@ function rectangleInterval(a, b, bounds) {
   return high > low ? [[low, high]] : [];
 }
 
-function capsuleIntervals(a, b, roads, edge, inset = 0) {
+export function capsuleIntervals(a, b, roads, edge, inset = 0) {
   const start = roads.nodes[edge.a], end = roads.nodes[edge.b], radius = roads.radius(edge) - inset;
   const length = Math.hypot(end[0] - start[0], end[1] - start[1]);
   const ux = (end[0] - start[0]) / length, uy = (end[1] - start[1]) / length;
@@ -41,7 +41,7 @@ function capsuleIntervals(a, b, roads, edge, inset = 0) {
   return intervals;
 }
 
-function subtract(intervals, cuts) {
+export function subtractIntervals(intervals, cuts) {
   for (const [low, high] of cuts) {
     intervals = intervals.flatMap(([a, b]) => high <= a || low >= b ? [[a, b]]
       : [...(low > a ? [[a, low]] : []), ...(high < b ? [[high, b]] : [])]);
@@ -98,7 +98,7 @@ export class CollisionLines {
             if (!joinedSurface && roads.elevation
                 && Math.abs(surfacePose(roads, next, point, 0).height - height) > .35) continue;
             // Coincident outer edges are still walls, not junction openings.
-            intervals = subtract(intervals, capsuleIntervals(start, end, roads, next, .01));
+            intervals = subtractIntervals(intervals, capsuleIntervals(start, end, roads, next, .01));
           }
         }
         for (const [low, high] of intervals) {

@@ -2,6 +2,239 @@ import { test, expect } from "@playwright/test";
 
 test.use({ trace: "off" });
 
+test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const data = {
+      bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
+      driving: { taxi_length: 4.7, taxi_width: 1.7, widths: { residential: 10 } },
+      edges: [
+        { id: "one", way: 1, a: "a", b: "b", name: "Test Road", kind: "residential", width: 10, length: 40 },
+        { id: "two", way: 1, a: "b", b: "c", name: "Test Road", kind: "residential", width: 10, length: 40 },
+      ].map(edge => ({ ...edge, oneway: true, layer: "0", bridge: "no", tunnel: "no" })),
+      backdrop: [],
+      elevation: {
+        node_heights: { a: 0, b: 0, c: 0 }, pilot: {}, buildings: [],
+        terrain: { origin: [-50, -20], spacing: 100, width: 2, height: 2, values: [-1, -1, -1, -1] },
+      },
+    };
+    const canvas = document.createElement("canvas");
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    const target = new THREE.WebGLRenderTarget(64, 64);
+    try {
+      const scene = new THREE.Scene();
+      const roads = view.scene.children.filter(mesh => mesh.name === "level-separated-solid-road-decks");
+      const joints = view.scene.children.filter(mesh => mesh.name === "continuous-shared-node-road-joints");
+      for (const mesh of [...roads, ...joints]) scene.add(mesh.clone());
+      const camera = new THREE.OrthographicCamera(-4, 4, 4, -4, 0.1, 100);
+      camera.position.set(0, 20, 0);
+      camera.up.set(0, 0, -1);
+      camera.lookAt(0, 0, 0);
+      const render = () => {
+        view.renderer.setRenderTarget(target);
+        view.renderer.render(scene, camera);
+        const pixels = new Uint8Array(64 * 64 * 4);
+        view.renderer.readRenderTargetPixels(target, 0, 0, 64, 64, pixels);
+        return pixels;
+      };
+      const withJoints = render();
+      for (const mesh of scene.children) if (mesh.name === "continuous-shared-node-road-joints") mesh.visible = false;
+      const withoutJoints = render();
+      let different = 0;
+      for (let y = 24; y < 40; y++) for (let x = 24; x < 40; x++) {
+        const i = (y * 64 + x) * 4;
+        if (withJoints[i] !== withoutJoints[i] || withJoints[i + 1] !== withoutJoints[i + 1]
+            || withJoints[i + 2] !== withoutJoints[i + 2]) different++;
+      }
+      return different;
+    } finally {
+      view.renderer.setRenderTarget(null);
+      target.dispose();
+      view.dispose();
+      view.renderer.forceContextLoss();
+      canvas.remove();
+    }
+  });
+  expect(result).toBe(0);
+});
+
+test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const data = {
+      bounds: [-20, -40, 100, 50],
+      nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
+      driving: { taxi_length: 4.7, taxi_width: 1.7, widths: { primary: 9, residential: 6 } },
+      edges: [
+        { id: "nathan", way: 1, a: "a", b: "b", name: "Nathan Road", kind: "primary", width: 9, length: 40 },
+        { id: "cross", way: 2, a: "b", b: "c", name: "Cross Street", kind: "residential", width: 6, length: 30 },
+        { id: "other", way: 2, a: "d", b: "b", name: "Cross Street", kind: "residential", width: 6, length: 30 },
+      ].map(edge => ({ ...edge, oneway: true, layer: "0", bridge: "no", tunnel: "no" })),
+      backdrop: [{ kind: "building", points: [[10, 8], [25, 8], [25, 16], [10, 16]] }],
+      elevation: {
+        node_heights: { a: 0, b: 0, c: 0, d: 0 }, pilot: {},
+        buildings: [{ index: 0, height: 15, base: 0 }],
+        terrain: { origin: [-20, -40], spacing: 120, width: 2, height: 2, values: [-1, -1, -1, -1] },
+      },
+    };
+    const canvas = document.createElement("canvas");
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    try {
+      let nathanCrossing = false, crossStreetLines = false;
+      for (const mesh of view.scene.children.filter(mesh => mesh.userData.streetRanges?.yellow)) {
+        const p = mesh.geometry.getAttribute("position");
+        const [start, count] = mesh.userData.streetRanges.yellow;
+        for (let i = start; i < start + count; i += 6) {
+          if (Math.abs(p.getY(i) - .12) > .001) continue;
+          const x = [p.getX(i), p.getX(i + 2)], z = [p.getZ(i), p.getZ(i + 2)];
+          if (Math.abs(x[1] - x[0]) > Math.abs(z[1] - z[0])
+              && Math.max(...x) > 37.05 && Math.min(...x) < 40 && Math.abs(z[0]) < 5) nathanCrossing = true;
+          if (Math.abs(z[1] - z[0]) > Math.abs(x[1] - x[0])
+              && Math.abs(x[0] - 40) < 3.1 && Math.min(...z) < 12 && Math.max(...z) > 12) crossStreetLines = true;
+        }
+      }
+      const adverts = view.scene.children.filter(mesh => mesh.name === "city-advertisements");
+      const p = adverts[0]?.geometry.getAttribute("position");
+      const uv = adverts[0]?.geometry.getAttribute("uv");
+      const depth = p ? Math.max(...Array.from({ length: p.count }, (_, i) => p.getZ(i)))
+        - Math.min(...Array.from({ length: p.count }, (_, i) => p.getZ(i))) : 0;
+      const boxes = view.scene.children.filter(mesh => mesh.name === "yellow-box-markings");
+      return { nathanCrossing, crossStreetLines, depth, boxes: boxes.length,
+        readableBack: p?.count === 12 && uv.getX(0) !== uv.getX(6) };
+    } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
+  });
+  expect.soft(result.nathanCrossing).toBe(false);
+  expect.soft(result.crossStreetLines).toBe(true);
+  expect.soft(result.depth).toBeGreaterThan(1);
+  expect.soft(result.readableBack).toBe(true);
+  expect.soft(result.boxes).toBe(0);
+});
+
+test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
+    const data = await (await fetch("/api/map?stream=true")).json();
+    const center = data.nodes["1151084860"];
+    data.edges = data.edges.filter(edge => [edge.a, edge.b].some(node =>
+      Math.hypot(data.nodes[node][0] - center[0], data.nodes[node][1] - center[1]) < 45));
+    data.bounds = [center[0] - 100, center[1] - 100, center[0] + 100, center[1] + 100];
+    data.backdrop = [];
+    delete data.visualChunks;
+    delete data.overview;
+    data.elevation = { ...data.elevation, buildings: [], pilot: {},
+      terrain: { origin: [center[0] - 100, center[1] - 100], spacing: 200,
+        width: 2, height: 2, values: [-10, -10, -10, -10] } };
+    const canvas = document.createElement("canvas");
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    try {
+      const boxes = view.scene.children.filter(mesh => mesh.name === "yellow-box-markings");
+      const boxInfo = boxes.map(mesh => {
+        const bounds = mesh.geometry.boundingBox;
+        return { count: mesh.geometry.getAttribute("position").count,
+          containsJunction: bounds.min.x < center[0] && bounds.max.x > center[0]
+            && bounds.min.z < center[1] && bounds.max.z > center[1] };
+      });
+      const intersects = (point, name) => data.edges.some(edge => edge.name === name
+        && project(point, data.nodes[edge.a], data.nodes[edge.b]).distance < edge.width / 2 - .2);
+      let curbInJunction = false;
+      for (const mesh of view.scene.children.filter(mesh => mesh.userData.streetRanges?.yellow)) {
+        const p = mesh.geometry.getAttribute("position");
+        const [start, count] = mesh.userData.streetRanges.yellow;
+        for (let i = start; i < start + count; i += 6) for (let step = 0; step <= 10; step++) {
+          const t = step / 10;
+          const point = { x: p.getX(i) * (1 - t) + p.getX(i + 2) * t,
+            y: p.getZ(i) * (1 - t) + p.getZ(i + 2) * t };
+          if (Math.hypot(point.x - center[0], point.y - center[1]) < 30
+              && intersects(point, "Nathan Road") && intersects(point, "Argyle Street")) curbInJunction = true;
+        }
+      }
+      return { boxes: boxInfo, curbInJunction };
+    } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
+  });
+  expect(result.boxes).toHaveLength(1);
+  expect(result.boxes[0].count).toBeGreaterThan(0);
+  expect(result.boxes[0].containsJunction).toBe(true);
+  expect(result.curbInJunction).toBe(false);
+});
+
+test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const data = {
+      bounds: [-20, -20, 220, 140],
+      nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },
+      driving: { taxi_length: 4.7, taxi_width: 1.7, widths: { primary: 9, residential: 6 } },
+      edges: [
+        { id: "nathan", way: 1, a: "a", b: "b", name: "Nathan Road", kind: "primary", width: 9, length: 40 },
+        { id: "cross", way: 2, a: "b", b: "c", name: "Cross Street", kind: "residential", width: 6, length: 20 },
+        { id: "short", way: 1, a: "d", b: "a", name: "Nathan Road", kind: "primary", width: 9, length: 1 },
+      ].map(edge => ({ ...edge, oneway: true, layer: "0", bridge: "no", tunnel: "no" })),
+      backdrop: [
+        { kind: "building", points: [[10, 7], [25, 7], [25, 15], [10, 15]] },
+        { kind: "building", points: [[180, 90], [200, 90], [200, 110], [180, 110]] },
+      ],
+      elevation: {
+        node_heights: { a: 0, b: 0, c: 0, d: 0 }, pilot: {},
+        buildings: [{ index: 0, osm_way: 102411832, height: 15, base: 0 }, { index: 1, height: 15, base: 0 }],
+        terrain: { origin: [-20, -20], spacing: 240, width: 2, height: 2, values: [-1, -1, -1, -1] },
+      },
+    };
+    const canvas = document.createElement("canvas");
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, []);
+    try {
+      const adverts = view.scene.children.filter(mesh => mesh.name === "city-advertisements");
+      const advert = adverts[0].geometry.getAttribute("position");
+      const uv = adverts[0].geometry.getAttribute("uv");
+      const details = view.scene.children.filter(mesh => mesh.userData.streetRanges);
+      const white = view.scene.children.find(mesh => mesh.material?.color?.getHexString() === "c2d0bf");
+      const positions = white.geometry.getAttribute("position");
+      let crossingVertices = 0;
+      for (let i = 0; i < positions.count; i++) {
+        if (Math.abs(positions.getX(i) - 31.5) < .001 || Math.abs(positions.getX(i) - 34.5) < .001) crossingVertices++;
+      }
+      const deck = view.scene.getObjectByName("level-separated-solid-road-decks");
+      const sidewalks = details.filter(mesh => mesh.userData.streetRanges.sidewalk);
+      return {
+        advertCount: adverts.length,
+        advertVertices: advert.count,
+        advertX: Array.from({ length: advert.count }, (_, i) => advert.getX(i)),
+        landmarkUv: Array.from({ length: uv.count }, (_, i) => uv.getX(i)),
+        landmarkGlass: view.buildings.some(mesh => mesh.userData.cityLandmark
+          && mesh.material === view.landmarkMaterial && mesh.material.map),
+        yellowVertices: details.reduce((sum, mesh) => sum + (mesh.userData.streetRanges.yellow?.[1] ?? 0), 0),
+        crossingVertices,
+        shortSidewalk: sidewalks.some(mesh => mesh.geometry.boundingBox.min.x <= -1),
+        railing: details.some(mesh => mesh.userData.streetRanges.railing),
+        signals: details.some(mesh => mesh.userData.streetRanges.signalRed),
+        asphalt: Boolean(deck.material.map && deck.geometry.getAttribute("uv")),
+      };
+    } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
+  });
+  expect(result.advertCount).toBe(1);
+  expect(result.advertVertices).toBe(6);
+  expect(Math.min(...result.advertX)).toBeGreaterThanOrEqual(10);
+  expect(Math.max(...result.advertX)).toBeLessThanOrEqual(25);
+  expect(Math.min(...result.landmarkUv)).toBeCloseTo(.8, 5);
+  expect(Math.max(...result.landmarkUv)).toBeCloseTo(1, 5);
+  expect(result.landmarkGlass).toBe(true);
+  expect(result.yellowVertices).toBeGreaterThan(0);
+  expect(result.crossingVertices).toBeGreaterThan(0);
+  expect(result.shortSidewalk).toBe(true);
+  expect(result.railing).toBe(true);
+  expect(result.signals).toBe(true);
+  expect(result.asphalt).toBe(true);
+});
+
 test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {

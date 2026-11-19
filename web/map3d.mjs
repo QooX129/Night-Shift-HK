@@ -1,11 +1,12 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=passenger-extras-2";
+import { MapView } from "./map.mjs?v=hk-streets-2";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
 import { surfacePose, surfaceSegments, terrainHeight, isElevatedRoad, isGroundRoad, isTunnelRoad }
   from "./elevation.mjs?v=tunnel-clearance-1";
-import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=tunnel-clearance-1";
+import { staticCollisionLines, COLLISION_LINE_WIDTH, capsuleIntervals, subtractIntervals }
+  from "./collision-lines.mjs?v=hk-streets-2";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
@@ -18,6 +19,10 @@ const MAX_CHASE_PITCH = Math.PI * .4;
 const MIN_CHASE_GRADE = Math.tan(MIN_CHASE_PITCH);
 const SKID_LIFETIME = 3;
 const SKID_LIMIT = 256;
+// Confirmed location from the supplied street image; dimensions use mapped road widths.
+const VERIFIED_YELLOW_BOXES = [
+  { road: "Argyle Street", crossing: "Nathan Road", nodes: ["1151084860", "308473424"] },
+];
 
 export class Map3DView {
   constructor(canvas, data, stops) {
@@ -296,6 +301,21 @@ export class Map3DView {
     const detailContext = this.detailMap.backdrop.getContext("2d", { willReadFrequently: true });
     detailContext.fillText = () => {};
     detailContext.strokeText = () => {};
+    const asphalt = document.createElement("canvas");
+    asphalt.width = asphalt.height = 64;
+    const asphaltPaint = asphalt.getContext("2d");
+    asphaltPaint.fillStyle = "#eeeeee"; asphaltPaint.fillRect(0, 0, 64, 64);
+    let noise = 17;
+    for (let i = 0; i < 400; i++) {
+      noise = (Math.imul(noise, 1664525) + 1013904223) >>> 0;
+      const shade = 196 + (noise % 40);
+      asphaltPaint.fillStyle = `rgb(${shade},${shade},${shade})`;
+      asphaltPaint.fillRect((noise >>> 8) % 64, (noise >>> 16) % 64, 1, 1);
+    }
+    this.asphaltTexture = new THREE.CanvasTexture(asphalt);
+    this.asphaltTexture.wrapS = this.asphaltTexture.wrapT = THREE.RepeatWrapping;
+    this.asphaltTexture.colorSpace = THREE.SRGBColorSpace;
+    this.resources.push(this.asphaltTexture);
     this.detailSize = 256;
     this.detailScale = Math.min(14, this.renderer.capabilities.maxTextureSize / this.detailSize);
     const detailTexture = new THREE.DataTexture();
@@ -394,6 +414,21 @@ export class Map3DView {
   }
   *roadSurfaceGeometry() {
     const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeSurfaces = new Map();
+    const junctions = new Map();
+    const physicalKey = edge => `${edge.width ?? edge.kind}:${[edge.a, edge.b].sort().join(":")}`;
+    const boundaries = new Map(), decorated = new Set();
+    for (const line of this.groundMap.collisionLines.all()) {
+      const key = physicalKey(line.edge);
+      if (!boundaries.has(key)) boundaries.set(key, []);
+      boundaries.get(key).push(line);
+    }
+    for (const edge of this.groundMap.unique) {
+      if (!isGroundRoad(edge)) continue;
+      for (const node of [edge.a, edge.b]) {
+        if (!junctions.has(node)) junctions.set(node, []);
+        junctions.get(node).push(edge);
+      }
+    }
     const triangle = (array, a, b, c) => array.push(...a, ...b, ...c);
     const quad = (array, a, b, c, d) => { triangle(array, a, b, c); triangle(array, a, c, d); };
     const roadKey = edge => {
@@ -423,7 +458,8 @@ export class Map3DView {
         return [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
       };
       const key = roadKey(edge);
-      if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [], markings: [] });
+      if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [], markings: [], yellow: [], box: [],
+        sidewalk: [], railing: [], signal: [], signalRed: [] });
       const tile = tiles.get(key);
       const bridge = isElevatedRoad(edge), tunnel = isTunnelRoad(edge);
       const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
@@ -462,10 +498,10 @@ export class Map3DView {
         for (let i = 0; i < 16; i++) triangle(tile.elevatedDeck, [x, z, y],
           rim(i * Math.PI / 8), rim((i + 1) * Math.PI / 8));
       }
-      const stripe = (start, end, buffer) => {
+      const stripe = (start, end, buffer, offset = 0) => {
         const q = (p, side) => {
-          const x = p[0] + nx * side * WORLD_SCALE.markingWidth / 2,
-            y = p[1] + ny * side * WORLD_SCALE.markingWidth / 2;
+          const x = p[0] + nx * (offset + side * WORLD_SCALE.markingWidth / 2),
+            y = p[1] + ny * (offset + side * WORLD_SCALE.markingWidth / 2);
           return [x, surfacePose(this, edge, { x, y }, 0).height + .12, y];
         };
         const at = distance => {
@@ -496,6 +532,104 @@ export class Map3DView {
         arrow(1, edge.oneway ? 0 : -r * .5);
         if (!edge.oneway) arrow(-1, r * .5);
       }
+      if (isGroundRoad(edge) && r >= 1.2 && length > .5) {
+        const roadside = (distance, across, height) => {
+          const x = a[0] + (b[0] - a[0]) * distance / length + nx * across;
+          const y = a[1] + (b[1] - a[1]) * distance / length + ny * across;
+          return [x, surfacePose(this, edge, { x, y }, 0).height + height, y];
+        };
+        const boundaryKey = physicalKey(edge);
+        if (!decorated.has(boundaryKey)) {
+          decorated.add(boundaryKey);
+          for (const line of boundaries.get(boundaryKey) ?? []) {
+            const lateral = p => (p[0] - a[0]) * nx + (p[1] - a[1]) * ny;
+            const side = Math.sign(lateral(line.a));
+            if (!side || Math.abs(lateral(line.a) - side * r) > .02
+                || Math.abs(lateral(line.b) - side * r) > .02
+                || Math.abs(lateral(line.a) - lateral(line.b)) > .0001) continue;
+            const lineLength = Math.hypot(line.b[0] - line.a[0], line.b[1] - line.a[1]);
+            const heights = line.heights ?? [line.a, line.b].map(([x, y]) =>
+              surfacePose(this, line.edge, { x, y }, 0).height);
+            const at = (t, offset, height) => {
+              const x = line.a[0] + (line.b[0] - line.a[0]) * t + nx * side * offset;
+              const y = line.a[1] + (line.b[1] - line.a[1]) * t + ny * side * offset;
+              const z = heights[0] * (1 - t) + heights[1] * t;
+              return [x, z + height, y];
+            };
+            let intervals = [[0, 1]];
+            const bounds = [Math.min(line.a[0], line.b[0]) - 24, Math.min(line.a[1], line.b[1]) - 24,
+              Math.max(line.a[0], line.b[0]) + 24, Math.max(line.a[1], line.b[1]) + 24];
+            for (const other of this.groundMap.roadIndex.query(bounds)) {
+              if (!isGroundRoad(other) || other.way === edge.way) continue;
+              const oa = this.nodes[other.a], ob = this.nodes[other.b];
+              const otherLength = Math.hypot(ob[0] - oa[0], ob[1] - oa[1]);
+              if (Math.abs(nx * (ob[0] - oa[0]) + ny * (ob[1] - oa[1])) / otherLength < .01) continue;
+              const joins = [other.a, other.b].some(node => {
+                const p = this.nodes[node];
+                const t = ((p[0] - line.a[0]) * (line.b[0] - line.a[0])
+                  + (p[1] - line.a[1]) * (line.b[1] - line.a[1])) / (lineLength * lineLength);
+                return t >= -.01 && t <= 1.01 && Math.abs(lateral(p)) < .05
+                  && junctions.get(node)?.some(joined => joined.way === edge.way);
+              });
+              if (joins) intervals = subtractIntervals(intervals,
+                capsuleIntervals(line.a, line.b, this.groundMap.collisionLines.roads, other, -.03));
+            }
+            for (const [first, last] of intervals) {
+              for (const inset of [.35, .65]) quad(tile.yellow,
+                at(first, -inset - .06, .12), at(first, -inset + .06, .12),
+                at(last, -inset + .06, .12), at(last, -inset - .06, .12));
+              quad(tile.sidewalk, at(first, .1, .04), at(first, 2, .04), at(last, 2, .04), at(last, .1, .04));
+              for (let from = first * lineLength + 4; from + 3 <= last * lineLength - 4; from += 3) {
+                for (const height of [.5, 1]) quad(tile.railing,
+                  at(from / lineLength, .8, height), at((from + 3) / lineLength, .8, height),
+                  at((from + 3) / lineLength, .8, height + .07), at(from / lineLength, .8, height + .07));
+              }
+            }
+          }
+        }
+        if (length >= 15) for (const [node, atStart] of [[edge.a, true], [edge.b, false]]) {
+          const crossStreet = junctions.get(node)?.some(other => other.name !== edge.name
+            && other.name !== "Local road" && other.way !== edge.way);
+          if (!crossStreet) continue;
+          const center = atStart ? 7 : length - 7;
+          for (let lateral = -r + .7; lateral < r - .7; lateral += 1.6) {
+            const begin = Math.max(-r + .2, lateral - .45), end = Math.min(r - .2, lateral + .45);
+            quad(tile.markings, roadside(center - 1.5, begin, .14), roadside(center - 1.5, end, .14),
+              roadside(center + 1.5, end, .14), roadside(center + 1.5, begin, .14));
+          }
+          for (const side of [-1, 1]) {
+            const pole = roadside(center, side * (r + 1.5), 0);
+            const nearby = this.groundMap.roadIndex.query([pole[0] - 16, pole[2] - 16, pole[0] + 16, pole[2] + 16]);
+            if (nearby.some(other => other !== edge && project({ x: pole[0], y: pole[2] },
+              this.nodes[other.a], this.nodes[other.b]).distance < roadWidth(this.data.driving, other) / 2 + 1)) continue;
+            const poleQuad = (width, bottom, top, buffer, across = side * (r + 1.5)) => quad(buffer,
+              roadside(center - width, across, bottom), roadside(center + width, across, bottom),
+              roadside(center + width, across, top), roadside(center - width, across, top));
+            poleQuad(.06, .04, 4, tile.signal);
+            poleQuad(.28, 3.2, 4, tile.signal);
+            poleQuad(.12, 3.65, 3.85, tile.signalRed, side * (r + 1.48));
+          }
+        }
+        const box = VERIFIED_YELLOW_BOXES.find(item => edge.name === item.road
+          && item.nodes.includes(edge.a) && item.nodes.includes(edge.b)
+          && item.nodes.every(node => junctions.get(node)?.some(other => other.name === item.crossing)));
+        if (box) {
+          const extension = Math.max(...box.nodes.flatMap(node => junctions.get(node)
+            .filter(other => other.name === box.crossing)
+            .map(other => roadWidth(this.data.driving, other) / 2)));
+          const start = -extension, span = length + 2 * extension, low = -r + .3, high = r - .3;
+          for (const direction of [-1, 1]) for (let offset = low - span; offset < high + span; offset += 3) {
+            const first = direction > 0 ? Math.max(0, low - offset) : Math.max(0, offset - high);
+            const last = direction > 0 ? Math.min(span, high - offset) : Math.min(span, offset - low);
+            if (last <= first) continue;
+            const across = t => offset + direction * t;
+            quad(tile.box, roadside(start + first, across(first) - .07, .14),
+              roadside(start + first, across(first) + .07, .14),
+              roadside(start + last, across(last) + .07, .14),
+              roadside(start + last, across(last) - .07, .14));
+          }
+        }
+      }
       remaining.set(key, remaining.get(key) - 1);
       if (this.stream && remaining.get(key) === 0) {
         this.addRoadTile(tile);
@@ -524,11 +658,14 @@ export class Map3DView {
       this.structures.push({ mesh, material, faded });
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
-    const material = new THREE.MeshBasicMaterial({ color: "#46545a", side: THREE.DoubleSide });
+    // Matching world-space asphalt makes coplanar road overlaps visually identical.
+    const material = new THREE.MeshBasicMaterial({ color: "#46545a", map: this.asphaltTexture,
+      side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const faded = material.clone();
     faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
     this.resources.push(faded);
     const jointTiles = new Map();
+    let nodeSteps = 0;
     for (const [node, radius] of nodeRadii) {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
@@ -540,11 +677,14 @@ export class Map3DView {
         return [px, surfacePose(this, edge, { x: px, y: py }, 0).height + .08, py];
       };
       for (let i = 0; i < 32; i++) triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
-      yield;
+      if (++nodeSteps % 4 === 0) yield;
     }
     for (const positions of jointTiles.values()) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      const uv = [];
+      for (let i = 0; i < positions.length; i += 3) uv.push(positions[i] / 12, positions[i + 2] / 12);
+      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
       geometry.computeVertexNormals(); geometry.computeBoundingSphere(); geometry.computeBoundingBox();
       const joints = new THREE.Mesh(geometry, material);
       joints.name = "continuous-shared-node-road-joints";
@@ -554,21 +694,52 @@ export class Map3DView {
     }
   }
   addRoadTile(tile) {
+    const detailColors = { yellow: "#d3ac56", sidewalk: "#687873", railing: "#b1bfba",
+      signal: "#253438", signalRed: "#d36a5e" };
+    const details = [], colors = [], ranges = {};
     for (const [kind, positions] of Object.entries(tile)) {
       if (!positions.length) continue;
+      if (kind in detailColors) {
+        ranges[kind] = [details.length / 3, positions.length / 3];
+        for (const value of positions) details.push(value);
+        const color = new THREE.Color(detailColors[kind]);
+        for (let i = 0; i < positions.length; i += 3) colors.push(color.r, color.g, color.b);
+        continue;
+      }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.computeVertexNormals(); geometry.computeBoundingSphere(); geometry.computeBoundingBox();
+      if (kind === "deck" || kind === "elevatedDeck") {
+        const uv = [];
+        for (let i = 0; i < positions.length; i += 3) uv.push(positions[i] / 12, positions[i + 2] / 12);
+        geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+      }
       const material = new THREE.MeshBasicMaterial({ color: { deck: "#46545a", shell: "#788483",
-        elevatedDeck: "#46545a", markings: "#c2d0bf" }[kind], side: THREE.DoubleSide });
+        elevatedDeck: "#46545a", markings: "#c2d0bf", box: "#d3ac56" }[kind],
+        map: kind === "deck" || kind === "elevatedDeck" ? this.asphaltTexture : null, side: THREE.DoubleSide });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = kind === "deck" || kind === "elevatedDeck"
+      mesh.name = kind === "box" ? "yellow-box-markings" : kind === "deck" || kind === "elevatedDeck"
         ? "level-separated-solid-road-decks" : "bridge-and-tunnel-shells";
       this.scene.add(mesh);
-      const faded = material.clone();
-      faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
-      this.resources.push(material, faded);
-      this.structures.push({ mesh, material, faded });
+      this.resources.push(material);
+      if (["deck", "shell", "elevatedDeck", "markings"].includes(kind)) {
+        const faded = material.clone();
+        faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
+        this.resources.push(faded);
+        this.structures.push({ mesh, material, faded });
+      }
+    }
+    if (details.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(details, 3));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      geometry.computeBoundingSphere(); geometry.computeBoundingBox();
+      const material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = "street-details";
+      mesh.userData.streetRanges = ranges;
+      this.scene.add(mesh);
+      this.resources.push(material);
     }
   }
   refreshGroundDetail(x, y, image = null) {
@@ -834,11 +1005,13 @@ export class Map3DView {
     const facade = document.createElement("canvas");
     facade.width = 64; facade.height = 64;
     const paint = facade.getContext("2d");
-    paint.fillStyle = "#81918d"; paint.fillRect(0, 0, 64, 64);
-    paint.fillStyle = "#354e58"; paint.fillRect(15, 13, 30, 34);
-    paint.fillStyle = "#b8ab70"; paint.fillRect(17, 15, 26, 13);
-    paint.fillStyle = "#9ca7a1"; paint.fillRect(12, 47, 36, 3);
-    paint.fillStyle = "#61726e"; paint.fillRect(0, 61, 64, 3);
+    paint.fillStyle = "#b6b9ad"; paint.fillRect(0, 0, 64, 64);
+    paint.fillStyle = "#71827f"; paint.fillRect(0, 0, 64, 3);
+    paint.fillStyle = "#3e5a60"; paint.fillRect(8, 12, 48, 34);
+    paint.fillStyle = "#d9c99a"; paint.fillRect(10, 14, 21, 14);
+    paint.fillStyle = "#82918c"; paint.fillRect(31, 12, 3, 34);
+    paint.fillStyle = "#d0d0bd"; paint.fillRect(6, 46, 52, 4);
+    paint.fillStyle = "#9a9f95"; paint.fillRect(0, 59, 64, 5);
     const texture = new THREE.CanvasTexture(facade);
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
     texture.colorSpace = THREE.SRGBColorSpace;
@@ -849,6 +1022,60 @@ export class Map3DView {
     this.fadedCityMaterial.transparent = true;
     this.fadedCityMaterial.opacity = 0.12;
     this.fadedCityMaterial.depthWrite = false;
+    const glass = document.createElement("canvas");
+    glass.width = glass.height = 64;
+    const glassPaint = glass.getContext("2d");
+    glassPaint.fillStyle = "#8eaab0"; glassPaint.fillRect(0, 0, 64, 64);
+    glassPaint.fillStyle = "#6e919c"; glassPaint.fillRect(2, 2, 60, 60);
+    glassPaint.fillStyle = "#b5ced0"; glassPaint.fillRect(0, 0, 64, 3); glassPaint.fillRect(0, 0, 3, 64);
+    glassPaint.fillStyle = "#9bb6bc"; glassPaint.fillRect(6, 6, 24, 45);
+    const glassTexture = new THREE.CanvasTexture(glass);
+    glassTexture.wrapS = glassTexture.wrapT = THREE.RepeatWrapping;
+    glassTexture.colorSpace = THREE.SRGBColorSpace;
+    glassTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    this.resources.push(glassTexture);
+    this.landmarkMaterial = new THREE.MeshBasicMaterial({ map: glassTexture, vertexColors: true });
+    this.fadedLandmarkMaterial = this.landmarkMaterial.clone();
+    this.fadedLandmarkMaterial.transparent = true;
+    this.fadedLandmarkMaterial.opacity = .12;
+    this.fadedLandmarkMaterial.depthWrite = false;
+    const adverts = document.createElement("canvas");
+    adverts.width = 1280; adverts.height = 256;
+    const poster = adverts.getContext("2d");
+    const designs = [
+      ["明亮眼鏡", "OPTICAL", "#efe9dc", "#a94e40"],
+      ["日常茶室", "TEA HOUSE", "#e7dfc4", "#58735d"],
+      ["生活百貨", "EVERYDAY GOODS", "#e7e2d7", "#476c78"],
+      ["街坊良品", "LOCAL FAVOURITES", "#eee1cf", "#a45f4d"],
+      ["朗豪坊", "LANGHAM PLACE", "#dce7e5", "#516d78"],
+    ];
+    designs.forEach(([title, subtitle, background, accent], index) => {
+      const x = index * 256;
+      poster.fillStyle = background; poster.fillRect(x, 0, 256, 256);
+      poster.fillStyle = accent; poster.fillRect(x, 0, 256, 14); poster.fillRect(x, 210, 256, 46);
+      poster.textAlign = "center"; poster.fillStyle = "#263b3b";
+      poster.font = "bold 34px sans-serif"; poster.fillText(title, x + 128, 59, 238);
+      poster.font = "bold 16px sans-serif"; poster.fillText(subtitle, x + 128, 84, 232);
+      poster.strokeStyle = accent; poster.lineWidth = 6;
+      if (index === 0) {
+        poster.strokeRect(x + 54, 118, 58, 38); poster.strokeRect(x + 144, 118, 58, 38);
+        poster.beginPath(); poster.moveTo(x + 112, 137); poster.lineTo(x + 144, 137); poster.stroke();
+      } else {
+        poster.fillStyle = accent; poster.fillRect(x + 100, 105, 56, 76);
+        poster.fillStyle = background; poster.fillRect(x + 112, 118, 32, 35);
+      }
+      poster.fillStyle = "#fffdf2"; poster.font = "bold 14px sans-serif";
+      poster.fillText(index === 4 ? "MONG KOK" : "旺角 · MONG KOK", x + 128, 239, 230);
+    });
+    const advertTexture = new THREE.CanvasTexture(adverts);
+    advertTexture.colorSpace = THREE.SRGBColorSpace;
+    advertTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    this.resources.push(advertTexture);
+    this.advertMaterial = new THREE.MeshBasicMaterial({ map: advertTexture });
+    this.fadedAdvertMaterial = this.advertMaterial.clone();
+    this.fadedAdvertMaterial.transparent = true;
+    this.fadedAdvertMaterial.opacity = .12;
+    this.fadedAdvertMaterial.depthWrite = false;
     this.buildingCount = 0;
     this.buildings = [];
     if (this.stream) {
@@ -870,17 +1097,19 @@ export class Map3DView {
       const points = footprint.points;
       const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
       const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
-      const key = `${Math.floor(cx / 60)}:${Math.floor(cy / 60)}`;
-      if (!tiles.has(key)) tiles.set(key, { positions: [], normals: [], colors: [], uvs: [] });
+      const metadata = footprint.building ?? buildingMetadata.get(footprint.id ?? index);
+      const landmark = [65259283, 102411832].includes(metadata?.osm_way);
+      const key = `${Math.floor(cx / 60)}:${Math.floor(cy / 60)}:${landmark}`;
+      if (!tiles.has(key)) tiles.set(key, { landmark, positions: [], normals: [], colors: [], uvs: [], adverts: [], advertUvs: [] });
       const tile = tiles.get(key);
       const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, -y)));
       const seed = Math.abs(Math.round(cx * 13 + cy * 7));
-      const metadata = footprint.building ?? buildingMetadata.get(footprint.id ?? index);
       const height = metadata?.height ?? WORLD_SCALE.fallbackBuildingHeight;
       const geometry = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, steps: 1 });
       geometry.rotateX(-Math.PI / 2);
       const position = geometry.getAttribute("position"), normal = geometry.getAttribute("normal");
-      const color = new THREE.Color().setHSL(0.48 + seed % 8 / 100, 0.13, 0.48 + seed % 6 / 100);
+      const color = landmark ? new THREE.Color("#81a4ac")
+        : new THREE.Color().setHSL(0.10 + seed % 8 / 100, 0.10, 0.54 + seed % 8 / 100);
       for (let i = 0; i < position.count; i++) {
         tile.positions.push(position.getX(i), position.getY(i) + (metadata?.base ?? 0) + 0.05, position.getZ(i));
         tile.normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
@@ -892,6 +1121,62 @@ export class Map3DView {
         normal.getY(i) > 0.5 ? 0.03 : position.getY(i) / WORLD_SCALE.floorHeight);
       }
       geometry.dispose();
+      if ((seed % 3 === 0 || metadata?.osm_way === 102411832) && height >= 7) {
+        let best = null;
+        for (let i = 0; i < points.length; i++) {
+          const a = points[i], b = points[(i + 1) % points.length];
+          const dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+          if (length < 4) continue;
+          const center = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
+          for (const edge of this.groundMap.roadIndex.query([center.x - 25, center.y - 25, center.x + 25, center.y + 25])) {
+            if (!isGroundRoad(edge)) continue;
+            const nearest = project(center, this.nodes[edge.a], this.nodes[edge.b]);
+            if (nearest.distance > 25 || (best && nearest.distance >= best.distance)) continue;
+            best = { center, dx: dx / length, dy: dy / length, length, nearest, distance: nearest.distance, edge };
+          }
+        }
+        if (best) {
+          const index = metadata?.osm_way === 102411832 ? 4 : seed % 4;
+          const uvs = [[index / 5, 0], [(index + 1) / 5, 0], [(index + 1) / 5, 1], [index / 5, 1]];
+          const reverseUvs = [[(index + 1) / 5, 0], [index / 5, 0], [index / 5, 1], [(index + 1) / 5, 1]];
+          const direction = Math.sign(-best.dy * (best.nearest.x - best.center.x)
+            + best.dx * (best.nearest.y - best.center.y));
+          let projected = false;
+          if (!landmark && seed % 2 === 0) {
+            const nx = -best.dy * direction, ny = best.dx * direction;
+            const depth = Math.min(3, best.distance - roadWidth(this.data.driving, best.edge) / 2 - .6);
+            const tip = { x: best.center.x + nx * depth, y: best.center.y + ny * depth };
+            const nearby = this.groundMap.roadIndex.query([tip.x - 20, tip.y - 20, tip.x + 20, tip.y + 20]);
+            if (direction && depth >= 1.2 && nearby.every(edge => !isGroundRoad(edge)
+                || project(tip, this.nodes[edge.a], this.nodes[edge.b]).distance
+                  > roadWidth(this.data.driving, edge) / 2 + .5)) {
+              const bottom = (metadata?.base ?? 0) + 5.1;
+              const top = Math.min(bottom + 3.2, (metadata?.base ?? 0) + height - .3);
+              const corner = (distance, y) => [best.center.x + nx * distance, y, best.center.y + ny * distance];
+              const points = [corner(.08, bottom), corner(depth, bottom), corner(depth, top), corner(.08, top)];
+              for (const i of [0, 1, 2, 0, 2, 3]) {
+                tile.adverts.push(...points[i]); tile.advertUvs.push(...uvs[i]);
+              }
+              for (const i of [0, 2, 1, 0, 3, 2]) {
+                tile.adverts.push(...points[i]); tile.advertUvs.push(...reverseUvs[i]);
+              }
+              projected = true;
+            }
+          }
+          if (!projected) {
+            const width = Math.min(metadata?.osm_way === 102411832 ? 8 : 3.5, best.length - .5);
+            const bottom = (metadata?.base ?? 0) + 3.2, top = Math.min(bottom + 3.2, (metadata?.base ?? 0) + height - .3);
+            const offsetX = best.distance ? (best.nearest.x - best.center.x) / best.distance * .08 : 0;
+            const offsetY = best.distance ? (best.nearest.y - best.center.y) / best.distance * .08 : 0;
+            const corner = (side, y) => [best.center.x + offsetX + best.dx * width * side,
+              y, best.center.y + offsetY + best.dy * width * side];
+            const points = [corner(-.5, bottom), corner(.5, bottom), corner(.5, top), corner(-.5, top)];
+            for (const i of direction < 0 ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3]) {
+              tile.adverts.push(...points[i]); tile.advertUvs.push(...(direction < 0 ? reverseUvs[i] : uvs[i]));
+            }
+          }
+        }
+      }
       yield;
     }
     const meshes = [];
@@ -902,10 +1187,22 @@ export class Map3DView {
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(tile.colors, 3));
       geometry.setAttribute("uv", new THREE.Float32BufferAttribute(tile.uvs, 2));
       geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, this.cityMaterial);
+      const mesh = new THREE.Mesh(geometry, tile.landmark ? this.landmarkMaterial : this.cityMaterial);
       mesh.name = "building-block";
+      mesh.userData.cityLandmark = tile.landmark;
       this.scene.add(mesh);
       meshes.push(mesh);
+      if (tile.adverts.length) {
+        const advertGeometry = new THREE.BufferGeometry();
+        advertGeometry.setAttribute("position", new THREE.Float32BufferAttribute(tile.adverts, 3));
+        advertGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(tile.advertUvs, 2));
+        advertGeometry.computeBoundingSphere();
+        const advert = new THREE.Mesh(advertGeometry, this.advertMaterial);
+        advert.name = "city-advertisements";
+        advert.userData.cityAdvertisement = true;
+        this.scene.add(advert);
+        meshes.push(advert);
+      }
     }
     return meshes;
   }
@@ -1513,9 +1810,9 @@ export class Map3DView {
     this.updateSkids(performance.now() / 1000);
     this.camera.x = car.x; this.camera.y = car.y;
     if (this.roadBuildTask) {
-      const deadline = performance.now() + 4;
+      const deadline = performance.now() + 6;
       let steps = 0;
-      while (performance.now() < deadline && steps++ < 24) {
+      while (performance.now() < deadline && steps++ < 48) {
         if (this.roadBuildTask.next().done) { this.roadBuildTask = null; break; }
       }
     }
@@ -1526,7 +1823,6 @@ export class Map3DView {
     this.updateGroundDetail(car);
     this.boundaryOutline.visible = true;
     this.directionLines.visible = !this.overview && !this.elevation;
-    const forward = new THREE.Vector3(Math.cos(this.cameraHeading), 0, Math.sin(this.cameraHeading));
     const pose = surfacePose(this, this.edges.get(car.edge), car, car.heading);
     const position = new THREE.Vector3(car.x, pose.height + (this.elevation ? .08 : 0), car.y);
     for (const tile of this.boundaryOutline.children) {
@@ -1536,11 +1832,8 @@ export class Map3DView {
     this.taxi.position.copy(position);
     this.taxi.rotation.set(0, -car.heading, pose.pitch, "YXZ");
     const distance = Math.min(150, 48 * 1.65 / this.zoom) * this.chaseDistanceScale;
-    const orbitWeight = this.cameraDrag ? 1
-      : Math.min(1, (Math.abs(this.orbitYaw) + Math.abs(this.orbitPitch - CHASE_PITCH)) * 3);
-    const target = position.clone().addScaledVector(forward, 10 * (1 - orbitWeight));
-    target.y = this.elevation ? surfacePose(this, this.edges.get(car.edge),
-      { x: target.x, y: target.z }, car.heading).height + 1 : 1;
+    const target = position.clone();
+    target.y = pose.height + 1;
     const inTunnel = this.elevation && isTunnelRoad(this.edges.get(car.edge));
     const heading = this.cameraHeading + this.orbitYaw;
     const radius = inTunnel ? Math.min(5.9, 3.3 / Math.sin(this.orbitPitch)) : distance * Math.hypot(.9, .6);
@@ -1581,13 +1874,33 @@ export class Map3DView {
     this.lookAt ??= target.clone();
     const smoothCamera = this.cameraReady && !this.cameraDrag && !inTunnel && !this.reducedMotion && this.cameraSmoothness > 0;
     this.lens.position.lerp(eye, smoothCamera ? positionEase : 1);
-    this.lookAt.lerp(target, smoothCamera ? targetEase : 1);
+    this.lookAt.lerp(target, this.overview && smoothCamera ? targetEase : 1);
     if (!this.overview && !inTunnel) {
       const eye = this.lens.position;
       eye.y = Math.max(eye.y, this.lookAt.y + Math.hypot(eye.x - this.lookAt.x, eye.z - this.lookAt.z) * MIN_CHASE_GRADE);
     }
     this.lens.lookAt(this.lookAt);
-    this.lens.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.04, innerWidth, innerHeight);
+    const viewOffset = innerHeight * 0.04;
+    this.lens.setViewOffset(innerWidth, innerHeight, 0, viewOffset, innerWidth, innerHeight);
+    if (!this.overview && Number.isFinite(this.dashboardTop)) {
+      this.lens.updateMatrixWorld();
+      this.taxiBounds ??= new THREE.Box3();
+      this.taxiProjection ??= new THREE.Vector3();
+      const bounds = this.taxiBounds.setFromObject(this.taxi);
+      let bottom = -Infinity;
+      if (!bounds.isEmpty()) {
+        for (let corner = 0; corner < 8; corner++) {
+          const point = this.taxiProjection.set(
+            corner & 1 ? bounds.max.x : bounds.min.x,
+            corner & 2 ? bounds.max.y : bounds.min.y,
+            corner & 4 ? bounds.max.z : bounds.min.z,
+          ).project(this.lens);
+          bottom = Math.max(bottom, (1 - point.y) * innerHeight / 2);
+        }
+        const adjustment = Math.max(0, bottom + 8 - this.dashboardTop);
+        if (adjustment) this.lens.setViewOffset(innerWidth, innerHeight, 0, viewOffset + adjustment, innerWidth, innerHeight);
+      }
+    }
     this.cameraReady = true;
     this.camera.x = car.x; this.camera.y = car.y;
     // Fade entire small blocks intersecting the camera sightline, keeping the taxi visible.
@@ -1600,7 +1913,11 @@ export class Map3DView {
       line.closestPointToPoint(sphere.center, true, closest);
       const obstructs = closest.distanceTo(sphere.center) < sphere.radius + 6
         && sphere.center.distanceTo(position) < distance + sphere.radius;
-      building.material = !this.overview && obstructs ? this.fadedCityMaterial : this.cityMaterial;
+      building.material = building.userData.cityAdvertisement
+        ? (!this.overview && obstructs ? this.fadedAdvertMaterial : this.advertMaterial)
+        : building.userData.cityLandmark
+          ? (!this.overview && obstructs ? this.fadedLandmarkMaterial : this.landmarkMaterial)
+          : (!this.overview && obstructs ? this.fadedCityMaterial : this.cityMaterial);
     }
     const sightDirection = line.delta(new THREE.Vector3());
     const raycaster = this.overview ? null
@@ -1689,6 +2006,10 @@ export class Map3DView {
     geometries.forEach(geometry => geometry.dispose());
     if (this.cityMaterial) materials.add(this.cityMaterial);
     if (this.fadedCityMaterial) materials.add(this.fadedCityMaterial);
+    if (this.landmarkMaterial) materials.add(this.landmarkMaterial);
+    if (this.fadedLandmarkMaterial) materials.add(this.fadedLandmarkMaterial);
+    if (this.advertMaterial) materials.add(this.advertMaterial);
+    if (this.fadedAdvertMaterial) materials.add(this.fadedAdvertMaterial);
     materials.forEach(material => material.dispose());
     this.resources.forEach(resource => resource.dispose());
     this.renderer.dispose();

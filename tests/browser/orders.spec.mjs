@@ -97,7 +97,7 @@ test("citizens and passengers stand on their road level after elevation is enabl
 test("3D accessories persist through boarding and pooled citizens reset their seated pose", async ({ page }, testInfo) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } },
@@ -848,7 +848,7 @@ test("randomized order points drive the trip distance and 3D marker", async ({ p
   fixture.state.offers[0].pickup_point = [75, 0];
   fixture.state.destination_point = [230, 0];
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.randomPointView = this;
@@ -1006,7 +1006,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=passenger-extras-2");
+    const { MapView } = await import("/map.mjs?v=hk-streets-2");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
@@ -1038,7 +1038,8 @@ for (const mode of ["2D", "3D"]) {
     }
     const path = mode === "3D" ? "map3d.mjs" : "map.mjs";
     await page.evaluate(async path => {
-      const module = await import(`/${path}?v=passenger-extras-2`);
+      const version = path === "map3d.mjs" ? "hk-streets-1" : "passenger-extras-2";
+      const module = await import(`/${path}?v=${version}`);
       const View = module.Map3DView ?? module.MapView;
       const render = View.prototype.render;
       View.prototype.render = function (car, state, ...rest) {

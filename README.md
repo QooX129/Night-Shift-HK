@@ -68,9 +68,19 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   four-millisecond scheduling budget and a maximum of eight building steps per
   render. Building meshes outside the buffered area are disposed; chunk data
   can remain cached for revisits. Road deck tiles are built nearest-first with
-  a separate four-millisecond scheduling budget. These are cooperative budgets,
+  a separate six-millisecond scheduling budget. These are cooperative budgets,
   not hard execution limits for a single polygon. Terrain texture refreshes
   still use a worker and progressive GPU uploads.
+- The 3D view uses procedural asphalt, varied façades and fictional shop
+  advertisements, each either wall-mounted or projecting where roadside space permits.
+  Langham Place's mapped mall and office tower receive a glass-toned treatment.
+  Sidewalks, railings, traffic lights, double yellow lines and crossings are
+  decorative approximations on eligible ground-level streets across the map.
+  Yellow boxes are restricted to individually verified locations: currently
+  Nathan Road / Argyle Street, confirmed from a user-supplied November 2023
+  street image. The box's shape and dimensions are approximate, not surveyed
+  markings or legal guidance. These additions do not change road geometry,
+  collisions or routing.
 
 To extend the map, rebuild the packaged district/elevation data with the existing
 tools and restart the backend. Chunk manifests and content versions are generated
@@ -499,7 +509,8 @@ do not draw over the taxi. Walking and hailing citizens, plus street boarding,
 appear in both views and the minimap. The dispatch phone slides away to leave
 room for the camera. Switch back to **2D** at any time for the detailed map.
 The chase camera filters steering changes and limits its heading-follow speed
-to 0.9 radians/second, easing junction turns without changing taxi steering.
+to 0.9 radians/second while keeping the taxi near the center and above the dashboard,
+without changing taxi steering.
 Hold the right mouse button and drag to orbit the taxi in 3D; release to ease
 back to the chase view. The camera limits how low it can tilt. Hard braking
 at speed leaves short, fading tire marks after 0.2 seconds of continuous braking.

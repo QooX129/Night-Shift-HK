@@ -114,11 +114,16 @@ test("overlapping visual chunks deduplicate shapes and reject mixed dataset revi
 test("progressive building groups preserve streamed elevation and dispose distant geometry", () => {
   const view = Object.create(Map3DView.prototype);
   view.data = { backdrop: [{ id: 7, kind: "building",
-    points: [[0, 0], [10, 0], [10, 10], [0, 10]], building: { height: 30, base: 12 } }] };
+    points: [[0, 0], [10, 0], [10, 10], [0, 10]],
+    building: { height: 30, base: 12, osm_way: 102411832 } }] };
   view.stream = { revision: 1 };
   view.camera = { x: 0, y: 0 };
+  view.nodes = { a: [-5, -2], b: [15, -2] };
+  view.groundMap = { roadIndex: { query: () => [{ a: "a", b: "b" }] } };
   view.scene = new THREE.Scene();
   view.cityMaterial = new THREE.MeshBasicMaterial();
+  view.landmarkMaterial = new THREE.MeshBasicMaterial();
+  view.advertMaterial = new THREE.MeshBasicMaterial();
   view.cityGroups = new Map();
   view.cityQueue = [];
   view.buildings = [];
@@ -128,14 +133,54 @@ test("progressive building groups preserve streamed elevation and dispose distan
   geometry.computeBoundingBox();
   assert(Math.abs(geometry.boundingBox.min.y - 12.05) < .001);
   assert(Math.abs(geometry.boundingBox.max.y - 42.05) < .001);
-  let disposed = false;
+  const advertisement = view.buildings.find(mesh => mesh.name === "city-advertisements").geometry;
+  let disposed = false, advertDisposed = false;
   geometry.addEventListener("dispose", () => { disposed = true; });
+  advertisement.addEventListener("dispose", () => { advertDisposed = true; });
   view.camera.x = 10000;
   view.updateStreamedCity();
   assert.equal(view.buildingCount, 0);
   assert.equal(view.buildings.length, 0);
   assert(disposed);
+  assert(advertDisposed);
   view.cityMaterial.dispose();
+  view.landmarkMaterial.dispose();
+  view.advertMaterial.dispose();
+});
+
+test("each shop sign is either wall-mounted or projecting, with a wall fallback", () => {
+  const view = Object.create(Map3DView.prototype);
+  view.data = { driving: { widths: { primary: 9 } } };
+  view.elevation = { buildings: [] };
+  view.nodes = { a: [-100, 0], b: [100, 0] };
+  const road = { a: "a", b: "b", kind: "primary", width: 9 };
+  view.groundMap = { roadIndex: { query: () => [road] } };
+  view.scene = new THREE.Scene();
+  view.cityMaterial = new THREE.MeshBasicMaterial();
+  view.advertMaterial = new THREE.MeshBasicMaterial();
+  const sign = (left, bottom) => {
+    const footprint = { kind: "building", building: { height: 15, base: 0 },
+      points: [[left, bottom], [left + 15, bottom], [left + 15, bottom + 8], [left, bottom + 8]] };
+    const task = view.cityGeometry([footprint]);
+    let next;
+    do { next = task.next(); } while (!next.done);
+    const meshes = next.value;
+    const geometry = meshes.find(mesh => mesh.name === "city-advertisements").geometry;
+    const positions = Array.from(geometry.getAttribute("position").array);
+    const uvs = Array.from(geometry.getAttribute("uv").array);
+    for (const mesh of meshes) { view.scene.remove(mesh); mesh.geometry.dispose(); }
+    return { positions, uvs };
+  };
+  const projecting = sign(10, 8);
+  const wall = sign(13, 8);
+  const restricted = sign(12, 6);
+  assert.equal(projecting.positions.length / 3, 12, "one double-sided projecting sign");
+  assert.notEqual(projecting.uvs[0], projecting.uvs[12], "reverse face remains readable");
+  assert.equal(wall.positions.length / 3, 6, "random wall placement produces one sign");
+  assert.equal(restricted.positions.length / 3, 6, "insufficient clearance falls back to one wall sign");
+  assert.deepEqual(sign(10, 8), projecting, "placement remains stable across rebuilds");
+  view.cityMaterial.dispose();
+  view.advertMaterial.dispose();
 });
 
 test("3D road surfaces and tunnel shells blocking the taxi become transparent", () => {
@@ -148,10 +193,11 @@ test("3D road surfaces and tunnel shells blocking the taxi become transparent", 
       camera: { x: 0, y: 0 }, cameraSmoothness: 1, chaseDistanceScale: 1, zoom: 1.65,
       edges: new Map([["road", { id: "road", tunnel: "yes" }]]), elevation: {},
       scene: new THREE.Scene(), lens: new THREE.PerspectiveCamera(), resources: [], structures: [],
-      cameraReady: true, cameraHeading: 0, lastRender: 900, frameTimes: [],
+      cameraReady: true, cameraHeading: 0, cameraRotationSpeed: .9, orbitYaw: 0,
+      orbitPitch: Math.atan2(.6, .9), lastRender: 900, frameTimes: [], asphaltTexture: new THREE.Texture(),
       ground: { material: {} }, terrainTiles: [], boundaryOutline: { children: [] }, directionLines: {},
       taxi: new THREE.Object3D(), buildings: [], roadLabel: {}, updateStreamedCity() {},
-      updateGroundDetail() {}, drawScene() {},
+      updateGroundDetail() {}, updateSkids() {}, drawScene() {},
     });
     view.scene.fog = { near: 0, far: 0 };
     view.lens.position.set(-43.2, 20, 0);
@@ -159,9 +205,9 @@ test("3D road surfaces and tunnel shells blocking the taxi become transparent", 
       left, height, -5, right, height, -5, right, height, 5,
       left, height, -5, right, height, 5, left, height, 5,
     ];
-    view.addRoadTile({ shell: [...plane(5.08, -16, -8), ...plane(-20, -90, -80)],
-      deck: plane(7, -23, -14), elevatedDeck: plane(9, -28, -20),
-      markings: plane(7.04, -23, -14) });
+    view.addRoadTile({ shell: [...plane(2.4, -3.5, -2.5), ...plane(-20, -90, -80)],
+      deck: plane(1.9, -2.4, -1.5), elevatedDeck: plane(1.6, -5, -.8),
+      markings: plane(1.92, -2.4, -1.5) });
     view.addRoadTile({ deck: plane(.08, -20, 0) });
     const shell = view.scene.children.find(mesh => mesh.name === "bridge-and-tunnel-shells");
     const [deck, elevatedDeck, markings, road] = view.scene.children.filter(mesh => mesh !== shell);
@@ -179,12 +225,13 @@ test("3D road surfaces and tunnel shells blocking the taxi become transparent", 
     }
     view.overview = false;
     view.cameraReady = false;
-    view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);
+    view.render({ x: 100, y: 0, heading: 0, edge: "road" }, null, "en", null);
     for (const mesh of [shell, deck, elevatedDeck, markings, road]) {
       assert.equal(mesh.material.opacity, 1, "unobstructed surfaces return to normal");
     }
     view.edges.get("road").tunnel = "no";
     view.lens.position.set(-43.2, 10, 0);
+    view.lookAt = new THREE.Vector3(10, 1, 0);
     view.cameraReady = true;
     view.lastRender = 900;
     view.render({ x: 0, y: 0, heading: 0, edge: "road" }, null, "en", null);

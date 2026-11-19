@@ -4,12 +4,73 @@ test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 
+test("chase camera keeps the taxi centered and clear of the dashboard", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1",
+    JSON.stringify({ defaultView: "2d", chaseDistance: 70 })));
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const render = Map3DView.prototype.render;
+    Map3DView.prototype.render = function (...args) {
+      render.apply(this, args);
+      this.lens.updateMatrixWorld();
+      const position = this.taxi.position.clone().add(new THREE.Vector3(0, .8, 0)).project(this.lens);
+      const bounds = new THREE.Box3().setFromObject(this.taxi);
+      const corners = [];
+      for (const x of [bounds.min.x, bounds.max.x])
+        for (const y of [bounds.min.y, bounds.max.y])
+          for (const z of [bounds.min.z, bounds.max.z])
+            corners.push(new THREE.Vector3(x, y, z).project(this.lens));
+      window.cameraView = this;
+      window.taxiFraming = {
+        x: (position.x + 1) * innerWidth / 2, y: (1 - position.y) * innerHeight / 2,
+        bottom: Math.max(...corners.map(point => (1 - point.y) * innerHeight / 2)),
+        dashboardTop: document.querySelector(".dashboard").getBoundingClientRect().top,
+      };
+    };
+  });
+  await page.locator("#start").click();
+  await toggleDrivingView(page);
+  const check = async () => {
+    await expect.poll(() => page.evaluate(() => Boolean(window.taxiFraming))).toBe(true);
+    const framing = await page.evaluate(() => window.taxiFraming);
+    expect(Math.abs(framing.x - page.viewportSize().width / 2)).toBeLessThan(page.viewportSize().width * .08);
+    const centeredY = Math.min(page.viewportSize().height * .46, framing.dashboardTop - (framing.bottom - framing.y) - 8);
+    expect(Math.abs(framing.y - centeredY)).toBeLessThan(8);
+    expect(framing.bottom).toBeLessThan(framing.dashboardTop);
+  };
+  for (const [zoom, distance] of [[1.65, .7], [3.5, .7], [1.65, 1.5]]) {
+    await page.evaluate(([zoom, distance]) => {
+      window.cameraView.zoom = zoom;
+      window.cameraView.chaseDistanceScale = distance;
+      window.cameraView.cameraReady = false;
+      window.taxiFraming = null;
+    }, [zoom, distance]);
+    await check();
+  }
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect.poll(() => page.evaluate(() => window.cameraView.lens.aspect)).toBeCloseTo(844 / 390, 2);
+  await page.evaluate(() => {
+    window.cameraView.zoom = 3.5;
+    window.cameraView.chaseDistanceScale = .7;
+    window.cameraView.cameraReady = false;
+    window.taxiFraming = null;
+  });
+  await check();
+  await page.keyboard.down("w");
+  await expect.poll(async () => Number(await page.locator("#speed").textContent())).toBeGreaterThan(15);
+  await check();
+  await page.keyboard.up("w");
+});
+
 test("right drag orbits around the taxi, clamps the low angle and eases back on release", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "Mouse-only control");
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -45,7 +106,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   expect(orbit.targetOffset).toBeLessThan(.001);
   await page.mouse.up({ button: "right" });
   await expect.poll(() => page.evaluate(() => Math.abs(window.chasePose.yaw))).toBeLessThan(.03);
-  await expect.poll(() => page.evaluate(() => window.chasePose.targetOffset)).toBeGreaterThan(9);
+  await expect.poll(() => page.evaluate(() => window.chasePose.targetOffset)).toBeLessThan(.001);
 });
 
 test("a brake tap stays clean; sustained braking draws tracks that fade", async ({ page }, testInfo) => {
@@ -53,7 +114,7 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -92,7 +153,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=passenger-extras-2");
+    const { MapView } = await import("/map.mjs?v=hk-streets-2");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -356,7 +417,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
