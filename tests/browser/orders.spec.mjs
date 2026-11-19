@@ -372,6 +372,8 @@ test("dashboard shows the live meter, speed, wallet and garage icon on desktop a
   fixture.state.meter = 102.5;
   await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 102.5");
   await page.setViewportSize({ width: 320, height: 720 });
+  await expect.poll(() => page.locator(".taxi-meter").evaluate(meter => meter.getBoundingClientRect().width))
+    .toBeLessThan(150);
   const boxes = await page.locator(".dashboard").evaluate(dashboard => {
     const box = element => {
       const rect = element.getBoundingClientRect();
@@ -430,17 +432,19 @@ test("itemized extras stay to the right of the meter on narrow screens and switc
       const fareDigit = document.querySelector("#meter-digits .meter-digit").getBoundingClientRect();
       const extraDigit = document.querySelector("#meter-extra .meter-digit").getBoundingClientRect();
       const fuel = document.querySelector(".fuel-track").getBoundingClientRect();
+      const dial = document.querySelector(".speed-dial").getBoundingClientRect();
       return { main: box("meter-digits"), extra: box("meter-extra"), right: meter.right,
         heightDifference: fareDigit.height - extraDigit.height,
-        baselineAligned: fareDigit.bottom === extraDigit.bottom,
-        fuelWidth: fuel.width, fuelHeight: fuel.height };
+        baselineGap: fareDigit.bottom - extraDigit.bottom,
+        meterScale: meter.width / 250, speedScale: dial.width / 140, fuelScale: fuel.width / 66 };
     });
     expect(bounds.extra.left).toBeGreaterThanOrEqual(bounds.main.right);
     expect(bounds.extra.right).toBeLessThanOrEqual(bounds.right);
-    expect(bounds.heightDifference).toBe(4);
-    expect(bounds.baselineAligned).toBe(true);
-    expect(bounds.fuelWidth).toBe(width > 800 ? 66 : 35);
-    expect(bounds.fuelHeight).toBe(3);
+    expect(bounds.heightDifference).toBeCloseTo(4 * bounds.meterScale, 1);
+    expect(Math.abs(bounds.baselineGap)).toBeLessThan(1);
+    expect(bounds.speedScale).toBeCloseTo(bounds.meterScale, 2);
+    expect(bounds.fuelScale).toBeCloseTo(bounds.meterScale, 2);
+    if (width <= 390) expect(bounds.meterScale).toBeLessThan(1);
   }
   await page.locator("#language").click();
   await expect(page.locator("#meter-extra")).toHaveAttribute("aria-label", "附加費 HK$ 22.0");
@@ -507,6 +511,7 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
     { width: 844, height: 390 },
   ]) {
     await page.setViewportSize(size);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     for (const language of ["en", "zh"]) {
       if (language === "zh") await page.locator("#language").click();
       const positions = await page.locator(".dashboard").evaluate(dashboard => {
@@ -516,7 +521,7 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
         const rect = selector => dashboard.querySelector(selector).getBoundingClientRect().toJSON();
         const positions = { dashboard: dashboard.getBoundingClientRect().toJSON(),
           dial: rect(".speed-dial"), reading: rect(".speed-reading"), door: rect("#door"),
-          overview: document.getElementById("overview").getBoundingClientRect().toJSON() };
+          tools: document.querySelector(".map-tools").getBoundingClientRect().toJSON() };
         speed.textContent = previousSpeed;
         return positions;
       });
@@ -524,13 +529,13 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
       expect(positions.door.right).toBeLessThanOrEqual(positions.dashboard.right);
       expect(positions.reading.left).toBeGreaterThanOrEqual(positions.dial.right);
       expect(positions.reading.right).toBeLessThanOrEqual(positions.dashboard.right);
-      expect(positions.overview.bottom <= positions.dashboard.top
-        || positions.overview.right <= positions.dashboard.left
-        || positions.overview.left >= positions.dashboard.right
-        || positions.overview.top >= positions.dashboard.bottom).toBe(true);
+      expect(positions.tools.bottom <= positions.dashboard.top
+        || positions.tools.right <= positions.dashboard.left
+        || positions.tools.left >= positions.dashboard.right
+        || positions.tools.top >= positions.dashboard.bottom).toBe(true);
       expect(Math.abs((positions.dashboard.left + positions.dashboard.right) / 2 - size.width / 2)).toBeLessThanOrEqual(1);
       if (size.width === 1280) expect(positions.dial.width).toBeGreaterThan(112);
-      if (size.width === 320) expect(positions.dial.width).toBeGreaterThan(78);
+      if (size.width === 320) expect(positions.dial.width).toBeGreaterThan(60);
     }
     await page.locator("#language").click();
   }
@@ -542,7 +547,7 @@ test("speed reading and pickup controls stay aligned with the dashboard", async 
   await page.setViewportSize({ width: 320, height: 720 });
   const mobileDoor = await page.locator("#door").boundingBox();
   const minimap = await page.locator("#minimap-panel").boundingBox();
-  expect(minimap.y + minimap.height).toBeLessThanOrEqual(mobileDoor.y);
+  expect(minimap.x + minimap.width <= mobileDoor.x || minimap.y + minimap.height <= mobileDoor.y).toBe(true);
 });
 
 test("speed dial stays still and the reading aligns with its bottom as speed changes", async ({ page }) => {
@@ -644,25 +649,30 @@ test("reverse indicator does not move the dashboard or speedometer", async ({ pa
   await page.keyboard.up("s");
 });
 
-test("3D dashboard and minimap fit without overlapping", async ({ page }) => {
+test("3D minimap shrinks before moving above the dashboard, without overlapping HUD controls", async ({ page }) => {
   await dispatchFixture(page);
   await toggleDrivingView(page);
   await expect(page.locator("#map-3d")).toBeVisible();
-  for (const width of [801, 900, 1199, 1200, 1280, 1600]) {
-    await page.setViewportSize({ width, height: 720 });
+  for (const [width, height] of [[1600, 760], [1200, 720], [1084, 720], [1082, 720],
+    [801, 600], [800, 600], [390, 664], [320, 720], [844, 390], [667, 375]]) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const positions = await page.evaluate(() => {
       const bounds = selector => {
         const { left, right, top, bottom } = document.querySelector(selector).getBoundingClientRect();
         return { left, right, top, bottom };
       };
-      const notice = document.querySelector("#notice");
-      const wasHidden = notice.hidden;
-      notice.hidden = false;
-      const result = {
+      return {
         minimap: bounds("#minimap-panel"),
+        tools: bounds(".map-tools"),
+        toolButtons: [...document.querySelectorAll(".map-tools button")].map(button => ({
+          id: button.id, ...bounds(`#${button.id}`),
+        })),
         dashboard: bounds(".dashboard"),
+        door: bounds("#door"),
+        garage: bounds("#garage"),
+        shift: bounds(".shift-stat"),
         meter: bounds(".taxi-meter"),
-        digits: bounds("#meter-digits"),
         speed: bounds(".speed-display"),
         touchButtons: [...document.querySelectorAll(".touch-controls button")]
           .filter(button => button.getClientRects().length)
@@ -670,41 +680,37 @@ test("3D dashboard and minimap fit without overlapping", async ({ page }) => {
             const { left, right, top, bottom } = button.getBoundingClientRect();
             return { left, right, top, bottom };
           }),
-        roadLabel: bounds(".road-label"),
-        notice: bounds("#notice"),
       };
-      notice.hidden = wasHidden;
-      return result;
     });
-    expect(positions.minimap.left).toBe(30);
-    expect(positions.minimap.bottom).toBe(688);
+    const clear = (a, b) => a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom;
+    expect(positions.minimap.right, `${width}×${height}`).toBeGreaterThan(positions.minimap.left);
+    expect(positions.tools.top, `${width}×${height}`).toBeGreaterThanOrEqual(0);
+    expect(positions.toolButtons.map(button => button.id)).toEqual(["view-mode", "zoom-in", "zoom-out"]);
+    for (const [index, button] of positions.toolButtons.entries()) {
+      expect(button.left).toBe(positions.tools.left);
+      if (index) expect(button.top).toBeGreaterThan(positions.toolButtons[index - 1].bottom);
+    }
+    expect(clear(positions.tools, positions.minimap), `${width}×${height}`).toBe(true);
     expect(Math.abs((positions.dashboard.left + positions.dashboard.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
-    expect(positions.digits.right).toBeLessThanOrEqual(positions.meter.right);
-    expect(positions.speed.right).toBeLessThanOrEqual(positions.dashboard.right);
+    expect(positions.speed.left).toBeGreaterThan(positions.meter.right);
+    expect(positions.shift.left).toBeGreaterThan(positions.speed.right);
+    expect(positions.garage.left).toBeGreaterThan(positions.shift.right);
+    expect(clear(positions.minimap, positions.dashboard)).toBe(true);
+    expect(clear(positions.minimap, positions.door)).toBe(true);
+    expect(clear(positions.tools, positions.dashboard)).toBe(true);
+    expect(clear(positions.tools, positions.door)).toBe(true);
     for (const button of positions.touchButtons) {
-      expect(button.bottom).toBeLessThanOrEqual(positions.minimap.top);
+      expect(clear(button, positions.minimap), `${width}×${height}: touch control and minimap`).toBe(true);
+      expect(clear(button, positions.dashboard), `${width}×${height}: touch control and dashboard`).toBe(true);
     }
-    if (width >= 1200) {
-      expect(positions.dashboard.left).toBeGreaterThanOrEqual(positions.minimap.right);
-    } else {
-      expect(positions.dashboard.bottom).toBeLessThanOrEqual(positions.minimap.top);
+    if (width === 1600) expect(positions.minimap.right - positions.minimap.left).toBe(300);
+    if (width === 1200) expect(positions.minimap.right - positions.minimap.left).toBeLessThan(300);
+    if (width === 1084) {
+      expect(positions.minimap.right - positions.minimap.left).toBe(150);
+      expect(positions.minimap.right).toBeLessThan(positions.dashboard.left);
     }
-    expect(Math.abs((positions.roadLabel.left + positions.roadLabel.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
-    expect(Math.abs((positions.notice.left + positions.notice.right) / 2 - width / 2)).toBeLessThanOrEqual(1);
+    if (width === 1082 || width === 390) expect(positions.minimap.bottom).toBeLessThan(positions.dashboard.top);
   }
-  await page.setViewportSize({ width: 844, height: 390 });
-  const shortMinimap = await page.locator("#minimap-panel").boundingBox();
-  const shortDashboard = await page.locator(".dashboard").boundingBox();
-  const shortDoor = await page.locator("#door").boundingBox();
-  expect(shortMinimap.x).toBe(30);
-  expect(shortMinimap.y + shortMinimap.height).toBe(358);
-  expect(Math.abs(shortDashboard.x + shortDashboard.width / 2 - 422)).toBeLessThanOrEqual(1);
-  expect(shortDashboard.x).toBeGreaterThanOrEqual(shortMinimap.x + shortMinimap.width);
-  expect(shortDoor.y).toBeGreaterThanOrEqual(0);
-  await page.setViewportSize({ width: 320, height: 720 });
-  const mobileDashboard = await page.locator(".dashboard").boundingBox();
-  const minimap = await page.locator("#minimap-panel").boundingBox();
-  expect(minimap.y + minimap.height).toBeLessThanOrEqual(mobileDashboard.y);
 });
 
 test("phone slides from the edge, counts uncapped offers, keeps keyboard focus, and hides expired offers", async ({ page }) => {
@@ -871,7 +877,11 @@ test("trip panel shows the pickup, then the destination, and closes after drop-o
     return document.querySelector("#phone").contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
   })).toBe(true);
   await page.locator("#phone-close").click();
-  await toggle.click();
+  await page.keyboard.press("Tab");
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await page.keyboard.press("Tab");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
   fixture.state.service_ready = true;
   await expect.poll(() => fixture.state.phase).toBe("onboard");
@@ -909,16 +919,21 @@ test("E drops off the passenger at the destination", async ({ page }) => {
   await expect.poll(() => fixture.state.boarding).toBeNull();
 });
 
-test("Tab toggles the phone while Shift+Tab keeps focus navigation", async ({ page }) => {
+test("P toggles the taller phone while Tab still navigates inside it", async ({ page }) => {
   await dispatchFixture(page);
   const toggle = page.locator("#phone-toggle");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("p");
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const phone = await page.locator("#phone-screen").boundingBox();
+  const dashboard = await page.locator(".dashboard").boundingBox();
+  expect(phone.y + phone.height).toBeGreaterThan(dashboard.y + dashboard.height);
   await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
   await page.locator("#accepted-tab").click();
   await page.keyboard.press("Tab");
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("p");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("p");
   await expect(page.locator("#available-tab")).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("#phone-available")).toBeVisible();
   await expect(page.locator("#phone-accepted")).toBeHidden();
@@ -929,6 +944,23 @@ test("Tab toggles the phone while Shift+Tab keeps focus navigation", async ({ pa
   await page.locator("#phone-close").click();
   await page.keyboard.press("Shift+Tab");
   await expect(toggle).toHaveAttribute("aria-expanded", "false");
+});
+
+test("driving warning stays below a wrapped road name", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  fixture.state.warning = "wrongway";
+  await toggleDrivingView(page);
+  await expect(page.locator("#notice")).toBeVisible();
+  const road = page.locator(".road-label");
+  await expect(road).toBeVisible();
+  for (const width of [1280, 320]) {
+    await page.setViewportSize({ width, height: 720 });
+    const gap = await road.evaluate(label => {
+      label.textContent = "Very Long Road Name Near the District Boundary ".repeat(5);
+      return label.nextElementSibling.getBoundingClientRect().top - label.getBoundingClientRect().bottom;
+    });
+    expect(gap).toBeGreaterThanOrEqual(8);
+  }
 });
 
 test("only normal empty-taxi 3D view reports visible walkers for hailing", async ({ page }) => {
@@ -945,11 +977,6 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
   await expect(page.locator("#map-3d")).toBeVisible();
   await expect.poll(() => fixture.commands.some(command =>
     command.visible_citizens?.includes("visible-walker"))).toBe(true);
-  await page.locator("#overview").click();
-  fixture.commands.length = 0;
-  await expect.poll(() => fixture.commands.filter(command => command.action === "move").length).toBeGreaterThan(1);
-  expect(fixture.commands.filter(command => command.action === "move")
-    .every(command => command.visible_citizens.length === 0)).toBe(true);
 });
 
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {

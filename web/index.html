@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=meter-panels-1">
+  <link rel="stylesheet" href="/style.css?v=panel-shortcuts-1">
 </head>
 <body>
   <main id="game">
@@ -20,7 +20,7 @@
     </header>
 
     <aside id="phone" class="phone" aria-label="Dispatch phone">
-      <button id="phone-toggle" class="phone-toggle" aria-expanded="false" aria-controls="phone-screen">
+      <button id="phone-toggle" class="phone-toggle" aria-keyshortcuts="P" aria-expanded="false" aria-controls="phone-screen">
         <span aria-hidden="true">▯</span><span id="phone-count" class="phone-count">0</span>
         <span class="sr-only" data-i18n="phoneToggle">Toggle dispatch phone</span>
       </button>
@@ -72,11 +72,11 @@
         <strong id="trip-name"></strong>
         <span id="trip-distance"></span>
       </div>
-      <button id="trip-toggle" class="trip-toggle" aria-label="Show trip destination" aria-controls="trip-details" aria-expanded="false" hidden>›</button>
+      <button id="trip-toggle" class="trip-toggle" aria-label="Show trip destination" aria-keyshortcuts="Tab" aria-controls="trip-details" aria-expanded="false" hidden>›</button>
     </aside>
     <aside class="map-tools" aria-label="Map tools">
       <button id="view-mode" aria-label="Open map" aria-expanded="false" aria-controls="map-popup" disabled>M</button>
-      <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button><button id="overview" aria-label="Toggle district overview">⌖</button>
+      <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-out" aria-label="Zoom out">−</button>
     </aside>
     <section id="map-popup" class="map-popup panel" role="region" aria-labelledby="map-title" hidden>
       <header><strong id="map-title" data-i18n="mapTitle">District map</strong>
@@ -89,7 +89,9 @@
     <div id="map-stream-error" class="view-error panel" role="alert" hidden></div>
     <div id="settings-notice" class="settings-notice" role="alert" aria-live="assertive" hidden></div>
     <div class="district-label">九龍 <span>KOWLOON</span></div>
-    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="road-notices" class="road-notices">
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    </div>
 
     <section class="dashboard panel" aria-label="Taxi dashboard">
       <div class="pickup-controls">
@@ -120,7 +122,7 @@
       <div class="dash-stat shift-stat"><small data-i18n="shift">SHIFT TIME</small><strong id="clock">00:00</strong><span data-i18n="nosave">Session only · no saves</span></div>
       <button id="garage" class="quiet" data-i18n-aria="garage" aria-label="Rest stop / garage"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 5a5 5 0 0 0-5.7 6.7L3.8 16.2a2.1 2.1 0 0 0 3 3l4.5-4.5A5 5 0 0 0 18 9l-3.1 3.1-3-3z"></path></svg></button>
     </section>
-    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · Tab phone · Esc pause</div>
+    <div class="keyboard-hint" data-i18n="controls">W / ↑ accelerate · hold S / ↓ brake / reverse · A D / ← → steer · Space handbrake · P phone · Tab trip · M map · Esc pause</div>
     <div class="touch-controls" aria-label="Touch driving controls">
       <div><button data-control="left" aria-label="Steer left">◀</button><button data-control="right" aria-label="Steer right">▶</button></div>
       <div>
@@ -144,8 +146,15 @@
   <dialog id="welcome">
     <div class="dialog-eyebrow">夜更的士 · NIGHT SHIFT HK</div>
     <h2 data-i18n="welcome">Your streets. Your shift.</h2>
-    <p data-i18n="intro">A little taxi story on the real streets of Kowloon. Pick up a passenger, find your way, and make the city your own.</p>
-    <div class="instructions"><p data-i18n="introdrive">Steer with WASD / arrow keys or touch pedals. Hold brake after stopping for low-speed reverse. The taxi stays on the road.</p><p data-i18n="introturn">Ordinary junctions highlight exits. Only connected stacked-road forks pause for a choice. You always steer manually.</p><p data-i18n="introstops">Stop at the coloured roadside marker to pick up or drop off. Fuel, traffic, and closures are simulated. Buildings have no collisions.</p></div>
+    <p data-i18n="intro">Pick up fares and explore Kowloon your way.</p>
+    <div class="control-grid">
+      <div class="control-card"><span class="control-icon" aria-hidden="true">↔</span><strong data-i18n="controlsSteer">Steer</strong><small data-i18n="controlsSteerKeys">A / D · ← / →</small></div>
+      <div class="control-card"><span class="control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M5 5h5v13H5zM14 9h5v9h-5z"></path><path d="M6.5 8h2M6.5 11h2M15.5 12h2M15.5 15h2"></path></svg></span><strong data-i18n="controlsPedals">Pedals</strong><small data-i18n="controlsPedalsKeys">W / ↑ accelerate · S / ↓ brake; hold to reverse</small></div>
+      <div class="control-card"><span class="control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M5 20h14M9 19l2-9a2 2 0 0 1 4 0l2 9M13 9V5h4"></path><circle cx="18" cy="5" r="1.5"></circle></svg></span><strong data-i18n="controlsHandbrake">Handbrake</strong><small data-i18n="controlsHandbrakeKeys">Space</small></div>
+      <div class="control-card"><span class="control-icon" aria-hidden="true">⌖</span><strong data-i18n="controlsPickupDropoff">Pick up · drop off</strong><small data-i18n="controlsPickupDropoffKeys">Stop at marker · E</small></div>
+      <div class="control-card"><span class="control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><rect x="7" y="2.5" width="10" height="19" rx="2"></rect><path d="M10 5.5h4M11 18.5h2"></path></svg></span><strong data-i18n="controlsOrders">Orders</strong><small data-i18n="controlsOrdersKeys">P phone · Tab trip</small></div>
+      <div class="control-card"><span class="control-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15"></path></svg></span><strong data-i18n="controlsMapPause">Map · pause</strong><small data-i18n="controlsMapPauseKeys">M map · Esc pause</small></div>
+    </div>
     <p class="muted" data-i18n="introsave">Progress lasts for this page session only. Reloading starts a new shift.</p>
     <p id="welcome-settings-message" class="settings-message" role="alert" aria-live="assertive" hidden></p>
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
@@ -269,6 +278,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=pickup-distance-1"></script>
+  <script type="module" src="/app.mjs?v=panel-shortcuts-1"></script>
 </body>
 </html>

@@ -10,27 +10,29 @@
     --red: #f07869;
     --minimap-width: 240px;
     --minimap-height: 168px;
+    --meter-scale: 1;
     --junction-hud-opacity: .7
 }
 
 .phone {
+    --phone-top: 90px;
     position: absolute;
     z-index: 8;
     right: 0;
-    top: 90px;
+    top: var(--phone-top);
     width: min(330px, calc(100vw - 62px));
     touch-action: pan-y;
     transform: translateX(100%);
     transition: transform .25s ease
 }
 
-.phone.open { transform: translateX(-12px) }
+.phone.open { transform: translateX(-12px); z-index: 16 }
 .phone-screen {
     box-sizing: border-box;
     border: 6px solid #060e15;
     border-radius: 32px;
     padding: 14px;
-    height: min(620px, calc(100dvh - 245px));
+    height: min(760px, calc(100dvh - var(--phone-top) - 24px));
     overflow-y: auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
@@ -87,13 +89,13 @@
 #boarding-status { background: var(--panel); padding: 10px; border-radius: 8px; font-size: 12px; color: var(--mint) }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0 }
 @media(max-width:800px) {
-    .phone { top: 78px }
-    .phone-screen { height: min(600px, calc(100dvh - 300px)); padding: 12px }
+    .phone { --phone-top: 78px }
+    .phone-screen { padding: 12px }
     .pickup-controls { max-width: 165px }
 }
 @media(max-height:500px) {
-    .phone { top: 65px }
-    .phone-screen { height: calc(100dvh - 88px) }
+    .phone { --phone-top: 65px }
+    .phone-toggle { top: 0 }
 }
 
 .settings-dialog[open] {
@@ -390,7 +392,6 @@ strong,
     position: relative;
     width: 100vw;
     height: 100dvh;
-    min-height: 400px;
     overflow: hidden;
     overflow: clip
 }
@@ -419,8 +420,8 @@ strong,
 
 .minimap {
     position: absolute;
-    left: 30px;
-    bottom: 32px;
+    left: calc(30px + var(--minimap-offset, 0px));
+    bottom: var(--minimap-bottom, 32px);
     width: var(--minimap-width);
     height: var(--minimap-height);
     border-radius: 12px;
@@ -455,63 +456,17 @@ strong,
     box-shadow: 0 0 0 3px #101a22e6, 0 6px 20px #0009
 }
 
-@media (min-width: 801px) {
-    .view-3d .dispatch {
-        max-height: calc(100dvh - 340px);
-        overflow-y: auto
-    }
-
-    .view-3d .minimap {
-        position: fixed;
-        bottom: 32px
-    }
-}
-
-@media (min-width: 1200px) and (min-height: 501px) {
-    .view-3d .dashboard {
-        width: min(700px, calc(100% - var(--minimap-width) - var(--minimap-width) - 92px))
-    }
-}
-
-@media (min-width: 801px) and (max-width: 1199px) {
-    .view-3d .dashboard {
-        bottom: calc(var(--minimap-height) + 48px)
-    }
-}
-
-@media (min-width: 801px) and (pointer: coarse) {
-    .view-3d .touch-controls {
-        bottom: calc(var(--minimap-height) + 48px)
-    }
-}
-
-@media (min-width: 801px) and (max-width: 1199px) and (pointer: coarse) {
-    .view-3d .dashboard {
-        bottom: calc(var(--minimap-height) + 142px)
-    }
-}
-
-@media (min-width: 801px) and (max-height: 500px) {
-    .view-3d .minimap {
-        width: min(var(--minimap-width), 210px, calc((100vw - 422px) / 2));
-        height: auto;
-        aspect-ratio: 10 / 7
-    }
-
-    .view-3d .dashboard {
-        bottom: 40px
-    }
-
-    .view-3d .touch-controls {
-        bottom: 145px
-    }
+.road-notices {
+    position: absolute;
+    top: 82px;
+    inset-inline: 52px;
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    pointer-events: none
 }
 
 .road-label {
-    position: absolute;
-    top: 82px;
-    left: 50%;
-    transform: translateX(-50%);
     max-width: 35vw;
     padding: 6px 12px;
     border-radius: 6px;
@@ -534,8 +489,7 @@ strong,
 
 @media (max-width: 800px) {
     .minimap {
-        left: 16px;
-        bottom: 170px;
+        left: calc(16px + var(--minimap-offset, 0px))
     }
 
     .view-status,
@@ -552,9 +506,9 @@ strong,
         font-size: 10px
     }
 
+    .road-notices { top: 65px }
+
     .road-label {
-        left: 50%;
-        top: 65px;
         max-width: 70vw;
         font-size: 11px
     }
@@ -882,6 +836,12 @@ blockquote {
     background: var(--panel)
 }
 
+#game:has(.minimap:not([hidden])) .map-tools {
+    top: auto;
+    bottom: max(calc(var(--dashboard-top, 0px) + 10px),
+        calc(var(--minimap-bottom, 32px) + var(--minimap-height) + 10px))
+}
+
 .district-label {
     position: absolute;
     right: 32px;
@@ -900,10 +860,7 @@ blockquote {
 }
 
 .notice {
-    position: absolute;
-    top: 103px;
-    left: 50%;
-    transform: translateX(-50%);
+    margin-top: 6px;
     padding: 11px 18px;
     background: #283029ed;
     border: 1px solid #a48d4c;
@@ -920,7 +877,7 @@ blockquote {
     left: 50%;
     transform: translateX(-50%);
     display: grid;
-    grid-template-columns: minmax(250px, 1.3fr) minmax(0, 1fr) minmax(70px, .7fr) 42px;
+    grid-template-columns: max-content max-content minmax(0, 1fr) 42px;
     align-items: center;
     border-radius: 16px;
     padding: 12px;
@@ -929,11 +886,16 @@ blockquote {
 }
 
 .taxi-meter {
-    min-width: 0;
+    width: 250px;
     border: 1px solid #4b5148;
     border-radius: 9px;
     padding: 10px 12px;
     background: #0c171c88
+}
+
+.taxi-meter,
+.speed {
+    zoom: var(--meter-scale)
 }
 
 .meter-head {
@@ -989,7 +951,7 @@ blockquote {
 #speed-needle { stroke: var(--yellow); stroke-width: 2.8; stroke-linecap: round; transition: transform .18s ease-out }
 .speed {
     position: relative;
-    min-width: 0;
+    width: 180px;
     text-align: center
 }
 
@@ -1048,7 +1010,7 @@ blockquote {
 .dash-stat>span {
     font-size: 9px;
     color: var(--muted);
-    white-space: nowrap
+    overflow-wrap: anywhere
 }
 
 .fuel-track {
@@ -1208,15 +1170,57 @@ dialog p {
     letter-spacing: 2px
 }
 
-.instructions {
+.control-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
-    margin: 20px 0;
-    padding: 6px 0
+    margin: 18px 0;
+    padding: 14px 0
 }
 
-.instructions p {
-    font-size: 12px
+.control-card {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 2px 9px;
+    min-height: 64px;
+    padding: 9px;
+    border: 1px solid #33464d;
+    border-radius: 12px;
+    background: #101c23
+}
+
+.control-icon {
+    display: grid;
+    grid-row: 1 / 3;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    background: #223930;
+    color: var(--mint);
+    font-size: 19px
+}
+
+.control-icon svg {
+    width: 24px;
+    height: 24px
+}
+
+.control-card strong {
+    align-self: end;
+    font-size: 12px;
+    font-weight: 600
+}
+
+.control-card small {
+    align-self: start;
+    color: #9fb0b4;
+    font-size: 10px;
+    line-height: 1.4
 }
 
 .exit-option {
@@ -1261,7 +1265,7 @@ dialog p {
     }
 
     .dashboard {
-        bottom: 146px
+        bottom: 160px
     }
 
     .attribution {
@@ -1270,10 +1274,6 @@ dialog p {
 }
 
 @media(max-width:800px) {
-    .minimap {
-        bottom: 222px
-    }
-
     .topbar {
         padding: 16px
     }
@@ -1374,33 +1374,17 @@ dialog p {
 
     .dashboard {
         width: calc(100% - 32px);
-        grid-template-columns: minmax(0, 1fr) 65px 32px;
+        grid-template-columns: max-content max-content minmax(0, 1fr) 32px;
         gap: 12px;
         padding: 9px;
         bottom: 65px
     }
 
-    .taxi-meter { grid-column: 1 / -1; padding: 10px 12px }
-    .meter-wallet { font-size: 8px; gap: 2px 5px }
-    .meter-wallet strong { font-size: 10px }
-    .speed-display { grid-template-columns: minmax(0, 90px) max-content }
-    .speed-reading { font-size: 13px }
-    .speed strong { font-size: 13px }
-    .speed .fuel-stat span { font-size: 8px }
-    .fuel-stat { gap: 3px }
-    .fuel-track { width: 35px }
     .shift-stat small { font-size: 8px; letter-spacing: .4px }
     .shift-stat strong { font-size: 13px }
     .shift-stat>span { display: none }
     .dashboard>.quiet { width: 32px; height: 36px; padding: 5px }
     .dashboard>.quiet svg { width: 20px; height: 20px }
-
-    .notice {
-        left: 50%;
-        top: auto;
-        bottom: 182px;
-        width: calc(100% - 40px)
-    }
 
     .district-label {
         right: 16px
@@ -1420,7 +1404,7 @@ dialog p {
 @media(max-width:400px) {
     .dashboard {
         width: calc(100% - 16px);
-        grid-template-columns: minmax(0, 1fr) 65px 28px;
+        grid-template-columns: max-content max-content minmax(0, 1fr) 28px;
         padding: 6px;
         gap: 4px
     }
@@ -1428,16 +1412,8 @@ dialog p {
 }
 
 @media(max-width:800px) and (pointer:coarse) {
-    .minimap {
-        bottom: 302px
-    }
-
     .dashboard {
         bottom: 141px
-    }
-
-    .notice {
-        bottom: 290px
     }
 
     .dispatch {
@@ -1447,18 +1423,6 @@ dialog p {
     .touch-controls {
         bottom: 55px
     }
-}
-
-@media(max-width:800px) and (min-height:600px) {
-    .view-3d .minimap { bottom: 370px }
-}
-
-@media(max-width:800px) and (min-height:600px) and (pointer:coarse) {
-    .view-3d .minimap { bottom: 450px }
-}
-
-@media(max-width:800px) and (max-height:700px) {
-    .map-tools { flex-direction: row }
 }
 
 @media(max-width:800px) {
@@ -1538,39 +1502,42 @@ dialog p {
     }
 
     .dashboard {
-        left: 50%;
-        right: auto;
-        transform: translateX(-50%);
-        width: min(330px, calc(100% - 30px));
-        grid-template-columns: minmax(0, 1fr) 65px 32px;
-        bottom: 40px;
-        gap: 12px;
-        padding: 10px
+        bottom: 46px
     }
 
-    .taxi-meter { grid-column: 1 / -1 }
-
-    .dashboard>.quiet {
-        max-width: 75px
+    .map-tools,
+    #game:has(.minimap:not([hidden])) .map-tools {
+        top: max(76px, calc(100% - var(--dashboard-top, 0px) - 142px));
+        bottom: auto
     }
 
-    .touch-controls {
-        bottom: 145px;
-        left: 260px
-    }
-
-    .notice {
-        left: 65%;
-        bottom: 115px
+    @media(max-height:500px) and (max-width:800px) {
+        .map-tools,
+        #game:has(.minimap:not([hidden])) .map-tools {
+            top: max(76px, calc(100% - var(--dashboard-top, 0px) - 124px))
+        }
     }
 
     .keyboard-hint {
-        left: auto;
-        right: 20px;
-        transform: none;
-        bottom: 20px
+        bottom: 26px
+    }
+}
+
+@media(max-height:500px) and (pointer:coarse) {
+    .dashboard {
+        bottom: 141px
     }
 
+    .touch-controls {
+        bottom: 55px
+    }
+}
+
+@media(min-width:620px) and (max-height:500px) and (pointer:coarse) {
+    .dashboard {
+        width: min(700px, calc(100% - 320px));
+        bottom: 46px
+    }
 }
 
 #junction {

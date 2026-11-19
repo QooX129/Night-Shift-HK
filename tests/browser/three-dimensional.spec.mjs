@@ -15,10 +15,12 @@ test("3D street name is horizontally centered on the screen", async ({ page }) =
 });
 
 test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async ({ page }, testInfo) => {
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1",
+    JSON.stringify({ defaultView: "2d", minimapSize: "medium" })));
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
+    const { MapView } = await import("/map.mjs?v=passenger-extras-2");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -53,17 +55,17 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
       return { width, height, ratio, car, camera, overview, backdropScale, zoom, dpr: devicePixelRatio, center: [...center],
         buffer: [canvas.width, canvas.height], viewport: [innerWidth, innerHeight],
         rect: { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom },
-        overlaps: [".phone-screen", ".dashboard", ".touch-controls"].map(overlaps) };
+        overlaps: [".phone-screen", ".dashboard", ".touch-controls", ".map-tools"].map(overlaps) };
     });
     expect(result.camera).toEqual({ x: result.car.x, y: result.car.y });
-    expect(result.width).toBe((result.viewport[0] > 800 ? 240 : 168) - 4);
-    expect(result.height).toBe((result.viewport[0] > 800 ? 168 : 120) - 4);
+    expect(result.width).toBeLessThanOrEqual((result.viewport[0] > 800 ? 240 : 168) - 4);
+    expect(result.height).toBeLessThanOrEqual((result.viewport[0] > 800 ? 168 : 120) - 4);
     expect(result.ratio).toBe(Math.max(2, result.dpr));
     expect(result.backdropScale).toBe(result.zoom * result.ratio);
     expect(result.overview).toBe(false);
     expect(result.buffer).toEqual([Math.ceil(result.width * result.ratio), Math.ceil(result.height * result.ratio)]);
     expect(result.center[0]).toBeGreaterThan(100);
-    expect(result.overlaps).toEqual([false, false, false]);
+    expect(result.overlaps).toEqual([false, false, false, false]);
     expect(result.rect.left).toBeGreaterThanOrEqual(0);
     expect(result.rect.bottom).toBeLessThanOrEqual(result.viewport[1]);
     return result;
@@ -76,7 +78,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   }, before.car)).toBeGreaterThan(0.5);
   await page.keyboard.up("w");
   await checkMap();
-  await page.locator("#overview").click();
+  await page.locator("#zoom-out").click();
   await checkMap();
   await page.setViewportSize({ width: before.viewport[0] + 20, height: before.viewport[1] + 20 });
   await expect.poll(() => page.evaluate(() => window.minimapFrames)).toBeGreaterThan(3);
@@ -428,14 +430,14 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await expect(page.locator("#view-status")).toBeHidden();
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-label", "地區地圖");
   await page.locator("#zoom-in").click();
-  await page.locator("#overview").click();
+  await page.evaluate(() => { window.threeView.overview = true; });
   await expect.poll(() => page.evaluate(() => window.threeView.overview)).toBe(true);
   await expect.poll(() => page.evaluate(() =>
     window.threeView.ground.material.map === window.threeView.overviewTexture)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.threeView.groundDetail.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.directionLines.visible)).toBe(false);
   await expect.poll(() => page.evaluate(() => window.threeView.lens.position.y)).toBeGreaterThan(500);
-  await page.locator("#overview").click();
+  await page.evaluate(() => { window.threeView.overview = false; });
   await expect.poll(() => page.evaluate(() => window.threeView.ground.material.map === window.threeView.chaseTexture)).toBe(true);
   const originalSize = page.viewportSize();
   await page.setViewportSize({ width: originalSize.width - 30, height: originalSize.height - 30 });

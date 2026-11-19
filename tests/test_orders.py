@@ -259,7 +259,8 @@ class OrderTests(unittest.TestCase):
         rng = random.Random(914)
         samples = [PassengerTraits.generate(rng) for _ in range(30000)]
         for name, expected, predicate in [
-            ("luggage", .15, lambda t: t.luggage > 0),
+            ("one suitcase", .05, lambda t: t.luggage == 1),
+            ("two suitcases", .01, lambda t: t.luggage == 2),
             ("handbag", .20, lambda t: t.bag == "handbag"),
             ("backpack", .20, lambda t: t.bag == "backpack"),
             ("pet", .05, lambda t: t.animal in ("dog", "cat")),
@@ -271,7 +272,9 @@ class OrderTests(unittest.TestCase):
         self.assertEqual({t.luggage for t in samples}, {0, 1, 2})
         self.assertEqual({t.bag for t in samples}, {"", "handbag", "backpack"})
         self.assertEqual({t.animal for t in samples}, {"", "dog", "cat", "bird"})
-        self.assertTrue(any(t.luggage and t.bag and t.animal and t.wheelchair for t in samples))
+        rng = random.Random()
+        with patch.object(rng, "random", side_effect=[.005, .1, .06, .01]):
+            self.assertEqual(PassengerTraits.generate(rng), PassengerTraits(2, "handbag", "bird", True))
         self.assertTrue(any(t.animal == "dog" for t in samples))
         self.assertTrue(any(t.animal == "cat" for t in samples))
 
@@ -852,13 +855,13 @@ class OrderTests(unittest.TestCase):
             self.game.advance_city(self.session, 0, [citizen.id])
             self.assertEqual(roll.call_count, 2)
 
-    def test_two_luggage_hail_boost_adds_two_percentage_points_only(self):
+    def test_only_citizens_with_two_suitcases_have_a_twenty_percent_hail_chance(self):
         original = self.nearby_walker(require_legal=True)
         for luggage, roll_value, expected in [
             (0, .039, True), (1, .039, True), (2, .039, True),
             (0, .04, False), (1, .04, False), (2, .04, True),
             (0, .05, False), (1, .05, False), (2, .05, True),
-            (2, .059999, True), (2, .06, False),
+            (2, .199999, True), (2, .20, False),
         ]:
             with self.subTest(luggage=luggage, roll=roll_value):
                 citizen = copy.deepcopy(original)

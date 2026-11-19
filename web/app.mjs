@@ -1,6 +1,6 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=tunnel-clearance-1";
 import { MapView } from "./map.mjs?v=passenger-extras-2";
-import { en, zh } from "./i18n.mjs?v=meter-panels-1";
+import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
@@ -317,14 +317,37 @@ function selectSettingsCategory(category, focus = false) {
   updateSettingsControls();
   if (focus) document.querySelector(`[data-category="${category}"]`).focus();
 }
-function updateMinimapLayout() {
+function updateHudLayout() {
   const mobile = innerWidth <= 800;
   const sizes = mobile
     ? { small: [136, 97], medium: [168, 120], large: [210, 150] }
     : { small: [200, 140], medium: [240, 168], large: [300, 210] };
   const [width, height] = sizes[preferences.minimapSize];
-  document.documentElement.style.setProperty("--minimap-width", `${width}px`);
-  document.documentElement.style.setProperty("--minimap-height", `${height}px`);
+  const game = $("game");
+  const dashboard = game.querySelector(".dashboard");
+  const coarse = matchMedia("(pointer: coarse)").matches;
+  const short = innerHeight <= 500;
+  const style = game.style;
+  // Reserve space for the shift clock, garage button and grid gaps before scaling the meters.
+  style.setProperty("--meter-scale", Math.max(.1, Math.min(short ? .75 : 1,
+    (dashboard.clientWidth - (mobile ? 106 : 175)) / 430)));
+  const bounds = dashboard.getBoundingClientRect();
+  const dashboardTop = game.clientHeight - bounds.top;
+  const toolWidth = mobile ? 34 : 40;
+  const toolHeight = toolWidth * 3 + 12;
+  const mapOffset = short ? toolWidth + 10 : 0;
+  const left = (mobile ? 16 : 30) + mapOffset;
+  const sideWidth = Math.min(width, bounds.left - left - 12);
+  const raised = sideWidth < width / 2;
+  const bottom = raised ? dashboardTop + 16 : coarse ? 160 : 32;
+  const availableHeight = game.clientHeight - bottom - (short ? 126 : 110 + toolHeight);
+  const raisedWidth = mobile ? Math.min(width, (game.clientWidth - 32) / 2 - mapOffset) : width;
+  const mapWidth = Math.max(0, Math.min(raised ? raisedWidth : sideWidth, availableHeight * width / height));
+  style.setProperty("--minimap-offset", `${mapOffset}px`);
+  style.setProperty("--minimap-width", `${mapWidth}px`);
+  style.setProperty("--minimap-height", `${mapWidth * height / width}px`);
+  style.setProperty("--minimap-bottom", `${bottom}px`);
+  style.setProperty("--dashboard-top", `${dashboardTop}px`);
 }
 function applyPreferenceEffects() {
   lang = preferences.language;
@@ -332,7 +355,7 @@ function applyPreferenceEffects() {
   document.documentElement.classList.toggle("reduce-motion", preferences.reducedMotion);
   document.documentElement.classList.toggle("hide-shortcut-hints", !preferences.shortcutHints);
   document.documentElement.style.setProperty("--junction-hud-opacity", String(preferences.junctionHudOpacity / 100));
-  updateMinimapLayout();
+  updateHudLayout();
   if (minimap) minimap.zoom = preferences.minimapZoom / 100;
   if ($("minimap-panel")) $("minimap-panel").hidden = !map3d || view !== map3d || !preferences.minimapVisible;
   map3d?.applyPreferences(preferences);
@@ -614,6 +637,7 @@ async function toggleView() {
     if (!map3d) {
       const { Map3DView } = await import("./map3d.mjs?v=passenger-extras-2");
       map3d = new Map3DView($("map-3d"), mapData, stops);
+      $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
     }
     if (preferredViewRequest === "2d") return;
@@ -833,20 +857,13 @@ $("settings-dialog").addEventListener("cancel", event => {
   closeSettings();
 });
 $("garage").addEventListener("click", () => pauseTo("garage-dialog"));
-$("overview").addEventListener("click", () => {
-  if (!$("map-popup").hidden && popupMap) {
-    const [left, top, right, bottom] = mapData.bounds;
-    popupMap.camera = { x: (left + right) / 2, y: (top + bottom) / 2 };
-    popupMap.zoom = Math.max(.1, Math.min(popupMap.width / (right - left), popupMap.height / (bottom - top)) * .9);
-  } else if (view) view.overview = !view.overview;
-});
 $("zoom-in").addEventListener("click", () => {
   if (!$("map-popup").hidden) zoomPopup(1.25);
-  else if (view) { view.overview = false; view.zoom = Math.min(3.5, view.zoom * 1.25); }
+  else if (view) view.zoom = Math.min(3.5, view.zoom * 1.25);
 });
 $("zoom-out").addEventListener("click", () => {
   if (!$("map-popup").hidden) zoomPopup(1 / 1.25);
-  else if (view) { view.overview = false; view.zoom = Math.max(0.35, view.zoom / 1.25); }
+  else if (view) view.zoom = Math.max(0.35, view.zoom / 1.25);
 });
 $("job-action").addEventListener("click", () => perform(async () => {
   const wasPaused = paused; paused = true; await flush();
@@ -890,23 +907,22 @@ const bindings = {
 };
 window.addEventListener("keydown", event => {
   const key = event.key.toLowerCase();
-  if (key === "m" && !event.ctrlKey && !event.metaKey && !event.altKey
+  const tripShortcut = key === "tab" && !event.shiftKey && !$("trip-toggle").hidden
+    && !$("phone-screen").contains(event.target) && $("map-popup").hidden;
+  if ((key === "m" || key === "p" || tripShortcut) && !event.ctrlKey && !event.metaKey && !event.altKey
       && !["INPUT", "SELECT", "TEXTAREA"].includes(event.target.tagName)
       && !event.target.isContentEditable
       && !dialogs.some(id => $(id).open)) {
     event.preventDefault();
-    if (!event.repeat) setMapOpen($("map-popup").hidden);
+    if (!event.repeat) {
+      if (key === "m") setMapOpen($("map-popup").hidden);
+      else if (key === "p") setPhoneOpen(!$("phone").classList.contains("open"));
+      else $("trip-toggle").click();
+    }
     return;
   }
   if (key === "e" && !event.repeat && !paused && !dialogs.some(id => $(id).open)) {
     $(state.phase === "onboard" ? "street-dropoff" : "door").click();
-  }
-  // Plain Tab toggles the phone; Shift+Tab keeps normal focus navigation.
-  if (event.key === "Tab" && !event.shiftKey && !event.ctrlKey && !event.altKey
-      && !dialogs.some(id => $(id).open) && !$("junction").open) {
-    event.preventDefault();
-    if (!event.repeat) setPhoneOpen(!$("phone").classList.contains("open"));
-    return;
   }
   if ($("junction").open && bindings[key]) {
     event.preventDefault();
@@ -955,7 +971,8 @@ for (const button of document.querySelectorAll("[data-control]")) {
 }
 document.addEventListener("visibilitychange", () => { if (document.hidden) resetControls(); });
 window.addEventListener("blur", resetControls);
-window.addEventListener("resize", updateMinimapLayout);
+window.addEventListener("resize", updateHudLayout);
+new ResizeObserver(updateHudLayout).observe(document.querySelector(".dashboard"));
 
 applyPreferenceEffects();
 openDialog("welcome");

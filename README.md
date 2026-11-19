@@ -1,8 +1,8 @@
 # Night Shift HK
 
-A Python-powered, browser-based taxi game on real OpenStreetMap roads around
-Mong Kok and Yau Ma Tei. Drive freely, choose exits at junctions, and take fictional
-passengers through Kowloon.
+A Python-powered browser taxi game on real OpenStreetMap roads in Mong Kok and
+Yau Ma Tei. Drive in 3D or switch to the 2D map, take dispatch orders or street
+hails, and earn metered fares with passenger extras.
 
 ## Run locally
 
@@ -87,8 +87,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   the pause menu; closing it resumes the shift. Losing focus or changing browser tabs clears held controls
   without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
-- Tap the phone tab on the right edge or press **Tab** to slide the dispatch
-  phone in or out (Shift+Tab still moves keyboard focus); swipe left/right on
+- Tap the phone tab on the right edge or press **P** to slide the dispatch
+  phone in or out; swipe left/right on
   touchscreens. Its badge counts available offers. Opening
   the phone does not pause driving. Each time it opens, it starts on **Available**;
   accepting an order still switches to **Accepted** to show the trip.
@@ -136,7 +136,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   phone order**. Waiting accepted customers cancel after **120–300 seconds**,
   without a money penalty. The timer stops applying once they board.
 - A left-edge trip panel shows the active pickup, then the drop-off after boarding,
-  with remaining distance along the GPS route. Use its arrow to hide or reopen it;
+  with remaining distance along the GPS route. Use its arrow or **Tab** to
+  hide or reopen it (Shift+Tab still moves keyboard focus);
   it reopens after boarding and slides away when the trip ends. Distance is
   unavailable when the GPS has no usable route.
 - The GPS line starts after the taxi's current road segment in all views. The
@@ -148,8 +149,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   turn back rather than cutting through buildings or across junction roads.
   Movement is sampled continuously between server updates, with varied walking
   speeds, alternating arms/legs, and eased facing changes.
-  Citizens and phone customers independently have a **15%** chance of carrying
-  **1–2 large luggage items**, **20%** a handbag, **20%** a backpack, **5%** a pet
+  Citizens and phone customers have a **5%** chance of carrying one large
+  luggage item and a **1%** chance of carrying two. Separately, they have a
+  **20%** chance of carrying a handbag, **20%** a backpack, **5%** a pet
   (dog or cat), **2%** a caged bird, and **3%** a wheelchair. Traits can overlap,
   but handbags/backpacks and pets/birds are mutually exclusive. Accessories are
   visible in both 2D and 3D and persist through boarding and alighting.
@@ -160,9 +162,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   The taxi meter has line-bordered **FARE** and **EXTRAS** counters with matching
   seven-segment digits; extras are 4 px shorter. Fare reserves three integer
   positions, extras reserve two, and both show one decimal, leaving unused
-  positions dim. Narrow screens put
-  the meter on its own dashboard row without shrinking the digits; the fuel
-  bar retains its existing appearance. Meter fare excludes
+  positions dim. On smaller windows, the fare meter and speedometer scale
+  together, including the fuel bar under the speed dial. Meter fare excludes
   extras: **HK$6 per large luggage item**, **HK$5 per animal**, and **HK$5 once per
   phone-booked trip**. Handbags, backpacks and wheelchairs are free. Extras are
   applied automatically when boarding finishes, stay fixed as the meter runs,
@@ -174,8 +175,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   block this eligibility check; overview, 2D and the minimap never trigger it.
   Accepted phone orders prevent new street hails; existing hails and curb
   approaches continue. Each eligible citizen gets a **4%** chance per **300 seconds** of simulation
-  time; carrying exactly two large suitcases adds **2 percentage points**, for
-  a **6%** chance with the same eligibility checks and cooldown. There are no
+  time, or a **20%** chance if carrying exactly two large suitcases. The same
+  eligibility checks and cooldown apply. There are no
   hails at spawn. Successful citizens walk to a validated
   roadside curb before stopping and waving for a random **45–120 seconds**.
   Uncollected hails then stop, enter a **300-second** cooldown, and walk back
@@ -197,7 +198,7 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   nearby count below 100. `CITIZEN_LIMIT`, `CITIZEN_SPAWN_BATCH`, and
   `CITIZEN_SPAWN_INTERVAL` control this gradual refill. Citizens outside the radius do not
   count toward this local limit. `CITIZEN_HAIL_PROBABILITY = 0.04` controls the base
-  chance; `CITIZEN_TWO_LUGGAGE_HAIL_BONUS = 0.02` adds the two-suitcase bonus.
+  chance; `CITIZEN_TWO_LUGGAGE_HAIL_PROBABILITY = 0.20` applies to citizens with two suitcases.
   `CITIZEN_HAIL_COOLDOWN = 300` controls repeat rolls, and
   `CITIZEN_HAIL_DISTANCE = 80` controls the distance requirement.
   `CITIZEN_HAIL_DURATION = (45, 120)` controls the waving timeout range.
@@ -345,7 +346,7 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   Reaching zero fuel stops the taxi without rejecting subsequent stationary
   updates or losing the onboard passenger. Buffered browser movement is discarded
   when the server confirms the empty tank.
-- **繁中 / EN:** switch language. **+ / −:** zoom. **⌖:** district overview.
+- **繁中 / EN:** switch language. **+ / −:** zoom.
 - **M / map button:** open or close a top-down map popup without changing or pausing
   the driving view underneath. Use the mouse wheel to zoom around the cursor
   and drag to pan; **Esc** closes the map before opening the pause menu.
@@ -354,7 +355,10 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   In 3D, a north-up minimap in the bottom-left follows the taxi and shows the
   same routes, junction guidance, and stop markers as the 2D map. It updates at
   up to 60 Hz, limited by the browser's animation frame rate.
-  The compact window is 240 × 168 CSS pixels on desktop and 168 × 120 on mobile.
+  At medium size, the minimap is up to 240 × 168 CSS pixels on desktop and
+  168 × 120 on mobile. It shrinks to fit beside the dashboard and moves above
+  it if less than half its configured width fits. The vertical map toolbar sits
+  above the minimap, or beside it in short windows.
   Its canvas and cached map render at a minimum 2× pixel density, retaining
   native density on higher-DPI screens without enlarging a low-resolution image.
   Taxi marker minimum lengths are set by `TAXI_ICON_MIN_LENGTH` near the top of
@@ -364,7 +368,7 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 **Settings** is available from the welcome and pause menus. It includes the
 **Interface → Enable junction selector** toggle. Turning it off disables automatic
 junction pauses and selection, allowing manual driving while retaining road guidance.
-It defaults on and is saved with your other preferences.
+It is off by default and is saved with your other preferences.
 
 Settings also includes the
 default 2D/3D view and graphics preset; chase-camera smoothing, turn speed,

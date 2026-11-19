@@ -16,7 +16,7 @@ CITIZEN_LIMIT = 100
 CITIZEN_SPAWN_INTERVAL = 0.5
 CITIZEN_SPAWN_BATCH = 5
 CITIZEN_HAIL_PROBABILITY = 0.04
-CITIZEN_TWO_LUGGAGE_HAIL_BONUS = 0.02
+CITIZEN_TWO_LUGGAGE_HAIL_PROBABILITY = 0.20
 CITIZEN_HAIL_COOLDOWN = 300
 CITIZEN_HAIL_DISTANCE = 80
 CITIZEN_HAIL_DURATION = (45, 120)
@@ -89,7 +89,8 @@ class PassengerTraits:
 
     @classmethod
     def generate(cls, rng: random.Random) -> "PassengerTraits":
-        luggage = rng.randint(1, 2) if rng.random() < 0.10 else 0
+        luggage_roll = rng.random()
+        luggage = 2 if luggage_roll < 0.01 else 1 if luggage_roll < 0.06 else 0
         bag_roll, animal_roll = rng.random(), rng.random()
         return cls(
             luggage,
@@ -855,9 +856,8 @@ class Game:
                 ):
                     continue
                 citizen.next_hail = session.elapsed + CITIZEN_HAIL_COOLDOWN
-                hail_probability = CITIZEN_HAIL_PROBABILITY
-                if citizen.traits.luggage == 2:
-                    hail_probability += CITIZEN_TWO_LUGGAGE_HAIL_BONUS
+                hail_probability = (CITIZEN_TWO_LUGGAGE_HAIL_PROBABILITY
+                                    if citizen.traits.luggage == 2 else CITIZEN_HAIL_PROBABILITY)
                 if session.rng.random() >= hail_probability:
                     continue
                 edge = self.roads.edges[self.stops[citizen.stop].edge]
