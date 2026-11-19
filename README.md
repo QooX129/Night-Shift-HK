@@ -83,7 +83,13 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
   reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
-- **Space:** handbrake; it slows the taxi without engaging reverse. **Esc:** toggle
+- **Space:** handbrake; it slows the taxi without engaging reverse. Tap it while
+  steering at about 29 km/h or faster to start a drift. The slide continues after
+  release until the taxi regains grip; countersteering helps. Grip `1` gives full
+  steering response. Braking at speed reduces it (more with Space), and sliding
+  keeps steering weaker after release. In [web/physics.mjs](./web/physics.mjs),
+  tune `BRAKE_GRIP` / `HANDBRAKE_GRIP` to change steering under braking, or
+  `DRIFT_GRIP_SECONDS` to change how long the slide carries. **Esc:** toggle
   the pause menu; closing it resumes the shift. Losing focus or changing browser tabs clears held controls
   without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
@@ -131,7 +137,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   waits waving on a clear sidewalk beside the pickup and walks into the taxi
   automatically once you stop. Pickups without a suitable sidewalk or with a
   sidewalk too close to a mapped flyover are skipped.
-  **Accepted** stores the current pickup and any waiting order.
+  **Accepted** shows the current phone trip and any waiting phone order.
+  Street fares still appear on the taxi meter and trip panel.
   Carry one passenger per trip; while carrying one, you can accept **one pending
   phone order**. Waiting accepted customers cancel after **120–300 seconds**,
   without a money penalty. The timer stops applying once they board.
@@ -493,6 +500,10 @@ appear in both views and the minimap. The dispatch phone slides away to leave
 room for the camera. Switch back to **2D** at any time for the detailed map.
 The chase camera filters steering changes and limits its heading-follow speed
 to 0.9 radians/second, easing junction turns without changing taxi steering.
+Hold the right mouse button and drag to orbit the taxi in 3D; release to ease
+back to the chase view. The camera limits how low it can tilt. Hard braking
+at speed leaves short, fading tire marks after 0.2 seconds of continuous braking.
+Drifts leave marks as soon as the taxi slides visibly sideways. Both are 3D only.
 Reload an already-open game after renderer updates; ES modules stay loaded for
 the lifetime of the page. The current app and 3D entry points use versioned URLs
 to bypass older cached code, including in the VS Code browser.

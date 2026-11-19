@@ -24,6 +24,85 @@ function network({ stacked = false, crossing = false, body = false } = {}) {
 const carAt = (x = 20, y = 0) => ({ x, y, speed: 0, heading: 0, edge: "ab" });
 const freeDriving = { maxSpeed: 150 / 3.6, acceleration: 7 };
 
+test("a handbrake tap starts a momentum-driven slide that countersteering can shorten", () => {
+  const dt = 1 / 60;
+  const sliding = { ...carAt(), speed: 15 };
+  const straight = { ...sliding }, slow = { ...sliding, speed: 5 };
+  assert.equal(stepCar(sliding, { handbrakePressed: true, right: true }, dt, freeDriving).skidding, false);
+  assert.ok(sliding.heading > 0 && sliding.heading < .025);
+  stepCar(straight, { handbrake: true }, dt, freeDriving);
+  stepCar(slow, { handbrake: true, right: true }, dt, freeDriving);
+  assert.equal(straight.slip, 0);
+  assert.equal(slow.slip, 0);
+  // Adding steering to an already-held straight-line brake must not retrigger it.
+  stepCar(straight, { handbrake: true, right: true }, dt, freeDriving);
+  assert.equal(straight.slip, 0);
+  let leftMarks = false;
+  for (let frame = 0; frame < 12; frame++) {
+    const heading = sliding.heading;
+    leftMarks = stepCar(sliding, {}, dt, freeDriving).skidding || leftMarks;
+    assert.ok(Math.abs(sliding.heading - heading) < .05);
+  }
+  assert.equal(leftMarks, true);
+  assert.ok(sliding.grip < .7, "sideways slip reduces steering even after Space is released");
+  const { x, y } = sliding;
+  assert.equal(stepCar(sliding, {}, dt, freeDriving).skidding, true);
+  assert.ok(sliding.heading - Math.atan2(sliding.y - y, sliding.x - x) > .12);
+  const carrying = { ...sliding };
+  for (let frame = 0; frame < 36; frame++) stepCar(carrying, {}, dt, freeDriving);
+  assert.ok(Math.abs(carrying.slip) > .075);
+  const framesUntilGrip = (car, input) => {
+    let frames = 0;
+    while (car.slip && frames < 120) {
+      stepCar(car, input, dt, freeDriving);
+      frames++;
+    }
+    assert.equal(car.slip, 0);
+    assert.ok(car.speed > 5);
+    for (let frame = 0; frame < 30; frame++) stepCar(car, {}, dt, freeDriving);
+    assert.equal(car.grip, 1);
+    return frames;
+  };
+  assert.ok(framesUntilGrip({ ...sliding }, { left: true }) < framesUntilGrip(sliding, {}));
+});
+
+test("brakes progressively reduce steering authority at speed, and release restores it", () => {
+  const dt = 1 / 60;
+  const car = { ...carAt(), speed: 20 };
+  const brake = { ...car }, handbrake = { ...car };
+  // Apply Space straight first so the comparison isolates steering from drift-entry yaw.
+  stepCar(handbrake, { handbrake: true }, dt, freeDriving);
+  assert.ok(handbrake.grip > .8 && handbrake.grip < 1);
+  for (let frame = 0; frame < 12; frame++) {
+    stepCar(car, { right: true }, dt, freeDriving);
+    stepCar(brake, { right: true, brake: true }, dt, freeDriving);
+    stepCar(handbrake, { right: true, handbrake: true }, dt, freeDriving);
+  }
+  assert.equal(car.grip, 1);
+  assert.ok(handbrake.heading > 0 && handbrake.heading < brake.heading && brake.heading < car.heading);
+  assert.ok(handbrake.grip < brake.grip && brake.grip < 1);
+  stepCar(handbrake, {}, dt, freeDriving);
+  assert.ok(handbrake.grip < 1);
+  for (let frame = 0; frame < 30; frame++) stepCar(handbrake, {}, dt, freeDriving);
+  assert.equal(handbrake.grip, 1);
+  const reversing = { ...carAt(), speed: -2 };
+  stepCar(reversing, { left: true, brake: true }, dt, freeDriving);
+  assert.equal(reversing.grip, 1);
+});
+
+test("brake marks wait for 0.2 continuous seconds and don't appear at low speed", () => {
+  const dt = 1 / 60;
+  const car = { ...carAt(), speed: 18 };
+  const brake = car => stepCar(car, { brake: true }, dt, freeDriving).skidding;
+  for (let i = 0; i < 10; i++) assert.equal(brake(car), false);
+  assert.equal(stepCar(car, {}, dt, freeDriving).skidding, false);
+  for (let i = 0; i < 11; i++) assert.equal(brake(car), false);
+  assert.equal(brake(car), true);
+  assert.equal(stepCar(car, {}, dt, freeDriving).skidding, false);
+  const slow = { ...carAt(), speed: 5 };
+  for (let i = 0; i < 20; i++) assert.equal(brake(slow), false);
+});
+
 test("manual turn-in follows a capped parabola with an exact integrated heading", () => {
   const car = { ...carAt(), speed: 10 };
   const dt = STEERING_RESPONSE_SECONDS / 12;

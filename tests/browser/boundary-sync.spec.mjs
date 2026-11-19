@@ -1,5 +1,40 @@
 import { test, expect } from "@playwright/test";
 
+test("handbrake slide trails pass server movement validation", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  const slips = await page.evaluate(async () => {
+    const { RoadNetwork, stepCar } = await import("/physics.mjs?v=steering-grip-1");
+    const roads = new RoadNetwork(await (await fetch("/api/map")).json());
+    let state = await (await fetch("/api/sessions", { method: "POST" })).json();
+    const send = async command => {
+      const response = await fetch(`/api/sessions/${state.id}/commands`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ seq: state.seq + 1, command }),
+      });
+      state = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(state));
+    };
+    await send({ action: "pause", paused: false });
+    const car = { ...state };
+    let slips = 0;
+    for (let batch = 0; batch < 10; batch++) {
+      const trail = [];
+      for (let frame = 0; frame < 18; frame++) {
+        const tap = batch === 5 && frame === 0;
+        stepCar(car, { gas: batch < 5, handbrake: tap, right: tap }, 1 / 60, {
+          roads, closed: new Set(state.closed), fuel: state.fuel, traffic: state.traffic[roads.edges.get(car.edge).way] || 1,
+        });
+        if (!tap && Math.abs(car.slip) > .02) slips++;
+        trail.push({ x: car.x, y: car.y, heading: car.heading });
+      }
+      await send({ action: "move", x: car.x, y: car.y, heading: car.heading, speed: car.speed, dt: 0.3, trail });
+    }
+    return slips;
+  });
+  expect(slips).toBeGreaterThan(0);
+});
+
 test("boundary sliding trails remain accepted by server movement validation", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();

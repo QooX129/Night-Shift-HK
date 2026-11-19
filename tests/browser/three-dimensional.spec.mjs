@@ -4,6 +4,78 @@ test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 
+test("right drag orbits around the taxi, clamps the low angle and eases back on release", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Mouse-only control");
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const render = Map3DView.prototype.render;
+    Map3DView.prototype.render = function (...args) {
+      render.apply(this, args);
+      const direction = this.lens.position.clone().sub(this.lookAt);
+      window.chasePose = {
+        angle: Math.atan2(direction.y, Math.hypot(direction.x, direction.z)),
+        yaw: this.orbitYaw, drag: Boolean(this.cameraDrag),
+        targetOffset: Math.hypot(this.lookAt.x - this.taxi.position.x, this.lookAt.z - this.taxi.position.z),
+      };
+    };
+  });
+  await page.locator("#start").click();
+  await toggleDrivingView(page);
+  await expect.poll(() => page.evaluate(() => window.chasePose?.angle ?? 0)).toBeGreaterThan(.31);
+  const { width, height } = page.viewportSize();
+  const point = await page.locator("#map-3d").evaluate(canvas => {
+    for (const y of [.65, .5, .35]) for (const x of [.3, .45, .6]) {
+      if (document.elementFromPoint(innerWidth * x, innerHeight * y) === canvas) {
+        return { x: innerWidth * x, y: innerHeight * y };
+      }
+    }
+    return null;
+  });
+  expect(point).not.toBeNull();
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(point.x + width * .2, height * .1, { steps: 4 });
+  await expect.poll(() => page.evaluate(() => window.chasePose.drag)).toBe(true);
+  const orbit = await page.evaluate(() => window.chasePose);
+  expect(Math.abs(orbit.yaw)).toBeGreaterThan(.5);
+  expect(orbit.angle).toBeGreaterThan(.31);
+  expect(orbit.angle).toBeLessThan(.35);
+  expect(orbit.targetOffset).toBeLessThan(.001);
+  await page.mouse.up({ button: "right" });
+  await expect.poll(() => page.evaluate(() => Math.abs(window.chasePose.yaw))).toBeLessThan(.03);
+  await expect.poll(() => page.evaluate(() => window.chasePose.targetOffset)).toBeGreaterThan(9);
+});
+
+test("a brake tap stays clean; sustained braking draws tracks that fade", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "One WebGL geometry check is sufficient");
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
+    const render = Map3DView.prototype.render;
+    Map3DView.prototype.render = function (...args) {
+      render.apply(this, args);
+      const { geometry } = this.skidMesh;
+      window.skidFrame = { count: geometry.drawRange.count, alpha: geometry.attributes.color.getW(0) };
+    };
+  });
+  await page.locator("#start").click();
+  await toggleDrivingView(page);
+  await expect.poll(() => page.evaluate(() => window.skidFrame?.count)).toBe(0);
+  await page.keyboard.down("w");
+  await expect.poll(async () => Number(await page.locator("#speed").textContent())).toBeGreaterThan(30);
+  await page.keyboard.press("s", { delay: 50 });
+  expect(await page.evaluate(() => window.skidFrame.count)).toBe(0);
+  await page.keyboard.up("w");
+  await page.keyboard.down("s");
+  await expect.poll(() => page.evaluate(() => window.skidFrame.count)).toBeGreaterThanOrEqual(12);
+  await page.keyboard.up("s");
+  await expect.poll(() => page.evaluate(() => window.skidFrame.alpha)).toBeLessThan(.5);
+  await expect.poll(() => page.evaluate(() => window.skidFrame.count)).toBe(0);
+});
+
 test("3D street name is horizontally centered on the screen", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();

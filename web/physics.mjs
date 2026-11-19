@@ -10,6 +10,11 @@ export const STEERING_RESPONSE_SECONDS = 0.2;
 export const STEERING_RETURN_SECONDS = 0.08;
 export const NARROW_ROAD_ASSIST_SECONDS = 0.25;
 export const BOUNDARY_DRAG = 1;
+const DRIFT_GRIP_SECONDS = .60;
+const DRIFT_ENTRY_SECONDS = .20;
+const DRIFT_ENTRY_YAW = .30;
+const BRAKE_GRIP = .65;
+const HANDBRAKE_GRIP = .30;
 export function project(point, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1];
   const t = Math.max(0, Math.min(1, ((point.x - a[0]) * dx + (point.y - a[1]) * dy) / (dx * dx + dy * dy)));
@@ -300,7 +305,12 @@ export function stepCar(car, input, dt, {
   const gravity = 9.81 * surface.grade / Math.sqrt(1 + surface.grade ** 2);
   maxSpeed = slopeSpeedLimit(maxSpeed, surface.grade);
   const beforePedal = car.speed;
-  if (input.handbrake) {
+  const steeringTarget = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const handbrake = Boolean(input.handbrake || input.handbrakePressed);
+  const startSlide = handbrake && !car.handbrakeDown && steeringTarget && beforePedal >= 8
+    && !car.slip && !car.driftEntry;
+  car.handbrakeDown = Boolean(input.handbrake);
+  if (handbrake) {
     car.speed = Math.sign(car.speed) * Math.max(0, Math.abs(car.speed) - 28 * step);
   } else if (input.brake) {
     car.speed = car.speed > 0 ? Math.max(0, car.speed - 19 * step) : fuel > 0 ? Math.max(-4 * traffic, car.speed - 3 * step) : 0;
@@ -312,13 +322,18 @@ export function stepCar(car, input, dt, {
   if (Math.abs(beforePedal) > .05 || input.gas || input.brake) {
     const adjusted = car.speed - gravity * step;
     // Pedal braking must stop, not turn into downhill rolling or automatic reverse.
-    car.speed = input.handbrake || (input.brake && beforePedal > 0)
+    car.speed = handbrake || (input.brake && beforePedal > 0)
       || (input.gas && beforePedal < 0)
       ? Math.sign(beforePedal) * Math.max(0, Math.sign(beforePedal) * adjusted) : adjusted;
   }
   car.speed = Math.max(-4 * traffic, Math.min(maxSpeed * traffic, car.speed));
   if (fuel <= 0) car.speed = 0;
-  const steeringTarget = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  const brakingAtSpeed = Math.max(0, Math.min(1, (beforePedal - 3) / 5));
+  const pedalGrip = 1 - brakingAtSpeed * (1 - (handbrake ? HANDBRAKE_GRIP : input.brake ? BRAKE_GRIP : 1));
+  const slideGrip = 1 - (1 - HANDBRAKE_GRIP) * Math.min(1, Math.abs(car.slip ?? 0) / DRIFT_ENTRY_YAW);
+  const targetGrip = Math.min(pedalGrip, slideGrip);
+  const grip = car.grip ?? 1;
+  car.grip = Math.max(grip - 5 * step, Math.min(grip + 2 * step, targetGrip));
   const steeringBefore = car.steeringInput ?? 0;
   let steeringTravel;
   if (steeringTarget === 0) {
@@ -345,7 +360,7 @@ export function stepCar(car, input, dt, {
   }
   const previous = roads?.edges.get(car.edge);
   if (Math.abs(car.speed) > 0.05) {
-    let manualSteering = steeringTravel * steeringSensitivity
+    let manualSteering = steeringTravel * steeringSensitivity * car.grip
       * Math.max(-1, Math.min(1, car.speed / 3));
     if (previous && roadWidth(roads.driving, previous) <= roads.driving.taxi_width * 2) {
       const a = roads.nodes[previous.a], b = roads.nodes[previous.b];
@@ -361,7 +376,7 @@ export function stepCar(car, input, dt, {
           && Math.abs(alignment) < Math.PI / 6 - 1e-12 && steeringTarget * Math.sign(car.speed) * alignment > 0) {
         const rotation = Math.sign(alignment) * Math.min(Math.abs(alignment),
           Math.max(0, manualSteering * Math.sign(alignment))
-          + Math.abs(alignment) * -Math.expm1(-step / NARROW_ROAD_ASSIST_SECONDS));
+          + car.grip * Math.abs(alignment) * -Math.expm1(-step / NARROW_ROAD_ASSIST_SECONDS));
         if (roads.rotationFits(car, car.heading, car.heading + rotation, previous)) {
           manualSteering = rotation;
         }
@@ -369,10 +384,35 @@ export function stepCar(car, input, dt, {
     }
     car.heading += manualSteering;
   }
+  let slip = car.slip ?? 0;
+  const countersteering = steeringTarget * slip > 0;
+  slip *= Math.exp(-step / (countersteering ? DRIFT_GRIP_SECONDS / 3.3 : DRIFT_GRIP_SECONDS));
+  if (startSlide) car.driftEntry = steeringTarget * DRIFT_ENTRY_SECONDS;
+  if (car.speed < 3) car.driftEntry = 0;
+  if (car.driftEntry) {
+    const remaining = Math.abs(car.driftEntry);
+    const next = Math.max(0, remaining - step);
+    const direction = Math.sign(car.driftEntry);
+    const ease = time => time * time * (3 - 2 * time);
+    // Ease body rotation in without redirecting the taxi's velocity.
+    const yaw = direction * DRIFT_ENTRY_YAW
+      * (ease(remaining / DRIFT_ENTRY_SECONDS) - ease(next / DRIFT_ENTRY_SECONDS));
+    car.heading += yaw;
+    slip -= yaw;
+    car.driftEntry = direction * next;
+  }
+  const lateralSpeed = car.speed * Math.abs(Math.sin(slip));
+  car.slip = car.driftEntry || lateralSpeed >= .25 ? slip : 0;
+  const brakeTime = car.brakeTime ?? 0;
+  car.brakeTime = (input.brake || input.handbrake) && car.speed >= 3
+    && (brakeTime > 0 || beforePedal >= 7) ? Math.min(.2, brakeTime + step) : 0;
+  const skidding = lateralSpeed >= .65 || car.brakeTime >= .2 - 1e-9;
   const old = { x: car.x, y: car.y };
   const touching = roads?.driving.taxi_length && !roads.bodyFits(car, car.heading, previous, 0.02);
   if (touching) car.speed *= Math.exp(-BOUNDARY_DRAG * step);
-  const desired = { x: car.x + Math.cos(car.heading) * car.speed * step, y: car.y + Math.sin(car.heading) * car.speed * step };
+  const travelHeading = car.heading + car.slip;
+  const desired = { x: car.x + Math.cos(travelHeading) * car.speed * step,
+    y: car.y + Math.sin(travelHeading) * car.speed * step };
   const exit = roads?.edges.get(selectedExit);
   if (exit && previous.b === selectedJunction && exit.a === selectedJunction
       && car.speed > 0 && !closed.has(exit.way)) {
@@ -394,6 +434,8 @@ export function stepCar(car, input, dt, {
         car.edge = departure.blocked ? departure.edge : exit.id;
         const junctionPoint = { x, y, heading: car.heading };
         car.heading = heading;
+        car.slip = 0;
+        car.driftEntry = 0;
         car.speed = Math.min(car.speed, slopeSpeedLimit(roads.driving.max_speed,
           surfacePose(roads, roads.edges.get(car.edge), car, car.heading).grade) * traffic);
         return { ...departure, edge: car.edge, junctionPoint };
@@ -412,11 +454,13 @@ export function stepCar(car, input, dt, {
     car.speed *= Math.exp(-BOUNDARY_DRAG * step);
   }
   if (constrained.blocked) {
+    car.slip = 0;
+    car.driftEntry = 0;
     const travel = Math.hypot(car.x - old.x, car.y - old.y);
     if (travel < 1e-7) {
       // Retain crawl-speed steering authority without moving through the obstruction.
       car.speed = roads?.driving.taxi_length ? Math.sign(car.speed) * Math.min(Math.abs(car.speed), 3) : 0;
     }
   }
-  return { ...constrained, contact: Boolean(contact) };
+  return { ...constrained, contact: Boolean(contact), skidding };
 }

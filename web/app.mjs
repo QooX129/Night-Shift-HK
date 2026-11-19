@@ -1,4 +1,4 @@
-import { stepCar, RoadNetwork } from "./physics.mjs?v=tunnel-clearance-1";
+import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
 import { MapView } from "./map.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
@@ -32,13 +32,18 @@ let settingsMessage = loadedPreferences.error === "read" ? "settingsLoadError"
   : loadedPreferences.error === "invalid" ? "settingsInvalidError" : null;
 let settingsOrigin = "welcome", settingsCategory = "display", preferredViewRequest = null;
 const junctionInput = new JunctionInput({ releaseGrace: preferences.junctionGrace });
-const controls = { gas: false, brake: false, handbrake: false, left: false, right: false };
+const controls = { gas: false, brake: false, handbrake: false, handbrakePressed: false, left: false, right: false };
 const t = key => (lang === "zh" ? zh : en)[key] || key;
 const moneyText = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
 const meterSegments = ["abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgecd", "abc", "abcdefg", "abfgcd"];
 const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
 
 function resetControls() {
+  car.slip = 0;
+  car.grip = 1;
+  car.driftEntry = 0;
+  car.handbrakeDown = false;
+  car.brakeTime = 0;
   car.steeringInput = 0;
   car.steeringTarget = 0;
   junctionInput.reset();
@@ -64,6 +69,7 @@ function applyState(next, resetPosition = false) {
   if (mapData && next.version !== mapData.version) throw new Error("Map version changed. Reload to start a new shift.");
   state = next;
   if (resetPosition) {
+    map3d?.clearSkids();
     car = { x: next.x, y: next.y, speed: next.speed, heading: next.heading, edge: next.edge };
     previousCar = null;
     elapsed = 0; trail = [];
@@ -532,23 +538,26 @@ function updateUI() {
   $("job-action").disabled = busy || (["pickup", "onboard"].includes(state.phase) && !state.service_ready);
   $("cancel-job").hidden = !["pickup", "onboard"].includes(state.phase);
   $("cancel-job").disabled = busy;
-  $("active-trip").hidden = state.phase === "available";
+  const phoneTrip = state.order_source === "phone" && state.phase !== "available";
+  $("active-trip").hidden = !phoneTrip;
   $("job-action").hidden = state.phase === "boarding" || state.phase === "pickup";
   renderOrders("available-orders", state.offers ?? []);
-  const waiting = (state.accepted_orders ?? []).filter(order => order.id !== state.active_order);
+  const waiting = (state.accepted_orders ?? []).filter(order => order.source === "phone" && order.id !== state.active_order);
   renderOrders("accepted-orders", waiting, true);
   $("pending-title").hidden = !waiting.length;
   $("phone-count").textContent = String(state.offers?.length ?? 0);
   $("phone-toggle").setAttribute("aria-label", `${t("phoneToggle")} · ${state.offers?.length ?? 0} ${t("availableTab")}`);
   $("no-offers").hidden = Boolean(state.offers?.length);
-  $("no-accepted").hidden = state.phase !== "available" || Boolean(state.accepted_orders?.length);
+  $("no-accepted").hidden = phoneTrip || waiting.length > 0;
   $("order-notice").textContent = orderNotice ? t(orderNotice) : state.cancelled_orders
     ? `${t("waitingCancelled")} (${state.cancelled_orders})` : t("queueHelp");
   $("door").disabled = busy || paused || !state.citizens?.some(citizen => citizen.ready);
   $("door").hidden = state.phase === "onboard" || state.phase === "boarding";
   $("boarding-status").hidden = state.phase !== "boarding";
-  $("street-dropoff").hidden = state.phase !== "onboard";
-  $("street-dropoff").disabled = busy || paused || !state.service_ready;
+  const streetComplete = state.phase === "complete" && state.order_source === "street";
+  $("street-dropoff").hidden = state.phase !== "onboard" && !streetComplete;
+  $("street-dropoff").textContent = t(streetComplete ? "next" : "dropoffKey");
+  $("street-dropoff").disabled = busy || paused || (streetComplete ? Boolean(state.boarding) : !state.service_ready);
   const meterActive = state.meter !== null && state.meter !== undefined;
   renderMeterDigits("meter-extra", meterActive ? extras : null,
     meterActive ? `${t("extraFare")} HK$ ${extras.toFixed(1)}` : t("meterVacant"), 2);
@@ -635,7 +644,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=passenger-extras-2");
+      const { Map3DView } = await import("./map3d.mjs?v=chase-orbit-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
@@ -677,6 +686,8 @@ function frame(timestamp) {
         fuel: state.fuel, roads, closed: new Set(state.closed),
         selectedExit: state.selected_exit, selectedJunction: state.selected_junction,
       });
+      controls.handbrakePressed = false;
+      if (map3d && view === map3d) map3d.recordSkid(previousCar, car, result.skidding && !result.blocked);
       boundary = (result.blocked || result.contact) && !result.closed;
       closureWarning = result.closed;
       if (result.junctionPoint) trail.push(result.junctionPoint);
@@ -922,7 +933,7 @@ window.addEventListener("keydown", event => {
     return;
   }
   if (key === "e" && !event.repeat && !paused && !dialogs.some(id => $(id).open)) {
-    $(state.phase === "onboard" ? "street-dropoff" : "door").click();
+    $($("street-dropoff").hidden ? "door" : "street-dropoff").click();
   }
   if ($("junction").open && bindings[key]) {
     event.preventDefault();
@@ -935,7 +946,7 @@ window.addEventListener("keydown", event => {
   }
   if (bindings[key] && !paused) { controls[bindings[key]] = true; event.preventDefault(); }
   if (event.code === "Space" && !paused) {
-    controls.handbrake = true;
+    if (!event.repeat) controls.handbrake = controls.handbrakePressed = true;
     event.preventDefault();
   }
   if (event.key === "Escape" && !event.repeat) {

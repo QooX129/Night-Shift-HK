@@ -12,6 +12,13 @@ import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
 import { project } from "./physics.mjs?v=tunnel-clearance-1";
 import { visualStream } from "./map-stream.mjs";
 
+const CHASE_PITCH = Math.atan2(.6, .9);
+const MIN_CHASE_PITCH = Math.PI / 10;
+const MAX_CHASE_PITCH = Math.PI * .4;
+const MIN_CHASE_GRADE = Math.tan(MIN_CHASE_PITCH);
+const SKID_LIFETIME = 3;
+const SKID_LIMIT = 256;
+
 export class Map3DView {
   constructor(canvas, data, stops) {
     this.canvas = canvas;
@@ -41,6 +48,49 @@ export class Map3DView {
     this.scene.background = new THREE.Color("#172b38");
     this.scene.fog = new THREE.Fog("#172b38", 180, 600);
     this.lens = new THREE.PerspectiveCamera(48, 1, 0.3, 5000);
+    this.orbitYaw = 0;
+    this.orbitPitch = CHASE_PITCH;
+    this.cameraDrag = null;
+    this.cameraEvents = new AbortController();
+    const listen = { signal: this.cameraEvents.signal };
+    canvas.addEventListener("contextmenu", event => event.preventDefault(), listen);
+    canvas.addEventListener("pointerdown", event => {
+      if (event.button !== 2 || event.pointerType !== "mouse") return;
+      event.preventDefault();
+      this.cameraDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      canvas.setPointerCapture(event.pointerId);
+    }, listen);
+    const endDrag = () => {
+      const id = this.cameraDrag?.id;
+      this.cameraDrag = null;
+      if (id !== undefined && canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+    };
+    canvas.addEventListener("pointermove", event => {
+      const drag = this.cameraDrag;
+      if (drag?.id !== event.pointerId) return;
+      if (!(event.buttons & 2)) { endDrag(); return; }
+      this.orbitYaw = THREE.MathUtils.euclideanModulo(this.orbitYaw - (event.clientX - drag.x) * .007 + Math.PI,
+        Math.PI * 2) - Math.PI;
+      this.orbitPitch = THREE.MathUtils.clamp(this.orbitPitch + (event.clientY - drag.y) * .006,
+        MIN_CHASE_PITCH, MAX_CHASE_PITCH);
+      drag.x = event.clientX; drag.y = event.clientY;
+    }, listen);
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      canvas.addEventListener(type, event => {
+        if (event.pointerId === this.cameraDrag?.id) endDrag();
+      }, listen);
+    }
+    window.addEventListener("blur", endDrag, listen);
+    this.skids = [];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(SKID_LIMIT * 12 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(SKID_LIMIT * 12 * 4), 4).setUsage(THREE.DynamicDrawUsage));
+    geometry.setDrawRange(0, 0);
+    this.skidMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      transparent: true, depthWrite: false, vertexColors: true, side: THREE.DoubleSide,
+    }));
+    this.skidMesh.frustumCulled = false;
+    this.scene.add(this.skidMesh);
     this.scene.add(new THREE.HemisphereLight("#bcdbe6", "#304239", 1.8));
     const sun = new THREE.DirectionalLight("#ffe0b0", 1.8);
     sun.position.set(-100, 180, -60);
@@ -1404,11 +1454,63 @@ export class Map3DView {
     const limit = rotationSpeed * dt;
     this.cameraHeading += Math.max(-limit, Math.min(limit, change));
   }
+  clearSkids() {
+    this.skids.length = 0;
+    this.skidStart = null;
+    this.skidMesh.geometry.setDrawRange(0, 0);
+  }
+  recordSkid(before, car, skidding) {
+    if (!skidding || before.edge !== car.edge) {
+      this.skidStart = null;
+      return;
+    }
+    const saved = this.skidStart;
+    const start = saved?.edge === before.edge && Math.hypot(saved.x - before.x, saved.y - before.y) < .35
+      ? saved : before;
+    if (Math.hypot(car.x - start.x, car.y - start.y) < .35) {
+      this.skidStart = start;
+      return;
+    }
+    const vertices = [];
+    const edge = this.edges.get(car.edge);
+    const halfTrack = (this.data.driving.taxi_width - WORLD_SCALE.wheelWidth) / 2;
+    for (const side of [-1, 1]) {
+      const corners = [start, car].flatMap(pose => [-.09, .09].map(offset => {
+        const lateral = side * halfTrack + offset;
+        const rear = this.data.driving.taxi_length * .32;
+        const x = pose.x - Math.cos(pose.heading) * rear - Math.sin(pose.heading) * lateral;
+        const y = pose.y - Math.sin(pose.heading) * rear + Math.cos(pose.heading) * lateral;
+        return [x, surfacePose(this, edge, { x, y }, pose.heading).height + .12, y];
+      }));
+      for (const index of [0, 1, 2, 1, 3, 2]) vertices.push(...corners[index]);
+    }
+    this.skids.push({ vertices, expires: performance.now() / 1000 + SKID_LIFETIME });
+    if (this.skids.length > SKID_LIMIT) this.skids.shift();
+    this.skidStart = { ...car };
+  }
+  updateSkids(now) {
+    while (this.skids[0]?.expires <= now) this.skids.shift();
+    const geometry = this.skidMesh.geometry;
+    const { position, color } = geometry.attributes;
+    for (const [index, skid] of this.skids.entries()) {
+      position.array.set(skid.vertices, index * 36);
+      const alpha = .62 * Math.min(1, (skid.expires - now) / 1.5);
+      for (let vertex = index * 12; vertex < (index + 1) * 12; vertex++) color.setXYZW(vertex, .025, .02, .018, alpha);
+    }
+    geometry.setDrawRange(0, this.skids.length * 12);
+    if (this.skids.length) position.needsUpdate = color.needsUpdate = true;
+  }
   render(car, state, lang, approach, previewExit = null) {
     // Use the animation-frame time the taxi was stepped with; performance.now() jitters with prior work.
     const now = document.timeline?.currentTime ?? performance.now();
     const dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
     this.updateCameraHeading(car.heading, dt);
+    if (!this.cameraDrag) {
+      const remaining = this.reducedMotion ? 0 : Math.exp(-5 * dt);
+      this.orbitYaw *= remaining;
+      this.orbitPitch = CHASE_PITCH + (this.orbitPitch - CHASE_PITCH) * remaining;
+    }
+    this.updateSkids(performance.now() / 1000);
     this.camera.x = car.x; this.camera.y = car.y;
     if (this.roadBuildTask) {
       const deadline = performance.now() + 4;
@@ -1434,13 +1536,20 @@ export class Map3DView {
     this.taxi.position.copy(position);
     this.taxi.rotation.set(0, -car.heading, pose.pitch, "YXZ");
     const distance = Math.min(150, 48 * 1.65 / this.zoom) * this.chaseDistanceScale;
-    const target = position.clone().addScaledVector(forward, 10);
+    const orbitWeight = this.cameraDrag ? 1
+      : Math.min(1, (Math.abs(this.orbitYaw) + Math.abs(this.orbitPitch - CHASE_PITCH)) * 3);
+    const target = position.clone().addScaledVector(forward, 10 * (1 - orbitWeight));
     target.y = this.elevation ? surfacePose(this, this.edges.get(car.edge),
       { x: target.x, y: target.z }, car.heading).height + 1 : 1;
-    const eye = position.clone().addScaledVector(forward, -distance * 0.9);
-    eye.y = position.y + distance * 0.6;
     const inTunnel = this.elevation && isTunnelRoad(this.edges.get(car.edge));
-    if (inTunnel && !this.overview) { eye.y = position.y + 3.3; target.y = position.y + 1.4; }
+    const heading = this.cameraHeading + this.orbitYaw;
+    const radius = inTunnel ? Math.min(5.9, 3.3 / Math.sin(this.orbitPitch)) : distance * Math.hypot(.9, .6);
+    const rise = radius * Math.sin(this.orbitPitch);
+    const horizontal = Math.min(radius * Math.cos(this.orbitPitch),
+      inTunnel ? (rise - 1.4) / MIN_CHASE_GRADE : Infinity);
+    const eye = new THREE.Vector3(position.x - Math.cos(heading) * horizontal,
+      position.y + rise, position.z - Math.sin(heading) * horizontal);
+    if (inTunnel && !this.overview) target.set(position.x, position.y + 1.4, position.z);
     if (this.elevation) {
       this.ground.material.transparent = Boolean(inTunnel && !this.overview);
       this.ground.material.opacity = inTunnel && !this.overview ? .08 : 1;
@@ -1470,9 +1579,13 @@ export class Map3DView {
     const positionEase = 1 - Math.exp(-(8 - this.cameraSmoothness * 5) * dt);
     const targetEase = 1 - Math.exp(-(6.5 - this.cameraSmoothness * 4.17) * dt);
     this.lookAt ??= target.clone();
-    const smoothCamera = this.cameraReady && !this.reducedMotion && this.cameraSmoothness > 0;
+    const smoothCamera = this.cameraReady && !this.cameraDrag && !inTunnel && !this.reducedMotion && this.cameraSmoothness > 0;
     this.lens.position.lerp(eye, smoothCamera ? positionEase : 1);
     this.lookAt.lerp(target, smoothCamera ? targetEase : 1);
+    if (!this.overview && !inTunnel) {
+      const eye = this.lens.position;
+      eye.y = Math.max(eye.y, this.lookAt.y + Math.hypot(eye.x - this.lookAt.x, eye.z - this.lookAt.z) * MIN_CHASE_GRADE);
+    }
     this.lens.lookAt(this.lookAt);
     this.lens.setViewOffset(innerWidth, innerHeight, 0, innerHeight * 0.04, innerWidth, innerHeight);
     this.cameraReady = true;
@@ -1557,6 +1670,7 @@ export class Map3DView {
     this.renderer.autoClear = true;
   }
   dispose() {
+    this.cameraEvents.abort();
     this.unsubscribeStream?.();
     this.detailWorker?.terminate();
     window.removeEventListener("resize", this.onResize);

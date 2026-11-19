@@ -97,7 +97,7 @@ test("citizens and passengers stand on their road level after elevation is enabl
 test("3D accessories persist through boarding and pooled citizens reset their seated pose", async ({ page }, testInfo) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=passenger-extras-2");
+    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } },
@@ -801,6 +801,30 @@ test("all views receive only the upcoming GPS segments without changing the rout
   }
 });
 
+test("Accepted hides street fares but keeps their destination, meter and queued phone orders", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  Object.assign(fixture.state, { phase: "onboard", order_source: "street", active_order: "street",
+    destination: "dest", meter: 29, fare: 29, service_ready: false });
+  await expect(page.locator("#trip-toggle")).toBeVisible();
+  await page.locator("#trip-toggle").click();
+  await expect(page.locator("#trip-name")).toHaveText("Test Street destination");
+  await expect(page.locator("#meter-digits")).toHaveAttribute("aria-label", "TAXI METER HK$ 29.0");
+  await page.locator("#phone-toggle").click();
+  await page.locator("#accepted-tab").click();
+  await expect(page.locator("#active-trip")).toBeHidden();
+  await expect(page.locator("#no-accepted")).toBeVisible();
+  fixture.state.accepted_orders = [fixture.state.offers.shift()];
+  await expect(page.locator("#no-accepted")).toBeHidden();
+  await expect(page.locator("#active-trip")).toBeHidden();
+  fixture.state.order_source = "phone";
+  await expect(page.locator("#active-trip")).toBeVisible();
+  Object.assign(fixture.state, { phase: "complete", order_source: "street", accepted_orders: [], boarding: null });
+  await expect(page.locator("#active-trip")).toBeHidden();
+  await page.locator("#phone-toggle").click();
+  await page.locator("#street-dropoff").click();
+  await expect.poll(() => fixture.state.phase).toBe("available");
+});
+
 test("unreachable phone pickup is declined without interrupting the current trip", async ({ page }) => {
   const fixture = await dispatchFixture(page);
   fixture.state.phase = "onboard";
@@ -824,7 +848,7 @@ test("randomized order points drive the trip distance and 3D marker", async ({ p
   fixture.state.offers[0].pickup_point = [75, 0];
   fixture.state.destination_point = [230, 0];
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=passenger-extras-2");
+    const { Map3DView } = await import("/map3d.mjs?v=chase-orbit-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.randomPointView = this;
