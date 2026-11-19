@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   cameraRotationSpeed: 90,
   chaseDistance: 70,
   reducedMotion: false,
-  steeringSensitivity: 300,
+  steeringSensitivity: 250,
   junctionGrace: 150,
   minimapVisible: true,
   minimapSize: "large",

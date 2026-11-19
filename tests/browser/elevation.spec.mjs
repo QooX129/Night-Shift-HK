@@ -164,7 +164,7 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const { RoadNetwork } = await import("/physics.mjs?v=steering-grip-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],

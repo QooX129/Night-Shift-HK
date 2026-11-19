@@ -77,7 +77,7 @@ export class VisualStream {
       if (chunk.version !== this.manifest.version || chunk.key !== key || !Array.isArray(chunk.backdrop))
         throw new Error(`Invalid visual chunk ${key}. Refresh to reload the map.`);
       if (!chunk.backdrop.every(shape => Number.isInteger(shape.id)
-          && ["building", "park"].includes(shape.kind) && Array.isArray(shape.points) && shape.points.length >= 3
+          && ["building", "park", "roof"].includes(shape.kind) && Array.isArray(shape.points) && shape.points.length >= 3
           && shape.points.every(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite))))
         throw new Error(`Invalid visual shapes in chunk ${key}.`);
       if (controller.signal.aborted || this.disposed || !this.desired.has(key)) return;

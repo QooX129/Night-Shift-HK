@@ -1,12 +1,13 @@
 import math
 import random
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from game import Game
 from pedestrians import Sidewalks, advance_walk, path_pose, segment_distance
-from roads import Edge
+from roads import Edge, RoadMap
 
 
 class SidewalkTests(unittest.TestCase):
@@ -69,6 +70,31 @@ class SidewalkTests(unittest.TestCase):
             session = SimpleNamespace(point=(50, 0), rng=random.Random(2026), elapsed=0, citizens=[])
             game.spawn_citizen(session)
             self.assertEqual(session.citizens, [], kind)
+
+    def test_spawns_stay_on_outer_sidewalks_along_parallel_main_roads(self):
+        roads = self.roads()
+        roads.nodes.update({"c": (75, 14), "d": (25, 14)})
+        roads.edges["ab"] = Edge("ab", "a", "b", 1, 100, "First", "First", "primary",
+                                 True, "0", "no", "no", width=10)
+        roads.edges["cd"] = Edge("cd", "c", "d", 2, 50, "Second", "Second", "secondary",
+                                 True, "0", "no", "no", width=10)
+        game = Game.__new__(Game)
+        game.roads, game.sidewalks, game.stops = roads, Sidewalks(roads), {}
+        session = SimpleNamespace(point=(50, 7), rng=random.Random(2026), elapsed=0, citizens=[])
+        for _ in range(50):
+            game.spawn_citizen(session)
+        self.assertEqual(len(session.citizens), 50)
+        self.assertTrue(all(not (25 <= x <= 75 and 0 < y < 14)
+                            for x, y in map(game.citizen_point, session.citizens)))
+        self.assertFalse(game.sidewalks.safe((10, 7), (90, 7)))
+        for point in [(10, 7), (90, 7), (50, -7), (50, 21)]:
+            self.assertTrue(game.sidewalks.safe(point, point), point)
+
+    def test_nathan_road_median_is_not_a_spawn_path(self):
+        roads = RoadMap(Path(__file__).resolve().parents[1] / "data" / "district.json")
+        sidewalks = Sidewalks(roads)
+        point = (75.33, -129.13)
+        self.assertFalse(sidewalks.nearby(point, .1))
 
     def test_bridges_block_sidewalks_but_tunnels_do_not(self):
         for layer, bridge, tunnel, blocked in [

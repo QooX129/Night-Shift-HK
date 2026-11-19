@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=passenger-extras-2";
-import { MapView } from "./map.mjs?v=tunnel-clearance-1";
+import { Map3DView } from "./map3d.mjs?v=roof-canopies-3";
+import { MapView } from "./map.mjs?v=roof-canopies-1";
 
 let view;
 let revision = 0;
@@ -21,6 +21,7 @@ self.onmessage = ({ data }) => {
     const context = canvas?.getContext("2d", { willReadFrequently: true });
     if (context) {
       view.detailMap = Object.create(view.groundMap);
+      view.detailMap.backdropColor = data.backdropColor;
       view.detailMap.backdrop = canvas;
       view.detailMap.drawRoadDirections = () => {};
       context.fillText = () => {};

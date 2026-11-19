@@ -95,7 +95,9 @@ def build(raw_path: Path, output: Path) -> None:
         ids = [str(n) for n in way.get("nodes", [])]
         if any(n not in points for n in ids):
             raise ValueError(f"Missing geometry for OSM way {way['id']}")
-        if "building" in tags or tags.get("leisure") == "park":
+        if tags.get("building") == "roof":
+            backdrop.append({"kind": "roof", "osm_way": way["id"], "points": [points[n] for n in ids]})
+        elif "building" in tags or tags.get("leisure") == "park":
             backdrop.append({
                 "kind": "park" if tags.get("leisure") == "park" else "building",
                 "points": [points[n] for n in ids],
@@ -182,7 +184,7 @@ def build(raw_path: Path, output: Path) -> None:
     nodes = {k: v for k, v in nodes.items() if k in largest}
     edges = [e for e in edges if e["a"] in largest and e["b"] in largest]
     result = {
-        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-3").hexdigest()[:12],
+        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-5").hexdigest()[:12],
         "source": "OpenStreetMap contributors", "license": "ODbL-1.0",
         "downloaded": dt.datetime.now(dt.timezone.utc).isoformat(),
         "origin": [LAT, LON], "bounds": top_left + bottom_right,

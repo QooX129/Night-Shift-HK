@@ -1,9 +1,13 @@
-"""Conservative roadside walking paths clipped against roads, flyovers and buildings."""
+"""Conservative roadside walking paths clipped against roads, medians, flyovers and buildings."""
 
 import math
 from collections import defaultdict
 
-from roads import DRIVING, project
+from roads import DRIVING, Point, project
+
+
+MAIN_ROADS = {"motorway", "trunk", "primary", "secondary"}
+MAX_MEDIAN_GAP = 10
 
 
 def path_pose(points, distance):
@@ -54,6 +58,42 @@ def inside(point, polygon):
     return result
 
 
+def median_between(a: Point, b: Point, c: Point, d: Point, max_spacing: float) -> tuple[Point, ...]:
+    length = math.dist(a, b)
+    ux, uy = (b[0] - a[0]) / length, (b[1] - a[1]) / length
+    along_c = (c[0] - a[0]) * ux + (c[1] - a[1]) * uy
+    along_d = (d[0] - a[0]) * ux + (d[1] - a[1]) * uy
+    if abs(along_d - along_c) < .95 * math.dist(c, d):
+        return ()
+    start, end = max(0, min(along_c, along_d)), min(length, max(along_c, along_d))
+    if start >= end:
+        return ()
+
+    def offset(along: float) -> float:
+        t = (along - along_c) / (along_d - along_c)
+        return ux * (c[1] + t * (d[1] - c[1]) - a[1]) - uy * (c[0] + t * (d[0] - c[0]) - a[0])
+
+    first, last = offset(start), offset(end)
+    if first * last < 0 or max(abs(first), abs(last)) < 1e-6:
+        return ()
+    if min(abs(first), abs(last)) > max_spacing:
+        return ()
+    if abs(first) > max_spacing:
+        start += (end - start) * (abs(first) - max_spacing) / (abs(first) - abs(last))
+        first = offset(start)
+    elif abs(last) > max_spacing:
+        end -= (end - start) * (abs(last) - max_spacing) / (abs(last) - abs(first))
+        last = offset(end)
+    if start >= end:
+        return ()
+
+    # Fill only the shared length between the centre lines; road obstacles cover the rest.
+    def point(along: float, across: float) -> Point:
+        return (a[0] + ux * along - uy * across, a[1] + uy * along + ux * across)
+
+    return (point(start, 0), point(end, 0), point(end, last), point(start, first))
+
+
 class Sidewalks:
     def __init__(self, roads):
         self.roads = roads
@@ -63,6 +103,7 @@ class Sidewalks:
         self.nearby_paths = []
         self.edges = []
         seen = set()
+        main_road_cells: dict[tuple[int, int], list[tuple[int, Point, Point, float]]] = defaultdict(list)
         for edge in roads.edges.values():
             key = (edge.way, *sorted((edge.a, edge.b)))
             if key in seen or edge.tunnel != "no":
@@ -75,6 +116,16 @@ class Sidewalks:
             a, b = roads.nodes[edge.a], roads.nodes[edge.b]
             radius = (edge.width or DRIVING["widths"].get(edge.kind, 10)) / 2
             self.add(("road", (a, b), radius), (a, b), radius + 1)
+            if ground and edge.kind in MAIN_ROADS and a != b:
+                keys = list(self.keys((a, b), radius + MAX_MEDIAN_GAP / 2))
+                neighbours = {other for cell in keys for other in main_road_cells[cell]}
+                for way, c, d, other_radius in neighbours:
+                    if way != edge.way:
+                        median = median_between(a, b, c, d, radius + other_radius + MAX_MEDIAN_GAP)
+                        if median:
+                            self.add(("median", median, .4), median, .4)
+                for cell in keys:
+                    main_road_cells[cell].append((edge.way, a, b, radius))
             if (ground and edge.length >= 30 and edge.kind not in {"service", "motorway", "trunk"}
                     and not edge.kind.endswith("_link")):
                 self.edges.append(edge)

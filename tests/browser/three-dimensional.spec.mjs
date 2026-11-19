@@ -4,13 +4,61 @@ test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 
+test("translucent canopy occludes only the road boundaries behind it", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const canvas = document.body.appendChild(document.createElement("canvas"));
+    const view = new Map3DView(canvas, {
+      bounds: [-24, -18, 24, 18], nodes: { a: [-20, 0], b: [20, 0] },
+      edges: [{ id: "ab", a: "a", b: "b", way: 1, kind: "residential", length: 40 }],
+      backdrop: [{ kind: "roof", points: [[-14, -8], [-2, -8], [-2, -2], [-14, -2]] }],
+      driving: { taxi_radius: 3, taxi_length: 5.4, taxi_width: 2.6, widths: { residential: 10 } },
+    }, []);
+    try {
+      view.taxi.visible = false;
+      view.updateBoundaries();
+      view.lens = new THREE.OrthographicCamera(-24, 24, 18, -18, .1, 100);
+      view.lens.position.set(0, 40, 0);
+      view.lens.up.set(0, 0, -1);
+      view.lens.lookAt(0, 0, 0);
+      const capture = document.createElement("canvas");
+      capture.width = canvas.width; capture.height = canvas.height;
+      const c = capture.getContext("2d");
+      const sample = () => {
+        view.drawScene();
+        c.drawImage(canvas, 0, 0);
+        return [-8, 8].map(x => {
+          const point = new THREE.Vector3(x, .14, -5).project(view.lens);
+          const px = Math.round((point.x + 1) * canvas.width / 2);
+          const py = Math.round((1 - point.y) * canvas.height / 2);
+          return [...c.getImageData(px, py, 1, 1).data];
+        });
+      };
+      const withLines = sample();
+      view.boundaryOutline.visible = false;
+      const withoutLines = sample();
+      view.scene.getObjectByName("canopy-cover").visible = false;
+      const withoutCanopy = sample();
+      return { withLines, withoutLines, withoutCanopy };
+    } finally {
+      view.dispose();
+      canvas.remove();
+    }
+  });
+  expect(result.withLines[0]).toEqual(result.withoutLines[0]);
+  expect(result.withoutLines[0]).not.toEqual(result.withoutCanopy[0]);
+  expect(result.withLines[1][0]).toBeGreaterThan(result.withoutLines[1][0] + 30);
+});
+
 test("chase camera keeps the taxi centered and clear of the dashboard", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1",
     JSON.stringify({ defaultView: "2d", chaseDistance: 70 })));
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
@@ -70,7 +118,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -114,7 +162,7 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -153,7 +201,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=hk-streets-2");
+    const { MapView } = await import("/map.mjs?v=roof-canopies-1");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -417,7 +465,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-streets-5");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;

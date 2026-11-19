@@ -160,8 +160,9 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 - The GPS line starts after the taxi's current road segment in all views. The
   full route still determines junction suggestions and the displayed distance;
   if you leave the route, the line waits for an updated plan.
-- Citizens walk along safe roadside paths on both sides of nearby ground-level
-  streets, never through road surfaces, flyover footprints or buildings.
+- Citizens walk along safe roadside paths near ground-level streets, never
+  through road surfaces, flyover footprints, buildings, or narrow medians
+  between parallel main roads. Outer sidewalks remain available.
   Motorways and trunk roads are not used as walking paths. Blocked paths
   turn back rather than cutting through buildings or across junction roads.
   Movement is sampled continuously between server updates, with varied walking
@@ -721,7 +722,7 @@ route/junction highlights, map labels and HUD remain deliberately readable game
 overlays, not physical objects or surveyed road markings.
 
 The elevated driving view projects a scrolling 256 m terrain-detail texture
-at 16 pixels/metre (subject to the GPU texture-size limit) onto the existing
+at 14 pixels/metre (subject to the GPU texture-size limit) onto the existing
 terrain mesh. Building footprints and parks retain sharp edges near the taxi
 without flattening slopes or drawing a decal over bridges. The cache refreshes
 in the worker at 64 m intervals and fades into the district backdrop over its
@@ -731,8 +732,16 @@ full-texture upload and GPU mipmap rebuild during driving. The previous texture
 and its coordinates stay active until every replacement mip level is ready.
 The distant terrain backdrop is built once at up to 3 pixels/metre, capped at
 8192 pixels and the GPU's texture limit. Mipmaps and anisotropic filtering
-remain enabled for distant and oblique surfaces; overview keeps its lighter
-district-wide texture.
+remain enabled for distant and oblique surfaces. The chase terrain uses the
+outer sidewalk's base color at both detail levels; the overview keeps its
+original palette. Mapped `building=roof` footprints, including the cover over
+Gascoigne Road Flyover, are rendered as translucent arched canopies instead of
+solid buildings. Longer canopies receive more pillar pairs, with supports
+skipped where they would enter a mapped road. The eaves start 2.8 m above the
+local terrain and rise as needed for 5.2 m of clearance above sampled road
+surfaces and edges. The arch adds up to 1.8 m. These are rendered estimates,
+not surveyed roof heights. Canopies hide red boundary lines behind the cover
+without changing driving or pedestrian routes.
 
 The complete rotated taxi footprint must stay inside the connected road
 capsules. Red lines are static, full-district collision geometry built once

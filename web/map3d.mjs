@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=hk-streets-2";
+import { MapView } from "./map.mjs?v=roof-canopies-1";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
@@ -11,7 +11,7 @@ import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
 import { project } from "./physics.mjs?v=tunnel-clearance-1";
-import { visualStream } from "./map-stream.mjs";
+import { visualStream } from "./map-stream.mjs?v=roof-canopies-1";
 
 const CHASE_PITCH = Math.atan2(.6, .9);
 const MIN_CHASE_PITCH = Math.PI / 10;
@@ -19,6 +19,7 @@ const MAX_CHASE_PITCH = Math.PI * .4;
 const MIN_CHASE_GRADE = Math.tan(MIN_CHASE_PITCH);
 const SKID_LIFETIME = 3;
 const SKID_LIMIT = 256;
+const SIDEWALK_COLOR = "#687873";
 // Confirmed location from the supplied street image; dimensions use mapped road widths.
 const VERIFIED_YELLOW_BOXES = [
   { road: "Argyle Street", crossing: "Nathan Road", nodes: ["1151084860", "308473424"] },
@@ -129,11 +130,12 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=tunnel-clearance-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=roof-canopies-3", import.meta.url), { type: "module" });
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
           : this.groundMap.unique,
-        size: this.detailSize, scale: this.detailScale, revision: this.stream?.revision ?? 0 });
+        size: this.detailSize, scale: this.detailScale, backdropColor: this.detailMap.backdropColor,
+        revision: this.stream?.revision ?? 0 });
       this.detailWorker.onmessage = ({ data }) => {
         if (data.type === "route") {
           if (data.request === this.pendingRoute?.request) this.readyRoute = data;
@@ -216,6 +218,7 @@ export class Map3DView {
     texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this.resources.push(texture);
     this.overviewTexture = texture;
+    map.backdropColor = SIDEWALK_COLOR;
     map.backdrop = document.createElement("canvas");
     const chaseContext = map.backdrop.getContext("2d");
     chaseContext.fillText = () => {};
@@ -694,7 +697,7 @@ export class Map3DView {
     }
   }
   addRoadTile(tile) {
-    const detailColors = { yellow: "#d3ac56", sidewalk: "#687873", railing: "#b1bfba",
+    const detailColors = { yellow: "#d3ac56", sidewalk: SIDEWALK_COLOR, railing: "#b1bfba",
       signal: "#253438", signalRed: "#d36a5e" };
     const details = [], colors = [], ranges = {};
     for (const [kind, positions] of Object.entries(tile)) {
@@ -1076,6 +1079,11 @@ export class Map3DView {
     this.fadedAdvertMaterial.transparent = true;
     this.fadedAdvertMaterial.opacity = .12;
     this.fadedAdvertMaterial.depthWrite = false;
+    // The full-resolution road overlay samples scene depth, including translucent roofs.
+    this.roofMaterial = new THREE.MeshBasicMaterial({ color: "#9cc2c5", transparent: true,
+      opacity: .48, side: THREE.DoubleSide, forceSinglePass: true });
+    this.roofPostMaterial = new THREE.MeshBasicMaterial({ color: "#647679" });
+    this.resources.push(this.roofMaterial, this.roofPostMaterial);
     this.buildingCount = 0;
     this.buildings = [];
     if (this.stream) {
@@ -1089,11 +1097,109 @@ export class Map3DView {
     this.buildings = next.value;
     this.buildingCount = this.data.backdrop.filter(shape => shape.kind === "building" && shape.points.length >= 3).length;
   }
+  buildCanopy(points, cover, posts) {
+    const ring = points[0][0] === points.at(-1)[0] && points[0][1] === points.at(-1)[1]
+      ? points.slice(0, -1) : points;
+    let longest = 0, ux = 1, uz = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const [x, z] = ring[i], [nx, nz] = ring[(i + 1) % ring.length];
+      const length = Math.hypot(nx - x, nz - z);
+      if (length > longest) { longest = length; ux = (nx - x) / length; uz = (nz - z) / length; }
+    }
+    const local = ring.map(([x, z]) => new THREE.Vector2(x * ux + z * uz, z * ux - x * uz));
+    const bounds = new THREE.Box2().setFromPoints(local);
+    const { x: span, y: width } = bounds.getSize(new THREE.Vector2());
+    if (span < .1 || width < .1) return;
+    const triangles = THREE.ShapeUtils.triangulateShape(local, []);
+    const world = (u, v) => ({ x: u * ux - v * uz, y: u * uz + v * ux });
+    const cuts = u => {
+      const intersections = [];
+      for (let i = 0; i < local.length; i++) {
+        const a = local[i], b = local[(i + 1) % local.length];
+        if ((a.x > u) !== (b.x > u))
+          intersections.push(a.y + (b.y - a.y) * (u - a.x) / (b.x - a.x));
+      }
+      return intersections.sort((a, b) => a - b);
+    };
+    const contains = ([x, z]) => {
+      const v = z * ux - x * uz;
+      return cuts(x * ux + z * uz).filter(crossing => crossing > v).length % 2 !== 0;
+    };
+    const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
+    const roads = this.groundMap.roadIndex.query([
+      Math.min(...xs) - 12, Math.min(...zs) - 12, Math.max(...xs) + 12, Math.max(...zs) + 12,
+    ]).filter(edge => !isTunnelRoad(edge));
+    let eave = Math.max(...ring.map(([x, z]) => terrainHeight(this.elevation, x, z))) + 2.8;
+    for (const edge of roads) {
+      const a = this.nodes[edge.a], b = this.nodes[edge.b];
+      const dx = b[0] - a[0], dz = b[1] - a[1], length = Math.hypot(dx, dz);
+      if (!length) continue;
+      const radius = roadWidth(this.data.driving, edge) / 2 + COLLISION_LINE_WIDTH / 2;
+      const raiseEave = (x, y) => {
+        eave = Math.max(eave, surfacePose(this, edge, { x, y }, 0).height + 5.2);
+      };
+      // Include short overlaps at footprint corners and the rounded ends of the road.
+      for (const [x, y] of ring) {
+        if (project({ x, y }, a, b).distance <= radius) raiseEave(x, y);
+      }
+      const count = Math.ceil(length / 2);
+      for (let i = 0; i <= count; i++) {
+        const x = a[0] + dx * i / count, y = a[1] + dz * i / count;
+        for (const side of [-1, -.5, 0, .5, 1]) {
+          const px = x - dz / length * radius * side, py = y + dx / length * radius * side;
+          if (contains([px, py])) raiseEave(px, py);
+        }
+      }
+    }
+    const heightAt = v => eave + Math.min(1.8, width * .14) * (1 - (2 * (v - bounds.min.y) / width - 1) ** 2);
+    const split = (a, b, c, depth) => {
+      if (!depth) {
+        for (const { x: u, y: v } of [a, b, c]) {
+          const point = world(u, v);
+          cover.push(point.x, heightAt(v), point.y);
+        }
+        return;
+      }
+      const ab = a.clone().lerp(b, .5), bc = b.clone().lerp(c, .5), ca = c.clone().lerp(a, .5);
+      split(a, ab, ca, depth - 1); split(ab, b, bc, depth - 1);
+      split(ca, bc, c, depth - 1); split(ab, bc, ca, depth - 1);
+    };
+    for (const [a, b, c] of triangles) split(local[a], local[b], local[c], 2);
+    if (!triangles.length) return;
+    const rows = Math.max(2, Math.min(20, Math.ceil(span / 12)));
+    for (let row = 0; row < rows; row++) {
+      const u = bounds.min.x + span * (row + .5) / rows, limits = cuts(u);
+      if (limits.length < 2) continue;
+      const first = limits[0], last = limits.at(-1);
+      const inset = Math.min(.5, (last - first) * .14);
+      for (const v of [first + inset, last - inset]) {
+        const point = world(u, v);
+        if (!contains([point.x, point.y]) || roads.some(edge =>
+          project(point, this.nodes[edge.a], this.nodes[edge.b]).distance <= roadWidth(this.data.driving, edge) / 2 + .4)) continue;
+        const base = terrainHeight(this.elevation, point.x, point.y);
+        const height = heightAt(v) - base, size = Math.min(.45, Math.max(.12, width * .05));
+        const geometry = new THREE.BoxGeometry(size, height, size);
+        const positions = geometry.getAttribute("position");
+        for (let i = 0; i < geometry.index.count; i++) {
+          const j = geometry.index.getX(i);
+          posts.push(point.x + positions.getX(j), base + height / 2 + positions.getY(j), point.y + positions.getZ(j));
+        }
+        geometry.dispose();
+      }
+    }
+  }
   *cityGeometry(footprints) {
     const tiles = new Map();
+    const cover = [], posts = [];
     const buildingMetadata = new Map((this.elevation?.buildings || []).map(b => [b.index, b]));
     for (const [index, footprint] of footprints.entries()) {
-      if (footprint.kind !== "building" || footprint.points.length < 3) continue;
+      if (footprint.points.length < 3) continue;
+      if (footprint.kind === "roof") {
+        this.buildCanopy(footprint.points, cover, posts);
+        yield;
+        continue;
+      }
+      if (footprint.kind !== "building") continue;
       const points = footprint.points;
       const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length;
       const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length;
@@ -1204,6 +1310,18 @@ export class Map3DView {
         meshes.push(advert);
       }
     }
+    for (const [positions, material, name] of [[posts, this.roofPostMaterial, "canopy-pillars"],
+      [cover, this.roofMaterial, "canopy-cover"]]) {
+      if (!positions.length) continue;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = name;
+      mesh.userData.cityCanopy = true;
+      this.scene.add(mesh);
+      meshes.push(mesh);
+    }
     return meshes;
   }
   updateStreamedCity() {
@@ -1213,7 +1331,7 @@ export class Map3DView {
       this.cityRevision = revision;
       const groups = new Map();
       for (const shape of this.data.backdrop) {
-        if (shape.kind !== "building" || shape.points.length < 3) continue;
+        if ((shape.kind !== "building" && shape.kind !== "roof") || shape.points.length < 3) continue;
         const cx = shape.points.reduce((sum, p) => sum + p[0], 0) / shape.points.length;
         const cy = shape.points.reduce((sum, p) => sum + p[1], 0) / shape.points.length;
         const radius = Math.max(...shape.points.map(([x, y]) => Math.hypot(x - cx, y - cy)));
@@ -1255,7 +1373,7 @@ export class Map3DView {
       if (next.done) {
         const group = this.cityTask;
         this.cityGroups.set(group.key, { signature: group.shapes.map(shape => shape.id).join(","),
-          meshes: next.value, count: group.shapes.length });
+          meshes: next.value, count: group.shapes.filter(shape => shape.kind === "building").length });
         this.buildings.push(...next.value);
         this.cityTask = null;
       }
@@ -1909,7 +2027,7 @@ export class Map3DView {
     for (const building of this.buildings) {
       const sphere = building.geometry.boundingSphere;
       building.visible = this.overview || sphere.center.distanceTo(position) < 220 + sphere.radius;
-      if (!building.visible) continue;
+      if (!building.visible || building.userData.cityCanopy) continue;
       line.closestPointToPoint(sphere.center, true, closest);
       const obstructs = closest.distanceTo(sphere.center) < sphere.radius + 6
         && sphere.center.distanceTo(position) < distance + sphere.radius;

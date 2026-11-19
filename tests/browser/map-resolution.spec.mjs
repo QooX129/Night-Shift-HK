@@ -5,7 +5,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-300, -300, 300, 300],
@@ -25,6 +25,11 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
       view.updateGroundDetail(car);
       const texture = view.groundDetail.material.map;
       const initialImage = texture.image;
+      const sample = canvas => [...canvas.getContext("2d").getImageData(0, 0, 1, 1).data];
+      const chaseBase = sample(view.chaseTexture.image);
+      const overviewBase = sample(view.overviewTexture.image);
+      const detailBase = [...initialImage.data.slice(0, 4)];
+      view.ground.material.map = view.chaseTexture;
       const initialBounds = [...view.detailMap.backdropBounds];
       let builds = 0;
       const build = view.detailMap.buildBackdrop;
@@ -99,7 +104,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
         return result;
       };
       view.updateGroundDetail({ x: 80, y: 16 });
-      await response;
+      const workerBase = [...(await response).data.image.data.slice(0, 4)];
       view.updateGroundDetail({ x: 80, y: 16 });
       const previousVisible = view.groundDetail.material.map === texture
         && view.terrainDetailBounds.x === initialBounds[0] && Boolean(view.detailUpload);
@@ -130,6 +135,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
       view.overview = true;
       view.updateGroundDetail(car);
       return { sharpError, coarseError, oldDetailError, reused, shifted, stable, previousVisible, recycled,
+        chaseBase, overviewBase, detailBase, workerBase,
         uploadFrames, shiftedError, uploadBytes: uploads.map(upload => upload.bytes),
         maxUploadMs: Math.max(...uploads.map(upload => upload.ms)),
         enabledInOverview: view.terrainDetailEnabled.value, flatOverlayVisible: view.groundDetail.visible,
@@ -141,9 +147,13 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
       canvas.remove();
     }
   });
-  expect(result.scale).toBe(16);
-  expect(result.width).toBe(4096);
+  expect(result.scale).toBe(14);
+  expect(result.width).toBe(3584);
   expect(result.terrainHeight).toBe(10);
+  expect(result.chaseBase).toEqual([104, 120, 115, 255]);
+  expect(result.detailBase).toEqual(result.chaseBase);
+  expect(result.workerBase).toEqual(result.chaseBase);
+  expect(result.overviewBase).toEqual([26, 44, 48, 255]);
   console.log(`Terrain footprint edge error: ${result.sharpError} detailed / ${result.oldDetailError} previous / ${result.coarseError} district`);
   expect(result.sharpError, JSON.stringify(result)).toBeLessThan(result.coarseError * .5);
   expect(result.sharpError, JSON.stringify(result)).toBeLessThan(result.oldDetailError * .65);

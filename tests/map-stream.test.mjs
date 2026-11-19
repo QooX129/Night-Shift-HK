@@ -103,11 +103,12 @@ test("overlapping visual chunks deduplicate shapes and reject mixed dataset revi
   assert.equal(stream.cache.size, 1);
   stream.failures.set("1:0", 0);
   stream.fetcher = async () => ({ ok: true, json: async () => ({
-    version: "v1", key: "1:0", backdrop: (await response("0:0").json()).backdrop,
+    version: "v1", key: "1:0", backdrop: [...(await response("0:0").json()).backdrop,
+      { id: 21, kind: "roof", points: [[0, 0], [1, 0], [0, 1]] }],
   }) });
   stream.pump(); await tick();
   assert.equal(stream.cache.size, 2);
-  assert.equal(data.backdrop.length, 1);
+  assert.deepEqual(data.backdrop.map(shape => shape.kind), ["building", "roof"]);
   stream.dispose();
 });
 
@@ -146,6 +147,42 @@ test("progressive building groups preserve streamed elevation and dispose distan
   view.cityMaterial.dispose();
   view.landmarkMaterial.dispose();
   view.advertMaterial.dispose();
+});
+
+test("streamed roofs have curved transparent covers and pillars clear of the flyover", () => {
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data: { backdrop: [{ id: 8, kind: "roof", points: [[0, 0], [30, 0], [30, 12], [0, 12], [0, 0]] }] },
+    nodes: { a: [-10, 6], b: [40, 6] },
+    elevation: { node_heights: { a: 10, b: 10 } },
+    groundMap: { roadIndex: { query: () => [{ id: "ab", a: "a", b: "b", width: 7, bridge: "yes" }] } },
+    stream: { revision: 1 }, camera: { x: 0, y: 0 },
+    scene: new THREE.Scene(), cityGroups: new Map(), cityQueue: [], buildings: [],
+    roofMaterial: new THREE.MeshBasicMaterial({ transparent: true, opacity: .48 }),
+    roofPostMaterial: new THREE.MeshBasicMaterial(),
+  });
+  for (let i = 0; i < 10; i++) view.updateStreamedCity();
+  assert.equal(view.buildingCount, 0);
+  const [pillars, canopy] = view.buildings;
+  assert.equal(canopy.name, "canopy-cover");
+  assert(canopy.material.transparent && canopy.material.opacity < 1);
+  const cover = canopy.geometry.getAttribute("position");
+  const heights = Array.from({ length: cover.count }, (_, i) => cover.getY(i));
+  assert(Math.min(...heights) >= 15.19, "eaves clear the elevated road");
+  assert(Math.max(...heights) - Math.min(...heights) > 1, "cover has a raised center");
+  const posts = pillars.geometry.getAttribute("position");
+  assert.equal(posts.count / 36, 6);
+  for (let i = 0; i < posts.count; i++) assert(Math.abs(posts.getZ(i) - 6) > 3.5);
+  const edgeOnlyCover = [];
+  view.buildCanopy([[0, 8], [30, 8], [30, 12], [0, 12]], edgeOnlyCover, []);
+  assert(Math.min(...edgeOnlyCover.filter((_, i) => i % 3 === 1)) >= 15.19,
+    "eaves clear a flyover even when only its edge overlaps the canopy");
+  let disposed = false;
+  canopy.geometry.addEventListener("dispose", () => { disposed = true; });
+  view.camera.x = 10000;
+  view.updateStreamedCity();
+  assert(disposed);
+  view.roofMaterial.dispose();
+  view.roofPostMaterial.dispose();
 });
 
 test("each shop sign is either wall-mounted or projecting, with a wall fallback", () => {

@@ -3,7 +3,7 @@ import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=hk-streets-2";
 import { roadWidth } from "./road-width.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
-import { visualStream } from "./map-stream.mjs";
+import { visualStream } from "./map-stream.mjs?v=roof-canopies-1";
 import { SpatialGrid, pointBounds } from "./spatial-grid.mjs";
 import { roadLayer, isElevatedRoad, isTunnelRoad } from "./elevation.mjs?v=tunnel-clearance-1";
 
@@ -71,7 +71,8 @@ export class MapView {
     this.backdrop.width = Math.ceil((right - left) * s);
     this.backdrop.height = Math.ceil((bottom - top) * s);
     const c = this.backdrop.getContext("2d");
-    c.fillStyle = "#1a2c30"; c.fillRect(0, 0, this.backdrop.width, this.backdrop.height);
+    c.fillStyle = this.backdropColor ?? "#1a2c30";
+    c.fillRect(0, 0, this.backdrop.width, this.backdrop.height);
     c.scale(s, s); c.translate(-left, -top);
     c.lineWidth = 0.5;
     const shapes = this.shapeIndex.query(bounds);

@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 import unittest
@@ -11,6 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ElevationTests(unittest.TestCase):
+    def test_flyover_roofs_are_not_packaged_as_buildings(self):
+        source = json.loads((ROOT / "data/source.osm.json").read_text())
+        elevation = json.loads((ROOT / "data/elevation.json").read_text())
+        district = json.loads((ROOT / "data/district.json").read_text())
+        ways = {item["id"]: item["tags"] for item in source["elements"]
+                if item["type"] == "way" and "tags" in item}
+        self.assertEqual(ways[1429930361]["building"], "roof")
+        self.assertEqual(ways[1429930361]["layer"], "4")
+        buildings = {item["osm_way"] for item in elevation["buildings"]}
+        self.assertEqual({shape["osm_way"] for shape in district["backdrop"] if shape["kind"] == "roof"},
+                         {way for way, tags in ways.items() if tags.get("building") == "roof"})
+        self.assertTrue(buildings.isdisjoint({1429930361, 1375568987, 1431338189}))
+        self.assertIn(160323946, buildings)  # Nearby Prosperous Garden apartment block.
+
     def junction(self):
         nodes = {"a": (-100, 0), "b": (0, 0), "c": (100, 0), "d": (0, 100)}
         heights = {"a": 0, "b": 5, "c": 10, "d": 15}
