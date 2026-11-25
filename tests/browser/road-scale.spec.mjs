@@ -5,7 +5,7 @@ test.use({ trace: "off" });
 test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
@@ -64,7 +64,7 @@ test("overlapping road joints match the road surface without visible patches", a
 test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const data = {
       bounds: [-20, -40, 100, 50],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
@@ -92,8 +92,11 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
         for (let i = start; i < start + count; i += 6) {
           if (Math.abs(p.getY(i) - .12) > .001) continue;
           const x = [p.getX(i), p.getX(i + 2)], z = [p.getZ(i), p.getZ(i + 2)];
+          // The curb at x=37 needs 0.8 m for its rounded double-yellow turn.
           if (Math.abs(x[1] - x[0]) > Math.abs(z[1] - z[0])
-              && Math.max(...x) > 37.05 && Math.min(...x) < 40 && Math.abs(z[0]) < 5) nathanCrossing = true;
+              && Math.max(...x) > 37.8 && Math.min(...x) < 40 && Math.abs(z[0]) < 5) {
+            nathanCrossing = true;
+          }
           if (Math.abs(z[1] - z[0]) > Math.abs(x[1] - x[0])
               && Math.abs(x[0] - 40) < 3.1 && Math.min(...z) < 12 && Math.max(...z) > 12) crossStreetLines = true;
         }
@@ -104,8 +107,32 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
       const depth = p ? Math.max(...Array.from({ length: p.count }, (_, i) => p.getZ(i)))
         - Math.min(...Array.from({ length: p.count }, (_, i) => p.getZ(i))) : 0;
       const boxes = view.scene.children.filter(mesh => mesh.name === "yellow-box-markings");
+      const crossingLateral = view.scene.children.filter(mesh => mesh.name === "bridge-and-tunnel-shells")
+        .flatMap(mesh => {
+          const p = mesh.geometry.getAttribute("position"), values = [];
+          for (let i = 0; i < p.count; i++)
+            if (Math.abs(p.getY(i) - .14) < .001 && Math.abs(p.getX(i) - 33) <= 1.51)
+              values.push(p.getZ(i));
+          return values;
+        });
+      const deckColor = view.scene.children.find(mesh => mesh.name === "level-separated-solid-road-decks")
+        .geometry.getAttribute("color");
+      const jointColors = view.scene.children.filter(mesh => mesh.name === "continuous-shared-node-road-joints")
+        .every(mesh => {
+          const p = mesh.geometry.getAttribute("position"), color = mesh.geometry.getAttribute("color"),
+            uv = mesh.geometry.getAttribute("uv");
+          if (color?.count !== p.count) return false;
+          for (let i = 0; i < p.count; i++) {
+            if (Math.abs(uv.getX(i) - p.getX(i) / 12) > .00001
+                || Math.abs(uv.getY(i) - p.getZ(i) / 12) > .00001) return false;
+            if (Math.abs(p.getX(i)) < .001 && Math.abs(p.getZ(i)) < .001
+                && [0, 1, 2].some(c => Math.abs(color.array[i * 3 + c] - deckColor.array[c]) > .00001)) return false;
+          }
+          return true;
+        });
       return { nathanCrossing, crossStreetLines, depth, boxes: boxes.length,
-        readableBack: p?.count === 12 && uv.getX(0) !== uv.getX(6) };
+        crossingCenter: (Math.min(...crossingLateral) + Math.max(...crossingLateral)) / 2,
+        jointColors, readableBack: p?.count === 12 && uv.getX(0) !== uv.getX(6) };
     } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
   });
   expect.soft(result.nathanCrossing).toBe(false);
@@ -113,12 +140,14 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
   expect.soft(result.depth).toBeGreaterThan(1);
   expect.soft(result.readableBack).toBe(true);
   expect.soft(result.boxes).toBe(0);
+  expect(result.crossingCenter).toBeCloseTo(0, 5);
+  expect(result.jointColors).toBe(true);
 });
 
 test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map?stream=true")).json();
     const center = data.nodes["1151084860"];
@@ -142,9 +171,9 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
           containsJunction: bounds.min.x < center[0] && bounds.max.x > center[0]
             && bounds.min.z < center[1] && bounds.max.z > center[1] };
       });
-      const intersects = (point, name) => data.edges.some(edge => edge.name === name
-        && project(point, data.nodes[edge.a], data.nodes[edge.b]).distance < edge.width / 2 - .2);
-      let curbInJunction = false;
+      const clearance = (point, name) => Math.max(...data.edges.filter(edge => edge.name === name)
+        .map(edge => edge.width / 2 - project(point, data.nodes[edge.a], data.nodes[edge.b]).distance));
+      let curbDepth = 0;
       for (const mesh of view.scene.children.filter(mesh => mesh.userData.streetRanges?.yellow)) {
         const p = mesh.geometry.getAttribute("position");
         const [start, count] = mesh.userData.streetRanges.yellow;
@@ -152,23 +181,23 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
           const t = step / 10;
           const point = { x: p.getX(i) * (1 - t) + p.getX(i + 2) * t,
             y: p.getZ(i) * (1 - t) + p.getZ(i + 2) * t };
-          if (Math.hypot(point.x - center[0], point.y - center[1]) < 30
-              && intersects(point, "Nathan Road") && intersects(point, "Argyle Street")) curbInJunction = true;
+          if (Math.hypot(point.x - center[0], point.y - center[1]) < 30)
+            curbDepth = Math.max(curbDepth, Math.min(clearance(point, "Nathan Road"), clearance(point, "Argyle Street")));
         }
       }
-      return { boxes: boxInfo, curbInJunction };
+      return { boxes: boxInfo, curbDepth };
     } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
   });
   expect(result.boxes).toHaveLength(1);
   expect(result.boxes[0].count).toBeGreaterThan(0);
   expect(result.boxes[0].containsJunction).toBe(true);
-  expect(result.curbInJunction).toBe(false);
+  expect(result.curbDepth).toBeLessThanOrEqual(.8);
 });
 
 test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const data = {
       bounds: [-20, -20, 220, 140],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },
@@ -239,7 +268,7 @@ test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", 
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const { RoadNetwork } = await import("/physics.mjs?v=parabolic-steering-1");
     const data = {
       bounds: [-10, -20, 110, 30], backdrop: [
@@ -378,7 +407,7 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const { RoadNetwork, project } = await import("/physics.mjs?v=parabolic-steering-1");
     const roads = new RoadNetwork(data);
     const side = roads.edges.get("485635353:2:6505945379"), main = roads.edges.get("1067815827:9:13108528146");
@@ -419,13 +448,17 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
 });
 
 test("Waterloo and Ferry junction clips internal walls at the reported overlap", async ({ page }, testInfo) => {
+  test.setTimeout(60000);
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
-  await page.locator("#start").click();
+  await page.locator("#welcome").evaluate(dialog => dialog.close());
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const { project } = await import("/physics.mjs?v=parabolic-steering-1");
+    const { surfacePose, isGroundRoad } = await import("/elevation.mjs?v=tunnel-clearance-1");
+    const { roadWidth } = await import("/road-width.mjs");
+    const { SpatialGrid, pointBounds } = await import("/spatial-grid.mjs");
     const canvas = document.createElement("canvas");
     canvas.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:10000";
     document.body.append(canvas);
@@ -433,6 +466,31 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
     const car = { x: -208.373119, y: 184.53314, heading: -2.95987, speed: 0,
       edge: "1299955103:0:1168380653" };
     view.render(car, null, "en", null);
+    const yellowEnds = new Map();
+    const roadIndex = new SpatialGrid(view.groundMap.unique.filter(isGroundRoad), edge =>
+      pointBounds([data.nodes[edge.a], data.nodes[edge.b]], roadWidth(data.driving, edge) / 2 + 1), 32);
+    let hiddenYellow = 0;
+    for (const mesh of view.scene.children.filter(mesh => mesh.userData.streetRanges?.yellow)) {
+      const p = mesh.geometry.getAttribute("position");
+      const [start, count] = mesh.userData.streetRanges.yellow;
+      const vertex = i => [p.getX(i), p.getY(i), p.getZ(i)].join(":");
+      for (let i = start; i < start + count; i += 6) for (const [a, b] of [[i, i + 1], [i + 2, i + 5]]) {
+        const key = [vertex(a), vertex(b)].sort().join("|");
+        if (!yellowEnds.has(key)) yellowEnds.set(key, { count: 0,
+          x: (p.getX(a) + p.getX(b)) / 2, y: (p.getZ(a) + p.getZ(b)) / 2 });
+        yellowEnds.get(key).count++;
+      }
+      for (let i = start; i < start + count; i++) {
+        const point = { x: p.getX(i), y: p.getZ(i) };
+        if (Math.hypot(point.x + 251.345813, point.y - 170.560205) > 40) continue;
+        if (roadIndex.query([point.x, point.y, point.x, point.y]).some(edge =>
+          project(point, data.nodes[edge.a], data.nodes[edge.b]).distance <= roadWidth(data.driving, edge) / 2
+          && p.getY(i) < surfacePose(view, edge, point, 0).height + .08 - .001)) hiddenYellow++;
+      }
+    }
+    const yellowGaps = [car, { x: -54.852194, y: 142.923299 }, { x: -251.345813, y: 170.560205 }]
+      .map(point => [...yellowEnds.values()].filter(end => end.count % 2 !== 0
+        && Math.hypot(end.x - point.x, end.y - point.y) < 80).length);
     const roads = view.groundMap.collisionLines.roads;
     const key = edge => [edge.a, edge.b].sort().join(":");
     const nearby = [...new Map(view.boundaryLines.filter(({ edge }) =>
@@ -468,7 +526,7 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
     view.cameraReady = false;
     view.render(car, null, "en", null);
     window.junctionPreview = view;
-    return { internalWalls, found, cached: geometry === view.boundaryOutline.geometry,
+    return { internalWalls, found, yellowGaps, hiddenYellow, cached: geometry === view.boundaryOutline.geometry,
       staticOverview, segments: view.boundaryLines.length };
   });
   expect(result.internalWalls).toBe(0);
@@ -476,6 +534,33 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
   expect(result.cached).toBe(true);
   expect(result.staticOverview).toBe(true);
   expect(result.segments).toBeGreaterThan(0);
+  expect(result.yellowGaps).toEqual([0, 0, 0]);
+  expect(result.hiddenYellow).toBe(0);
+  await expect(page.locator("#error-dialog")).not.toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("junction-without-internal-walls.png") });
+  const roundedVertices = await page.evaluate(() => {
+    const view = window.junctionPreview;
+    view.cameraReady = false;
+    view.render({ x: -54.852194, y: 142.923299, speed: 0, heading: .164518,
+      edge: "~987256889:0:276372857" }, null, "en", null);
+    let vertices = 0;
+    for (const mesh of view.scene.children.filter(mesh => mesh.userData.streetRanges?.yellow)) {
+      const p = mesh.geometry.getAttribute("position");
+      const [start, count] = mesh.userData.streetRanges.yellow;
+      for (let i = start; i < start + count; i++) {
+        const radius = Math.hypot(p.getX(i) + 58.571545, p.getZ(i) - 144.145774);
+        if ([.29, .41, .59, .71].some(r => Math.abs(radius - r) < .002)) vertices++;
+      }
+    }
+    return vertices;
+  });
+  expect(roundedVertices).toBeGreaterThan(24);
+  await page.screenshot({ path: testInfo.outputPath("reclamation-rounded-curb-joins.png") });
+  await page.evaluate(() => {
+    window.junctionPreview.cameraReady = false;
+    window.junctionPreview.render({ x: -251.345813, y: 170.560205, speed: 0, heading: .085772,
+      edge: "66348963:0:334648625" }, null, "en", null);
+  });
+  await page.screenshot({ path: testInfo.outputPath("waterloo-mixed-width-curb-joins.png") });
   await page.evaluate(() => { window.junctionPreview.dispose(); window.junctionPreview.canvas.remove(); delete window.junctionPreview; });
 });

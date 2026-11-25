@@ -12,6 +12,7 @@ import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
 import { project } from "./physics.mjs?v=tunnel-clearance-1";
 import { visualStream } from "./map-stream.mjs?v=roof-canopies-1";
+import { SpatialGrid, pointBounds } from "./spatial-grid.mjs";
 
 const CHASE_PITCH = Math.atan2(.6, .9);
 const MIN_CHASE_PITCH = Math.PI / 10;
@@ -148,13 +149,19 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=building-road-types-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=curved-curbs-4", import.meta.url), { type: "module" });
+      this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
           : this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale, backdropColor: this.detailMap.backdropColor,
+        curbs: this.curbWorkerPending,
         revision: this.stream?.revision ?? 0 });
       this.detailWorker.onmessage = ({ data }) => {
+        if (data.type === "curbs") {
+          this.readyCurbs = data.positions;
+          return;
+        }
         if (data.type === "route") {
           if (data.request === this.pendingRoute?.request) this.readyRoute = data;
           return;
@@ -433,6 +440,108 @@ export class Map3DView {
     const task = this.roadSurfaceGeometry();
     while (!task.next().done) {}
   }
+  *curbMarkings() {
+    const roads = [...new Map(this.groundMap.unique.filter(isGroundRoad).map(edge =>
+      [`${roadWidth(this.data.driving, edge)}:${[edge.a, edge.b].sort().join(":")}`, edge])).values()];
+    if (!roads.length) return [];
+    let polygons = roads.map(edge => {
+      const a = this.nodes[edge.a], b = this.nodes[edge.b], r = roadWidth(this.data.driving, edge) / 2;
+      const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      const steps = Math.max(8, Math.ceil(Math.PI / Math.acos(Math.max(-1, 1 - .01 / r))));
+      const ring = [];
+      for (const [p, start] of [[b, angle - Math.PI / 2], [a, angle + Math.PI / 2]])
+        for (let i = 0; i <= steps; i++) {
+          const theta = start + i * Math.PI / steps;
+          // Millimetre snapping avoids near-coincident capsule edges in the union.
+          ring.push([p[0] + r * Math.cos(theta), p[1] + r * Math.sin(theta)]
+            .map(v => Math.round(v * 1000) / 1000));
+        }
+      ring.push(ring[0]);
+      return [[ring]];
+    });
+    // Bounded unions avoid the clipping library's full-map event-queue limit.
+    while (polygons.length > 1) {
+      const next = [];
+      for (let i = 0; i < polygons.length; i += 64) {
+        next.push(polygonClipping.union(...polygons.slice(i, i + 64)));
+        yield;
+      }
+      polygons = next;
+    }
+    const [left, top, right, bottom] = this.data.bounds;
+    const pavement = polygonClipping.intersection(polygons[0],
+      [[[left, top], [right, top], [right, bottom], [left, bottom], [left, top]]]);
+    const roadIndex = new SpatialGrid(roads, edge =>
+      pointBounds([this.nodes[edge.a], this.nodes[edge.b]], roadWidth(this.data.driving, edge) / 2 + 1), 32);
+    const owner = p => {
+      let nearest, distance = Infinity;
+      for (const edge of roadIndex.query([p[0], p[1], p[0], p[1]])) {
+        const gap = Math.abs(project({ x: p[0], y: p[1] }, this.nodes[edge.a], this.nodes[edge.b]).distance
+          - roadWidth(this.data.driving, edge) / 2);
+        if (gap < distance) { nearest = edge; distance = gap; }
+      }
+      if (!nearest) throw new Error(`No ground road owns curb at ${p.join(",")}`);
+      return nearest;
+    };
+    const sample = p => ({ p, edge: owner(p) });
+    const vertex = ({ p, edge }, inset, normal) => {
+      const x = p[0] + normal[0] * inset, y = p[1] + normal[1] * inset;
+      let height = surfacePose(this, edge, { x, y }, 0).height;
+      for (const next of roadIndex.query([x, y, x, y]))
+        if (project({ x, y }, this.nodes[next.a], this.nodes[next.b]).distance <= roadWidth(this.data.driving, next) / 2 + .02)
+          height = Math.max(height, surfacePose(this, next, { x, y }, 0).height);
+      return [x, height + .12, y];
+    };
+    const positions = [];
+    const strip = (a, b, c, d) => positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (const polygon of pavement) for (const ring of polygon) {
+      const segments = [], first = sample(ring[0]);
+      let previous = first;
+      for (let i = 1; i < ring.length; i++) {
+        const a = ring[i - 1], b = ring[i], dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+        // Union rings keep pavement on the left, including around traffic islands.
+        const normal = [-dy / length, dx / length];
+        for (const [start, end] of surfaceSegments(this, owner([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]), a, b)) {
+          const steps = Math.max(1, Math.ceil(Math.hypot(end[0] - start[0], end[1] - start[1]) / 2));
+          for (let step = 1; step <= steps; step++) {
+            const p = step === steps ? end : start.map((v, axis) => v + (end[axis] - v) * step / steps);
+            const last = i === ring.length - 1 && step === steps
+              && Math.hypot(p[0] - ring[0][0], p[1] - ring[0][1]) < 1e-7;
+            const next = last ? first : sample(p);
+            segments.push({ a: previous, b: next, normal });
+            previous = next;
+          }
+        }
+        if (i % 128 === 0) yield;
+      }
+      for (let i = 0; i < segments.length; i++) {
+        const { a, b, normal } = segments[i];
+        for (const inset of [.35, .65])
+          strip(vertex(a, inset - .06, normal), vertex(a, inset + .06, normal),
+            vertex(b, inset + .06, normal), vertex(b, inset - .06, normal));
+        if (i % 256 === 0) yield;
+      }
+      for (let i = 0; i < segments.length; i++) {
+        const endpoint = segments[i].b;
+        const [nx, ny] = segments[i].normal, [ox, oy] = segments[(i + 1) % segments.length].normal;
+        const angle = Math.atan2(nx * oy - ny * ox, nx * ox + ny * oy);
+        const steps = Math.abs(angle) < 1e-7 ? 0 : Math.ceil(Math.abs(angle) / (Math.PI / 24));
+        for (const inset of [.35, .65]) for (let step = 0; step < steps; step++) {
+          const normal = i => {
+            if (i === 0) return [nx, ny];
+            if (i === steps) return [ox, oy];
+            const a = angle * i / steps;
+            return [nx * Math.cos(a) - ny * Math.sin(a), nx * Math.sin(a) + ny * Math.cos(a)];
+          };
+          const first = normal(step), last = normal(step + 1);
+          strip(vertex(endpoint, inset - .06, first), vertex(endpoint, inset + .06, first),
+            vertex(endpoint, inset + .06, last), vertex(endpoint, inset - .06, last));
+        }
+        if (i % 256 === 0) yield;
+      }
+    }
+    return positions;
+  }
   *roadSurfaceGeometry() {
     const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeSurfaces = new Map();
     const junctions = new Map();
@@ -609,9 +718,6 @@ export class Map3DView {
                 capsuleIntervals(line.a, line.b, this.groundMap.collisionLines.roads, other, -.03));
             }
             for (const [first, last] of intervals) {
-              for (const inset of [.35, .65]) quad(tile.yellow,
-                at(first, -inset - .06, .12), at(first, -inset + .06, .12),
-                at(last, -inset + .06, .12), at(last, -inset - .06, .12));
               quad(tile.sidewalk, at(first, .1, .04), at(first, 2, .04), at(last, 2, .04), at(last, .1, .04));
               for (let from = first * lineLength + 4; from + 3 <= last * lineLength - 4; from += 3) {
                 for (const height of [.5, 1]) quad(tile.railing,
@@ -626,8 +732,10 @@ export class Map3DView {
             && other.name !== "Local road" && other.way !== edge.way);
           if (!crossStreet) continue;
           const center = atStart ? 7 : length - 7;
-          for (let lateral = -r + .7; lateral < r - .7; lateral += 1.6) {
-            const begin = Math.max(-r + .2, lateral - .45), end = Math.min(r - .2, lateral + .45);
+          const bars = Math.max(1, Math.floor((2 * r - 1.4) / 1.6) + 1);
+          for (let bar = 0; bar < bars; bar++) {
+            const lateral = (bar - (bars - 1) / 2) * 1.6;
+            const begin = lateral - .45, end = lateral + .45;
             quad(tile.markings, roadside(center - 1.5, begin, .14), roadside(center - 1.5, end, .14),
               roadside(center + 1.5, end, .14), roadside(center + 1.5, begin, .14));
           }
@@ -675,6 +783,22 @@ export class Map3DView {
       this.addRoadTile(tile);
       yield;
     }
+    let curbs;
+    if (this.curbWorkerPending) {
+      while (!this.readyCurbs) yield;
+      curbs = this.readyCurbs;
+      this.readyCurbs = null; this.curbWorkerPending = false;
+    } else curbs = yield* this.curbMarkings();
+    const curbTiles = new Map();
+    for (let i = 0; i < curbs.length; i += 18) {
+      const key = `${Math.floor((curbs[i] + curbs[i + 6]) / 400)}:${Math.floor((curbs[i + 2] + curbs[i + 8]) / 400)}`;
+      if (!curbTiles.has(key)) curbTiles.set(key, []);
+      curbTiles.get(key).push(...curbs.slice(i, i + 18));
+    }
+    for (const yellow of curbTiles.values()) {
+      this.addRoadTile({ yellow });
+      yield;
+    }
     const pilot = this.elevation.pilot;
     if (pilot.triangles?.length) {
       const geometry = new THREE.BufferGeometry();
@@ -693,7 +817,7 @@ export class Map3DView {
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
     // Matching world-space asphalt makes coplanar road overlaps visually identical.
-    const material = new THREE.MeshBasicMaterial({ color: "#46545a", map: this.asphaltTexture,
+    const material = new THREE.MeshBasicMaterial({ vertexColors: true, map: this.asphaltTexture,
       side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const faded = material.clone();
     faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
@@ -703,19 +827,23 @@ export class Map3DView {
     for (const [node, radius] of nodeRadii) {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
-      if (!jointTiles.has(key)) jointTiles.set(key, []);
-      const edge = nodeSurfaces.get(node), positions = jointTiles.get(key);
+      if (!jointTiles.has(key)) jointTiles.set(key, { positions: [], colors: [] });
+      const edge = nodeSurfaces.get(node), { positions, colors } = jointTiles.get(key), tint = roadTint(edge);
       const centre = [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
       const rim = angle => {
         const px = x + radius * Math.cos(angle), py = y + radius * Math.sin(angle);
         return [px, surfacePose(this, edge, { x: px, y: py }, 0).height + .08, py];
       };
-      for (let i = 0; i < 32; i++) triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
+      for (let i = 0; i < 32; i++) {
+        triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
+        for (let vertex = 0; vertex < 3; vertex++) colors.push(tint.r, tint.g, tint.b);
+      }
       if (++nodeSteps % 4 === 0) yield;
     }
-    for (const positions of jointTiles.values()) {
+    for (const { positions, colors } of jointTiles.values()) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
       const uv = [];
       for (let i = 0; i < positions.length; i += 3) uv.push(positions[i] / 12, positions[i + 2] / 12);
       geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));

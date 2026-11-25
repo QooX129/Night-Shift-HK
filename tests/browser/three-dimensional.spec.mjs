@@ -7,7 +7,7 @@ test.use({ trace: "off" });
 test("translucent canopy occludes only the road boundaries behind it", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const canvas = document.body.appendChild(document.createElement("canvas"));
     const view = new Map3DView(canvas, {
@@ -58,7 +58,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
@@ -118,7 +118,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -162,7 +162,7 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -275,7 +275,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -310,7 +310,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.create(Map3DView.prototype);
     view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
@@ -356,7 +356,7 @@ test("GPS route progress reuses traffic geometry and completed route segments", 
 test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = await (await fetch("/api/map")).json();
     const session = await (await fetch("/api/sessions", { method: "POST" })).json();
@@ -410,7 +410,7 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -465,7 +465,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -654,7 +654,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=parabolic-steering-1");
+    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },

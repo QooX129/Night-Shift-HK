@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { VisualStream, VISUAL_CHUNK_CACHE_LIMIT } from "../web/map-stream.mjs";
 import { SpatialGrid, pointBounds } from "../web/spatial-grid.mjs";
 import { Map3DView } from "../web/map3d.mjs";
@@ -19,6 +20,83 @@ test("spatial queries deduplicate crossing objects and omit distant objects", ()
   const near = { points: [[-5, -5], [270, 10]] }, far = { points: [[10000, 10000], [10010, 10010]] };
   const grid = new SpatialGrid([near, far], shape => pointBounds(shape.points));
   assert.deepEqual(grid.query([-10, -10, 300, 20]), [near]);
+});
+
+function assertClosedBands(positions) {
+  const edges = new Map();
+  const vertex = i => positions.slice(i, i + 3).map(v => v.toFixed(6)).join(":");
+  for (let i = 0; i < positions.length; i += 18) {
+    for (const [a, b] of [[i, i + 3], [i + 6, i + 15]]) {
+      const key = [vertex(a), vertex(b)].sort().join("|");
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  assert(edges.size > 0);
+  const open = [...edges].filter(([, count]) => count % 2 !== 0);
+  assert.equal(open.length, 0, `yellow bands must have no exposed strip ends: ${JSON.stringify(open.slice(0, 4))}`);
+}
+
+function curbPositions(data) {
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data, nodes: data.nodes, elevation: data.elevation,
+    groundMap: { unique: data.edges,
+      roadIndex: new SpatialGrid(data.edges, edge => pointBounds([data.nodes[edge.a], data.nodes[edge.b]], 24)) },
+  });
+  const task = view.curbMarkings();
+  let result;
+  do { result = task.next(); } while (!result.done);
+  return result.value;
+}
+
+test("yellow bands are continuous across the entire packaged ground-road map", () => {
+  const data = JSON.parse(readFileSync(new URL("../data/district.json", import.meta.url)));
+  data.driving = { widths: { primary: 9, secondary: 9, residential: 6 } };
+  data.elevation = JSON.parse(readFileSync(new URL("../data/elevation.json", import.meta.url)));
+  const positions = curbPositions(data);
+  assert(positions.every(Number.isFinite));
+  assertClosedBands(positions);
+});
+
+test("curved yellow bands stay connected on slopes and exclude flyovers", () => {
+  const data = { bounds: [-30, -30, 30, 30], nodes: { a: [0, 0], b: [10, 0] },
+    driving: { widths: {} }, edges: [{ id: "slope", a: "a", b: "b", width: 10, kind: "residential" }],
+    elevation: { node_heights: { a: 2, b: 6 } } };
+  const positions = curbPositions(data);
+  assertClosedBands(positions);
+  for (let i = 0; i < positions.length; i += 3) {
+    const expected = 2.12 + 4 * Math.max(0, Math.min(1, positions[i] / 10));
+    assert(Math.abs(positions[i + 1] - expected) < 1e-9);
+  }
+  data.edges[0].bridge = "yes";
+  assert.equal(curbPositions(data).length, 0);
+});
+
+test("mixed-width junction yellow bands have closed, rounded corner connections", () => {
+  const data = { bounds: [-30, -30, 30, 30],
+    nodes: { a: [-20, 0], b: [0, 0], c: [20, 0], d: [0, -20], e: [0, 20] },
+    driving: { widths: {} },
+    edges: [{ id: "wide", a: "a", b: "b", width: 9 }, { id: "narrow", a: "b", b: "c", width: 6 },
+      { id: "cross", a: "d", b: "e", width: 6 }].map(edge => ({ ...edge, kind: "residential" })) };
+  const positions = curbPositions(data);
+  assertClosedBands(positions);
+  const corner = [];
+  for (let i = 0; i < positions.length; i += 3)
+    if (positions[i] > -2.92 && positions[i] < -2 && positions[i + 2] > 3.5 && positions[i + 2] < 4.42)
+      corner.push(Math.hypot(positions[i] + 3, positions[i + 2] - 4.5));
+  assert(corner.length >= 12, "the turn has intermediate arc vertices");
+  assert(corner.every(radius => radius <= .710001), "no sharp miter projects beyond the rounded band");
+});
+
+test("yellow corner connections stay above overlapping ground-road decks", () => {
+  const data = { bounds: [-30, -30, 30, 30],
+    nodes: { a: [-20, 0], b: [20, 0], c: [0, -20], d: [0, 20] },
+    driving: { widths: {} },
+    edges: [{ id: "low", a: "a", b: "b", width: 9 }, { id: "high", a: "c", b: "d", width: 6 }],
+    elevation: { node_heights: { a: 0, b: 0, c: .3, d: .3 } } };
+  const positions = curbPositions(data);
+  for (let i = 0; i < positions.length; i += 3)
+    if (Math.abs(positions[i]) <= 3 && Math.abs(positions[i + 2]) <= 20)
+      assert(positions[i + 1] >= .42 - 1e-9, "the higher asphalt must not hide a joined yellow corner");
 });
 
 test("stream loads only nearby chunks with at most two simultaneous requests", async () => {

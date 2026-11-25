@@ -1,4 +1,4 @@
-import { Map3DView } from "./map3d.mjs?v=building-road-types-1";
+import { Map3DView } from "./map3d.mjs?v=curved-curbs-4";
 import { MapView } from "./map.mjs?v=building-road-types-1";
 
 let view;
@@ -30,6 +30,13 @@ self.onmessage = ({ data }) => {
       console.warn("OffscreenCanvas 2D unavailable; 3D road textures will refresh on the main thread.");
     }
     view.directionLines = { geometry: { dispose() {} } };
+    if (data.curbs) {
+      const task = view.curbMarkings();
+      let result;
+      do { result = task.next(); } while (!result.done);
+      const positions = new Float32Array(result.value);
+      self.postMessage({ type: "curbs", positions }, [positions.buffer]);
+    }
     return;
   }
   if (data.type === "visuals") {

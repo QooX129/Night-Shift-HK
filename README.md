@@ -79,6 +79,13 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   office tower receive a glass-toned treatment.
   Sidewalks, railings, traffic lights, double yellow lines and crossings are
   decorative approximations on eligible ground-level streets across the map.
+  Double yellow bands follow continuous outlines of combined ground-road pavement,
+  including mixed-width junctions and traffic islands. Rounded arc joins replace
+  sharp corners; the bands stay out of junction interiors.
+  At overlapping ground roads, markings sit above the highest asphalt surface.
+  Zebra bars are centered across each road.
+  Road joints share their adjoining road's asphalt tint and world-space texture
+  coordinates to avoid bright circular seam patches.
   Yellow boxes are restricted to individually verified locations: currently
   Nathan Road / Argyle Street, confirmed from a user-supplied November 2023
   street image. The box's shape and dimensions are approximate, not surveyed
