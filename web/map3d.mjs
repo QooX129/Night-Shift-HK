@@ -149,7 +149,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=junction-surface-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=no-road-sidewalks-1", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -730,7 +730,7 @@ export class Map3DView {
       if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [],
         colors: { deck: [], elevatedDeck: [] }, markings: [], yellow: [], box: [],
         roadRanges: { deck: [], shell: [], elevatedDeck: [], markings: [] },
-        sidewalk: [], railing: [], signal: [], signalRed: [] });
+        railing: [], signal: [], signalRed: [] });
       const tile = tiles.get(key);
       const starts = Object.fromEntries(Object.keys(tile.roadRanges).map(kind => [kind, tile[kind].length / 3]));
       const bridge = isElevatedRoad(edge), tunnel = isTunnelRoad(edge);
@@ -889,7 +889,6 @@ export class Map3DView {
                 capsuleIntervals(line.a, line.b, this.groundMap.collisionLines.roads, other, -.03));
             }
             for (const [first, last] of intervals) {
-              quad(tile.sidewalk, at(first, .1, .04), at(first, 2, .04), at(last, 2, .04), at(last, .1, .04));
               for (let from = first * lineLength + 4; from + 3 <= last * lineLength - 4; from += 3) {
                 for (const height of [.5, 1]) quad(tile.railing,
                   at(from / lineLength, .8, height), at((from + 3) / lineLength, .8, height),
@@ -1146,7 +1145,7 @@ export class Map3DView {
     }
   }
   addRoadTile(tile) {
-    const detailColors = { yellow: "#d3ac56", sidewalk: SIDEWALK_COLOR, railing: "#b1bfba",
+    const detailColors = { yellow: "#d3ac56", railing: "#b1bfba",
       signal: "#253438", signalRed: "#d36a5e" };
     const details = [], colors = [], ranges = {};
     for (const [kind, positions] of Object.entries(tile)) {

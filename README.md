@@ -77,8 +77,9 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   height where available. Road lane/surface tags guide the night-style palette and
   markings. Langham Place's mapped mall and
   office tower receive a glass-toned treatment.
-  Sidewalks, railings, traffic lights, double yellow lines and crossings are
+  Railings, traffic lights, double yellow lines and crossings are
   decorative approximations on eligible ground-level streets across the map.
+  Roadside sidewalk strips are not drawn; pedestrian paths remain available.
   Double yellow bands follow continuous outlines of combined ground-road pavement,
   including mixed-width junctions and traffic islands. Rounded arc joins replace
   sharp corners; the bands stay out of junction interiors.
