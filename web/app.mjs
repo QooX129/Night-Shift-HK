@@ -1,5 +1,5 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=building-road-types-1";
+import { MapView } from "./map.mjs?v=hk-transport-models-5";
 import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
@@ -645,7 +645,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=no-road-sidewalks-1");
+      const { Map3DView } = await import("./map3d.mjs?v=hk-transport-models-5");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);

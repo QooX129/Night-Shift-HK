@@ -2,10 +2,239 @@ import { test, expect } from "@playwright/test";
 
 test.use({ trace: "off" });
 
+test("transport locations render as 2D icons and Hong Kong-style street models", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await page.locator("#welcome").evaluate(dialog => dialog.close());
+  const result = await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { SpatialGrid, pointBounds } = await import("/spatial-grid.mjs");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const features = [
+      { kind: "taxi", point: [0, 0] },
+      { kind: "bus", point: [30, 5] },
+      { kind: "mtr", point: [60, 0], ref: "A2",
+        station: { id: "mong-kok", name: "Mong Kok", zh: "旺角" } },
+    ];
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d"), labels = [];
+    const fillText = context.fillText.bind(context);
+    context.fillText = (text, x, y) => { labels.push([text, x, y]); fillText(text, x, y); };
+    const map = Object.assign(Object.create(MapView.prototype), {
+      transportIndex: new SpatialGrid(features, item => pointBounds([item.point])),
+    });
+    map.drawTransport(context, [-10, -10, 70, 10], 1);
+    const nodes = { a: [-20, 0], b: [80, 0] };
+    const edge = { id: "road", a: "a", b: "b", width: 6, kind: "residential", layer: "0" };
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data: { transport: features, driving: { widths: { residential: 6 } } }, nodes,
+      elevation: { node_heights: { a: 5, b: 5 }, road_profiles: {}, road_junctions: {} },
+      groundMap: { spatialIndexes() {}, roadIndex: new SpatialGrid([edge], item => pointBounds([nodes[item.a], nodes[item.b]], 24)) },
+      scene: new THREE.Scene(), resources: [],
+    });
+    const printedLabels = [];
+    const prototype = CanvasRenderingContext2D.prototype, print = prototype.fillText;
+    prototype.fillText = function (label, ...args) {
+      printedLabels.push({ label, x: args[0], align: this.textAlign }); return print.call(this, label, ...args);
+    };
+    try { view.buildTransport(); } finally { prototype.fillText = print; }
+    const signs = ["taxi", "bus", "mtr"].map(kind => {
+      const mesh = view.scene.getObjectByName(`transport-${kind}-signs`);
+      const matrix = new THREE.Matrix4();
+      mesh.getMatrixAt(0, matrix);
+      return { kind, count: mesh.count, point: new THREE.Vector3().setFromMatrixPosition(matrix).toArray() };
+    });
+    const canopy = view.scene.getObjectByName("transport-mtr-canopies");
+    canopy.geometry.computeBoundingBox();
+    const redPixels = (mesh, x, y, width, height) => {
+      const pixels = mesh.material[4].map.image.getContext("2d").getImageData(x, y, width, height).data;
+      let count = 0;
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i] > 150 && pixels[i] > pixels[i + 1] * 1.5 && pixels[i] > pixels[i + 2] * 1.5) count++;
+      return count;
+    };
+    const model = {
+      busRound: view.scene.getObjectByName("transport-bus-signs").geometry.type === "CircleGeometry",
+      timetable: view.scene.getObjectByName("transport-bus-timetables").count,
+      canopyCount: canopy.count, canopySize: canopy.geometry.boundingBox.getSize(new THREE.Vector3()).toArray(),
+      stairs: view.scene.getObjectByName("transport-mtr-stair-treads").count,
+      exitLetters: view.scene.getObjectByName("transport-mtr-exit-letters").count,
+      signFaces: ["signs", "emblems", "exit-letters"].map(name => {
+        const mesh = view.scene.getObjectByName(`transport-mtr-${name}`);
+        const matrix = new THREE.Matrix4();
+        mesh.getMatrixAt(0, matrix);
+        return {
+          texturedFaces: mesh.material.map(paint => Boolean(paint.map)),
+          point: new THREE.Vector3().setFromMatrixPosition(matrix).toArray(),
+          size: [mesh.geometry.parameters.width, mesh.geometry.parameters.height, mesh.geometry.parameters.depth],
+        };
+      }),
+      emblem: view.scene.getObjectByName("transport-mtr-emblems").count,
+      bannerRed: redPixels(view.scene.getObjectByName("transport-mtr-signs"), 38, 29, 134, 134),
+      emblemRed: redPixels(view.scene.getObjectByName("transport-mtr-emblems"), 23, 23, 210, 210),
+    };
+    const renderer = new THREE.WebGLRenderer({ preserveDrawingBuffer: true });
+    const target = new THREE.WebGLRenderTarget(900, 300);
+    const camera = new THREE.OrthographicCamera(-45, 45, 15, -15, .1, 100);
+    camera.position.set(30, 8, 50); camera.lookAt(30, 8, 0);
+    renderer.setRenderTarget(target); renderer.render(view.scene, camera);
+    const colors = [150, 450, 750].map(x => {
+      const pixels = new Uint8Array(10 * 6 * 4);
+      renderer.readRenderTargetPixels(target, x - 5, x === 150 ? 139 : x === 450 ? 143 : 141, 10, 6, pixels);
+      let red = 0, blue = 0, visible = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] > pixels[i + 2] + 30) red++;
+        if (pixels[i + 2] > pixels[i] + 30) blue++;
+        if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 20) visible++;
+      }
+      return { red, blue, visible };
+    });
+    const front = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 100);
+    front.position.set(20, 7.65, 5); front.lookAt(30, 7.65, 5);
+    const frontTarget = new THREE.WebGLRenderTarget(64, 64);
+    renderer.setRenderTarget(frontTarget); renderer.render(view.scene, front);
+    const frontPixels = new Uint8Array(64 * 64 * 4);
+    renderer.readRenderTargetPixels(frontTarget, 0, 0, 64, 64, frontPixels);
+    let frontRed = 0;
+    for (let i = 0; i < frontPixels.length; i += 4)
+      if (frontPixels[i] > frontPixels[i + 2] + 30) frontRed++;
+    const faceColors = (name, axes, color) => {
+      const mesh = view.scene.getObjectByName(`transport-${name}`), matrix = new THREE.Matrix4();
+      mesh.getMatrixAt(0, matrix);
+      const center = new THREE.Vector3().setFromMatrixPosition(matrix);
+      const scene = new THREE.Scene();
+      scene.add(mesh.clone());
+      const camera = new THREE.OrthographicCamera(-.6, .6, .6, -.6, .1, 10);
+      return axes.map(axis => {
+        const direction = new THREE.Vector3(...axis).transformDirection(matrix);
+        camera.position.copy(center).addScaledVector(direction, 3); camera.lookAt(center);
+        renderer.render(scene, camera);
+        renderer.readRenderTargetPixels(frontTarget, 0, 0, 64, 64, frontPixels);
+        let count = 0;
+        for (let i = 0; i < frontPixels.length; i += 4) {
+          const [r, g, b] = frontPixels.subarray(i, i + 3);
+          if (color === "red" ? r > 150 && r > g * 1.5 && r > b * 1.5
+            : color === "green" ? g > r * 1.5 && g > b && g > 70
+              : r > 150 && g > 120 && b < g * .65) count++;
+        }
+        return count;
+      });
+    };
+    const emblemFaces = faceColors("mtr-emblems", [[0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0]], "red");
+    const exitFaces = faceColors("mtr-exit-letters", [[1, 0, 0], [-1, 0, 0]], "yellow");
+    const taxiFaces = faceColors("taxi-signs", [[0, 0, 1], [0, 0, -1]], "green");
+    frontTarget.dispose();
+    renderer.setRenderTarget(null);
+    renderer.setSize(900, 400);
+    view.scene.background = new THREE.Color("#20313a");
+    renderer.setScissorTest(true);
+    renderer.setViewport(0, 0, 450, 400); renderer.setScissor(0, 0, 450, 400);
+    camera.left = -3; camera.right = 3; camera.top = 4; camera.bottom = -1;
+    camera.position.set(20, 5, 5); camera.lookAt(30, 5, 5); camera.updateProjectionMatrix();
+    renderer.render(view.scene, camera);
+    renderer.setViewport(450, 0, 450, 400); renderer.setScissor(450, 0, 450, 400);
+    camera.left = -4; camera.right = 4; camera.top = 3; camera.bottom = -2.5;
+    camera.position.set(65, 9, -6); camera.lookAt(60, 6, 2); camera.updateProjectionMatrix();
+    renderer.render(view.scene, camera);
+    renderer.domElement.id = "transport-preview";
+    renderer.domElement.style.cssText = "position:fixed;top:0;left:0;z-index:9999";
+    document.body.append(renderer.domElement);
+    target.dispose(); renderer.dispose();
+    view.scene.traverse(mesh => {
+      mesh.geometry?.dispose();
+      for (const material of [].concat(mesh.material ?? [])) material.dispose();
+    });
+    for (const resource of view.resources) resource.dispose();
+    return { labels, signs, colors, model, printedLabels, frontRed, emblemFaces, exitFaces, taxiFaces };
+  });
+  expect(result.labels).toEqual(expect.arrayContaining([["T", 0, 0], ["B", 30, 5], ["M", 60, 0]]));
+  expect(result.signs).toEqual([
+    { kind: "taxi", count: 1, point: [0, expect.closeTo(7.2, 5), 0] },
+    { kind: "bus", count: 1, point: [expect.closeTo(29.935, 5), expect.closeTo(7.65, 5), 5] },
+    { kind: "mtr", count: 1, point: [60, expect.closeTo(7.45, 5), expect.closeTo(.1, 5)] },
+  ]);
+  expect(result.model.busRound).toBe(true);
+  expect(result.model.timetable).toBe(1);
+  expect(result.model.canopyCount).toBe(1);
+  expect(result.model.canopySize).toEqual([3, expect.closeTo(.8, 5), expect.closeTo(4.65, 5)]);
+  expect(result.model.stairs).toBe(5);
+  expect(result.model.exitLetters).toBe(1);
+  expect(result.model.signFaces.map(face => face.texturedFaces)).toEqual([
+    [false, false, false, false, true, true],
+    [false, false, false, false, true, true],
+    [true, true, false, false, false, false],
+  ]);
+  expect(result.model.signFaces[2].point).toEqual([
+    expect.closeTo(58.7, 5), expect.closeTo(6.5, 5), expect.closeTo(.7, 5),
+  ]);
+  expect(result.model.signFaces[2].size).toEqual([.24, .5, .9]);
+  expect(result.model.emblem).toBe(1);
+  expect(result.model.bannerRed).toBeGreaterThan(100);
+  expect(result.model.emblemRed).toBeGreaterThan(100);
+  expect(result.printedLabels).toEqual(expect.arrayContaining([
+    { label: "旺角站", x: 512, align: "center" },
+    { label: "Mong Kok Station", x: 512, align: "center" },
+    { label: "M", x: 128, align: "center" },
+    { label: "A2", x: 128, align: "center" },
+    { label: "TAXI STAND", x: 128, align: "center" },
+    { label: "的士站", x: 128, align: "center" },
+  ]));
+  expect(result.colors[2].visible).toBeGreaterThan(0);
+  expect(result.frontRed).toBeGreaterThan(50);
+  for (const count of result.emblemFaces.slice(0, 2)) expect(count).toBeGreaterThan(100);
+  expect(result.emblemFaces.slice(2)).toEqual([0, 0]);
+  for (const count of result.exitFaces) expect(count).toBeGreaterThan(100);
+  for (const count of result.taxiFaces) expect(count).toBeGreaterThan(100);
+  await page.locator("#transport-preview").screenshot({ path: testInfo.outputPath("transport-models.png") });
+});
+
+test("taxi, bus and MTR side sign faces align with the road direction", async ({ page }) => {
+  await page.goto("/");
+  const facing = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { SpatialGrid, pointBounds } = await import("/spatial-grid.mjs");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    return [
+      { nodes: { a: [-20, 0], b: [20, 0] }, point: [0, 5] },
+      { nodes: { a: [-20, 0], b: [20, 0] }, point: [0, -5] },
+      { nodes: { a: [0, -20], b: [0, 20] }, point: [5, 0] },
+      { nodes: { a: [0, -20], b: [0, 20] }, point: [-5, 0] },
+      { nodes: { a: [-20, -20], b: [20, 20] }, point: [4, -4] },
+      { nodes: { a: [-20, 0], b: [20, 0] }, point: [25, 4] },
+    ].map(({ nodes, point }) => {
+      const edge = { id: "road", a: "a", b: "b", width: 6, kind: "residential", layer: "0" };
+      const view = Object.assign(Object.create(Map3DView.prototype), {
+        data: { transport: [{ kind: "taxi", point }, { kind: "bus", point },
+          { kind: "mtr", point, station: { id: "station", name: "Test", zh: "站" } }],
+          driving: { widths: {} } }, nodes,
+        groundMap: { spatialIndexes() {}, roadIndex: new SpatialGrid([edge], item => pointBounds([nodes[item.a], nodes[item.b]], 24)) },
+        scene: new THREE.Scene(), resources: [],
+      });
+      view.buildTransport();
+      const direction = new THREE.Vector3(nodes.b[0] - nodes.a[0], 0, nodes.b[1] - nodes.a[1]).normalize();
+      const dots = ["transport-taxi-signs", "transport-bus-signs", "transport-bus-timetables", "transport-mtr-emblems"].map(name => {
+        const mesh = view.scene.getObjectByName(name), matrix = new THREE.Matrix4();
+        mesh.getMatrixAt(0, matrix);
+        const normal = name === "transport-bus-signs"
+          ? new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute("normal"), 0)
+          : new THREE.Vector3(0, 0, 1);
+        return Math.abs(normal.transformDirection(matrix).dot(direction));
+      });
+      view.scene.traverse(mesh => {
+        mesh.geometry?.dispose();
+        for (const material of [].concat(mesh.material ?? [])) material.dispose();
+      });
+      for (const resource of view.resources) resource.dispose();
+      return dots;
+    });
+  });
+  for (const dots of facing) for (const dot of dots) expect(dot).toBeGreaterThan(.999);
+});
+
 test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
@@ -64,7 +293,7 @@ test("overlapping road joints match the road surface without visible patches", a
 test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const data = {
       bounds: [-20, -40, 100, 50],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
@@ -147,7 +376,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
 test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map?stream=true")).json();
     const center = data.nodes["1151084860"];
@@ -197,7 +426,7 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
 test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const data = {
       bounds: [-20, -20, 220, 140],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },
@@ -267,7 +496,7 @@ test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", 
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const { RoadNetwork } = await import("/physics.mjs?v=parabolic-steering-1");
     const data = {
       bounds: [-10, -20, 110, 30], backdrop: [
@@ -406,7 +635,7 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const { RoadNetwork, project } = await import("/physics.mjs?v=parabolic-steering-1");
     const roads = new RoadNetwork(data);
     const side = roads.edges.get("485635353:2:6505945379"), main = roads.edges.get("1067815827:9:13108528146");
@@ -418,6 +647,18 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
     canvas.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;z-index:10000";
     document.body.append(canvas);
     const view = new Map3DView(canvas, data, []);
+    const body = view.scene.getObjectByName("taxi-body").geometry.parameters;
+    const narrow = new RoadNetwork({
+      bounds: [-20, -20, 20, 20],
+      nodes: { a: [-20, 0], b: [20, 0] },
+      edges: [{ id: "narrow", a: "a", b: "b", width: 1.4, kind: "residential", layer: "0" }],
+      driving: data.driving,
+    });
+    const narrowEdge = narrow.edges.get("narrow");
+    const narrowCar = { x: 0, y: 0 };
+    const smallFits = narrow.bodyFits(narrowCar, 0, narrowEdge);
+    narrow.driving = { ...narrow.driving, taxi_length: 2.9, taxi_width: 1.5 };
+    const previousFits = narrow.bodyFits(narrowCar, 0, narrowEdge);
     const car = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2,
       heading: Math.atan2(b[1] - a[1], b[0] - a[0]), edge: side.id, speed: 0 };
     for (let i = 0; i < 3; i++) {
@@ -429,6 +670,7 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
       spacing, gap: spacing - roads.radius(side) - roads.radius(main),
       widths: [side.width, main.width],
       audit: data.road_width_audit, taxi: [data.driving.taxi_length, data.driving.taxi_width],
+      renderedTaxi: [body.width, body.depth], smallFits, previousFits,
       bodyFits: roads.bodyFits(car, car.heading, side),
       boundaryHeightCount: view.boundaryOutline.geometry.getAttribute("position").count,
     };
@@ -438,6 +680,10 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   expect(result.widths[1]).toBeLessThanOrEqual(6);
   expect(result.audit.unresolved_pairs).toBe(2);
   expect(result.taxi[0]).toBeGreaterThan(result.taxi[1]);
+  expect(result.taxi).toEqual([2.61, 1.35]);
+  expect(result.renderedTaxi).toEqual(result.taxi);
+  expect(result.smallFits).toBe(true);
+  expect(result.previousFits).toBe(false);
   expect(result.taxi[1]).toBeLessThan(Math.min(...result.widths));
   expect(result.bodyFits).toBe(true);
   expect(result.boundaryHeightCount).toBeGreaterThan(0);
@@ -453,7 +699,7 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
   await page.locator("#welcome").evaluate(dialog => dialog.close());
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=no-road-sidewalks-1");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
     const { project } = await import("/physics.mjs?v=parabolic-steering-1");
     const { surfacePose, isGroundRoad } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const { roadWidth } = await import("/road-width.mjs");

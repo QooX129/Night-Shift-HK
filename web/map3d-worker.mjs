@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=no-road-sidewalks-1";
-import { MapView } from "./map.mjs?v=building-road-types-1";
+import { Map3DView } from "./map3d.mjs?v=hk-transport-models-5";
+import { MapView } from "./map.mjs?v=hk-transport-models-5";
 
 let view;
 let revision = 0;

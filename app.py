@@ -19,6 +19,10 @@ from map_streaming import VisualMap
 ROOT = Path(__file__).resolve().parent
 mimetypes.add_type("text/javascript", ".mjs")
 roads = RoadMap(ROOT / "data" / "district.json")
+transport = json.loads((ROOT / "data" / "transport.json").read_text(encoding="utf-8"))
+if transport["origin"] != roads.document["origin"]:
+    raise ValueError("Transport data uses a different map origin; rebuild tools/prepare_transport.py")
+roads.document["transport"] = transport["features"]
 game = Game(roads)
 game_lock = RLock()
 visual_map = VisualMap(roads.document)
@@ -119,6 +123,11 @@ def map_source() -> FileResponse:
 @app.get("/api/places")
 def places_source() -> FileResponse:
     return FileResponse(ROOT / "data" / "places.json", media_type="application/json", filename="places.json")
+
+
+@app.get("/api/transport")
+def transport_source() -> FileResponse:
+    return FileResponse(ROOT / "data" / "transport.json", media_type="application/json", filename="transport.json")
 
 
 @app.get("/api/stops")

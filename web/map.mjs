@@ -10,6 +10,11 @@ import { roadLayer, isElevatedRoad, isTunnelRoad } from "./elevation.mjs?v=tunne
 export const TAXI_ICON_MIN_LENGTH = { map: 20, minimap: 20 };
 export const MAP_TILE_PIXELS = 256;
 export const MAP_TILE_CACHE_LIMIT = 128;
+export const TRANSPORT_STYLES = {
+  mtr: { color: "#db3346", label: "M", sign: "MTR" },
+  taxi: { color: "#d85a45", label: "T", sign: "TAXI" },
+  bus: { color: "#3988c2", label: "B", sign: "BUS" },
+};
 const BUILDING_COLORS = {
   apartments: "#34494f", residential: "#38484a", house: "#4b4b42",
   commercial: "#51473d", retail: "#584438", hotel: "#354e58", office: "#344d56",
@@ -68,6 +73,8 @@ export class MapView {
     }
     if (this.data.overview && !this.overviewIndex)
       this.overviewIndex = new SpatialGrid(this.data.overview, shape => pointBounds(shape.points));
+    if (this.data.transport && !this.transportIndex)
+      this.transportIndex = new SpatialGrid(this.data.transport, item => pointBounds([item.point]));
     if (this.collisionLines && !this.collisionIndex)
       this.collisionIndex = new SpatialGrid(this.collisionLines.all(), line => pointBounds([line.a, line.b], 1));
     this.legalDirections ??= this.data.edges.filter(edge => !edge.wrongway);
@@ -155,6 +162,31 @@ export class MapView {
       line => pointBounds([line.a, line.b], 1));
     for (const { a, b } of bounds ? this.collisionIndex.query(bounds) : this.collisionLines.all()) { c.moveTo(...a); c.lineTo(...b); }
     c.stroke(); c.restore();
+  }
+  drawTransport(c, bounds, zoom) {
+    if (!this.transportIndex) return;
+    c.save();
+    const occupied = new Set();
+    const [left, top, right, bottom] = bounds;
+    const features = this.transportIndex.query(bounds)
+      .filter(({ point: [x, y] }) => x >= left && x <= right && y >= top && y <= bottom)
+      .sort((a, b) => ["mtr", "taxi", "bus"].indexOf(a.kind) - ["mtr", "taxi", "bus"].indexOf(b.kind));
+    for (const feature of features) {
+      const style = TRANSPORT_STYLES[feature.kind];
+      if (!style) continue;
+      const [x, y] = feature.point, key = `${Math.floor(x * zoom / 22)}:${Math.floor(y * zoom / 22)}`;
+      if (occupied.has(key)) continue;
+      occupied.add(key);
+      c.fillStyle = style.color;
+      c.strokeStyle = "#13252b";
+      c.lineWidth = 2 / zoom;
+      c.beginPath(); c.arc(x, y, 7 / zoom, 0, Math.PI * 2); c.fill(); c.stroke();
+      c.fillStyle = "#ffffff";
+      c.font = `bold ${9 / zoom}px system-ui`;
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillText(style.label, x, y);
+    }
+    c.restore();
   }
   *directionArrows(bounds) {
     this.legalDirections ??= this.data.edges.filter(edge => !edge.wrongway);
@@ -263,6 +295,7 @@ export class MapView {
     }
     if (visibleRight > visibleLeft && visibleBottom > visibleTop) {
       this.drawTiles(c, [visibleLeft, visibleTop, visibleRight, visibleBottom], zoom);
+      this.drawTransport(c, [visibleLeft, visibleTop, visibleRight, visibleBottom], zoom);
     }
     c.lineWidth = 1 / zoom; c.strokeStyle = "#f5c65a55"; c.setLineDash([6 / zoom, 5 / zoom]);
     c.strokeRect(left, top, right - left, bottom - top); c.setLineDash([]);

@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView } from "./map.mjs?v=building-road-types-1";
+import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=hk-transport-models-5";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
@@ -143,13 +143,14 @@ export class Map3DView {
         else this.buildRoadSurfaces();
       }
       this.buildCity();
+      this.buildTransport();
       this.buildTaxi();
       this.buildCitizens();
       this.overlays = new THREE.Group();
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=no-road-sidewalks-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=hk-transport-models-5", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -1142,6 +1143,174 @@ export class Map3DView {
       }
       if (changed) attribute.needsUpdate = true;
       overlay.visible = active;
+    }
+  }
+  buildTransport() {
+    const features = this.data.transport ?? [];
+    if (!features.length) return;
+    this.groundMap.spatialIndexes();
+    const placement = point => {
+      const [x, y] = point;
+      let nearest = null, distance = Infinity;
+      for (const edge of this.groundMap.roadIndex.query([x - 20, y - 20, x + 20, y + 20])) {
+        if (!isGroundRoad(edge)) continue;
+        const candidate = project({ x, y }, this.nodes[edge.a], this.nodes[edge.b]).distance;
+        if (candidate < distance) { nearest = edge; distance = candidate; }
+      }
+      let angle = 0;
+      if (nearest) {
+        const a = this.nodes[nearest.a], b = this.nodes[nearest.b];
+        const closest = project({ x, y }, a, b);
+        const dx = b[0] - a[0], dy = b[1] - a[1];
+        const side = (x - closest.x) * -dy + (y - closest.y) * dx < 0 ? -1 : 1;
+        angle = Math.atan2(-dy * side, dx * side);
+      }
+      const height = nearest && distance <= roadWidth(this.data.driving, nearest) / 2 + 5
+        ? surfacePose(this, nearest, { x, y }, 0).height : terrainHeight(this.elevation, x, y);
+      return { height, angle };
+    };
+    const transform = new THREE.Object3D();
+    for (const kind of Object.keys(TRANSPORT_STYLES)) {
+      const items = features.filter(feature => feature.kind === kind)
+        .map(feature => ({ ...feature, ...placement(feature.point) }));
+      if (!items.length) continue;
+      const material = color => new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
+      const printed = (paint, width = 256, height = 128) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        paint(canvas.getContext("2d"), width, height);
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        this.resources.push(texture);
+        return new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+      };
+      const text = (label, background, color = "#ffffff") => printed((c, w, h) => {
+        c.fillStyle = background; c.fillRect(0, 0, w, h);
+        c.fillStyle = color; c.font = "bold 64px sans-serif";
+        c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(label, w / 2, h / 2);
+      });
+      const instances = (name, geometry, paint, offsets, selected = items, rotation = 0) => {
+        const mesh = new THREE.InstancedMesh(geometry, paint, selected.length * offsets.length);
+        mesh.name = `transport-${kind}-${name}`;
+        let index = 0;
+        for (const { point: [x, y], height, angle } of selected) for (const [dx, dy, dz] of offsets) {
+          transform.rotation.set(0, angle + rotation, 0);
+          transform.position.set(x + dx * Math.cos(angle) + dz * Math.sin(angle), height + dy,
+            y - dx * Math.sin(angle) + dz * Math.cos(angle));
+          transform.updateMatrix(); mesh.setMatrixAt(index++, transform.matrix);
+        }
+        mesh.computeBoundingSphere(); this.scene.add(mesh);
+      };
+      const box = (name, size, paint, offsets, selected, rotation) =>
+        instances(name, new THREE.BoxGeometry(...size), paint, offsets, selected, rotation);
+      if (kind === "bus") {
+        const roundel = printed((c, w, h) => {
+          c.fillStyle = "#c92d35"; c.fillRect(0, 0, w, h);
+          c.fillStyle = "#fff4d8"; c.beginPath(); c.arc(w / 2, h / 2, w * .41, 0, Math.PI * 2); c.fill();
+          c.fillStyle = "#c92d35"; c.font = "bold 34px sans-serif"; c.textAlign = "center";
+          c.fillText("巴士站", w / 2, 75);
+          c.fillRect(86, 100, 84, 99);
+          c.fillStyle = "#fff4d8";
+          for (const y of [111, 143]) for (const x of [96, 133]) c.fillRect(x, y, 27, 21);
+          c.fillStyle = "#303738"; c.fillRect(91, 194, 19, 13); c.fillRect(146, 194, 19, 13);
+          c.fillStyle = "#c92d35"; c.font = "bold 19px sans-serif"; c.fillText("BUS STOP", w / 2, 226);
+        }, 256, 256);
+        const timetable = printed((c, w, h) => {
+          c.fillStyle = "#f4edd8"; c.fillRect(0, 0, w, h);
+          c.fillStyle = "#c92d35"; c.fillRect(0, 0, w, 52);
+          c.fillStyle = "#ffffff"; c.font = "bold 22px sans-serif"; c.textAlign = "center";
+          c.fillText("BUS", w / 2, 35);
+          c.fillStyle = "#566269";
+          for (let y = 75; y < h - 15; y += 20) c.fillRect(15, y, w - 30, 4);
+        }, 128, 256);
+        box("poles", [.1, 2.65, .1], material("#c92d35"), [[0, 1.325, 0]]);
+        instances("signs", new THREE.CircleGeometry(.4, 24), roundel, [[-.065, 2.65, 0]], items, -Math.PI / 2);
+        box("timetables", [.32, .85, .09], timetable, [[-.08, 1.65, 0]], items, -Math.PI / 2);
+        box("bases", [.3, .12, .3], material("#686f69"), [[0, .06, 0]]);
+      } else if (kind === "mtr") {
+        const steel = material("#9caeaa"), stone = material("#b6b9ad");
+        box("poles", [.1, 2.5, .1], steel, [[-1.25, 1.25, .15], [1.25, 1.25, .15],
+          [-1.25, 1.25, 4.15], [1.25, 1.25, 4.15]]);
+        const stations = new Map();
+        for (const item of items) {
+          if (!item.station?.name) throw new Error(`MTR entrance ${item.id} lacks a station name; rebuild tools/prepare_transport.py`);
+          const key = item.station.id;
+          if (!stations.has(key)) stations.set(key, []);
+          stations.get(key).push(item);
+        }
+        const drawEmblem = (c, x, y, radius) => {
+          c.fillStyle = "#cc3348"; c.beginPath(); c.arc(x, y, radius, 0, Math.PI * 2); c.fill();
+          c.fillStyle = "#ffffff"; c.font = `bold ${radius * 1.5}px sans-serif`;
+          c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("M", x, y);
+        };
+        const signEdge = material("#26333f"), emblemEdge = material("#f0eee3");
+        for (const selected of stations.values()) {
+          const { name, zh } = selected[0].station;
+          const banner = printed((c, w, h) => {
+            c.fillStyle = "#26333f"; c.fillRect(0, 0, w, h);
+            c.strokeStyle = "#a9b5b2"; c.lineWidth = 10; c.strokeRect(5, 5, w - 10, h - 10);
+            drawEmblem(c, 105, h / 2, 67);
+            c.fillStyle = "#ffffff"; c.textAlign = "center"; c.textBaseline = "middle";
+            if (zh) {
+              c.font = "bold 62px sans-serif";
+              c.fillText(zh.endsWith("站") ? zh : `${zh}站`, w / 2, 59, w - 360);
+            }
+            c.font = "46px sans-serif";
+            c.fillText(/station$/i.test(name) ? name : `${name} Station`, w / 2, zh ? 140 : h / 2, w - 360);
+          }, 1024, 192);
+          box("signs", [2.4, .45, .12], [signEdge, signEdge, signEdge, signEdge, banner, banner],
+            [[0, 2.45, .1]], selected);
+        }
+        const emblem = printed((c, w, h) => {
+          c.fillStyle = "#f0eee3"; c.fillRect(0, 0, w, h);
+          drawEmblem(c, w / 2, h / 2, 105);
+        }, 256, 256);
+        box("emblem-posts", [.08, 1.1, .08], steel, [[-1.42, 2.65, .1]]);
+        box("emblems", [.65, .65, .14], [emblemEdge, emblemEdge, emblemEdge, emblemEdge, emblem, emblem],
+          [[-1.42, 3.2, .1]], items, -Math.PI / 2);
+        box("parapets", [.18, .8, 4.3], stone, [[-1.3, .4, 2.1], [1.3, .4, 2.1]]);
+        const exits = new Map();
+        for (const item of items) {
+          if (!item.ref) continue;
+          if (!exits.has(item.ref)) exits.set(item.ref, []);
+          exits.get(item.ref).push(item);
+        }
+        for (const [ref, selected] of exits) {
+          const label = text(ref, "#e6bf55", "#17232a");
+          box("exit-letters", [.24, .5, .9], [label, label, stone, stone, stone, stone],
+            [[-1.3, 1.5, .7]], selected);
+        }
+        box("glazing", [.05, 1.3, 4.05], new THREE.MeshBasicMaterial({
+          color: "#6d9d96", transparent: true, opacity: .35, depthWrite: false, side: THREE.DoubleSide,
+        }), [[-1.3, 1.45, 2.15], [1.3, 1.45, 2.15]]);
+        box("handrails", [.08, .08, 4.3], steel, [[-1.15, .95, 2.1], [1.15, .95, 2.1]]);
+        // A dark street-level portal suggests the stairwell without cutting the terrain mesh.
+        box("opening", [2.35, 2.1, .08], material("#101d23"), [[0, 1.05, 4.2]]);
+        box("landing", [2.4, .06, 4.2], material("#303d40"), [[0, .04, 2.1]]);
+        const steps = Array.from({ length: 5 }, (_, i) => [0, .07 + i * .025, 3.8 - i * .35]);
+        box("stair-treads", [2.15, .035, .3], material("#7c8984"), steps);
+        const roof = [];
+        for (let i = 0; i < 16; i++) {
+          const a = Math.PI * i / 16, b = Math.PI * (i + 1) / 16;
+          const first = [Math.cos(a) * 1.5, 2.1 + Math.sin(a) * .8],
+            last = [Math.cos(b) * 1.5, 2.1 + Math.sin(b) * .8];
+          for (const [p, z] of [[first, -.15], [first, 4.5], [last, 4.5],
+            [first, -.15], [last, 4.5], [last, -.15]]) roof.push(p[0], p[1], z);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(roof, 3));
+        instances("canopies", geometry, material("#4e736a"), [[0, 0, 0]]);
+      } else {
+        const sign = printed((c, w, h) => {
+          c.fillStyle = "#237e6d"; c.fillRect(0, 0, w, h);
+          c.strokeStyle = "#e8eee8"; c.lineWidth = 5; c.strokeRect(4, 4, w - 8, h - 8);
+          c.fillStyle = "#ffffff"; c.textAlign = "center"; c.textBaseline = "middle";
+          c.font = "bold 30px sans-serif"; c.fillText("TAXI STAND", w / 2, 39, w - 20);
+          c.font = "bold 49px sans-serif"; c.fillText("的士站", w / 2, 91, w - 20);
+        });
+        box("poles", [.12, 2.2, .12], material("#a9b5b2"), [[0, 1.1, 0]]);
+        box("signs", [1, .5, .08], sign, [[0, 2.2, 0]], items, -Math.PI / 2);
+      }
     }
   }
   addRoadTile(tile) {
@@ -2573,11 +2742,11 @@ export class Map3DView {
     const geometries = new Set(), materials = new Set();
     this.scene.traverse(object => {
       if (object.geometry) geometries.add(object.geometry);
-      if (object.material) materials.add(object.material);
+      if (object.material) for (const material of [].concat(object.material)) materials.add(material);
     });
     this.boundaryScene.traverse(object => {
       if (object.geometry) geometries.add(object.geometry);
-      if (object.material) materials.add(object.material);
+      if (object.material) for (const material of [].concat(object.material)) materials.add(material);
     });
     this.bubbleScene.clear();
     geometries.forEach(geometry => geometry.dispose());

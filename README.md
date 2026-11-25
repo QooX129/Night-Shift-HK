@@ -80,6 +80,14 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   Railings, traffic lights, double yellow lines and crossings are
   decorative approximations on eligible ground-level streets across the map.
   Roadside sidewalk strips are not drawn; pedestrian paths remain available.
+  OSM taxi stands, bus stops and stations, and MTR exits appear as 2D icons
+  and 3D scenery. Taxi stands use green bilingual signs; bus stops use Hong
+  Kong-style red-and-cream roundels and timetable cases facing along the road.
+  Taxi stand signs also face along the road; MTR street exits have covered entrances,
+  bilingual station-name banners and a simple white M on a red circle, printed
+  only on the broad sign faces. Exit references appear on the inside and outside
+  of one entrance window; the emblem is distinct from the official MTR logo.
+  Nearby 2D icons may be hidden to reduce clutter.
   Double yellow bands follow continuous outlines of combined ground-road pavement,
   including mixed-width junctions and traffic islands. Rounded arc joins replace
   sharp corners; the bands stay out of junction interiors.
@@ -291,7 +299,8 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 - The taxi uses a rotated rectangular body collider, configured in metres by
   `taxi_length` and `taxi_width` in `roads.py`'s `DRIVING` settings. The rendered
   body uses the same dimensions, including its outline, and scales with map zoom.
-  The current metric footprint is 4.7 m long by 1.7 m wide.
+  The current gameplay footprint is 2.61 m long by 1.35 m wide, smaller than a
+  real taxi.
   Normal movement and reverse keep the full body within connected road corridors.
   Collision checks and red outlines follow the same connected road-surface union.
   Connected straight sections with matching way, width and road level share
@@ -831,6 +840,20 @@ To rebuild named places from the existing extract without rebuilding the map:
 python tools/prepare_places.py
 ```
 
+Transport locations are a separate OSM snapshot. To refresh them (this requests
+25 map tiles from the OSM API, plus station relations when label data is missing):
+
+```sh
+python tools/prepare_transport.py
+```
+
+These are mapped locations, not verified or live service information; the 3D
+models are illustrative rather than accurate replicas. MTR entrances tagged
+as indoor, above/below street level or on podiums are excluded. Untagged
+subway entrances are assumed to be street exits. The covered portals suggest
+stairs but do not excavate the terrain or model underground station interiors.
+Station names come from each entrance's OSM stop-area relation and its station
+member, rather than guessing the nearest station.
 Only named places within the current map and within 100 m of an eligible
 surface street are offered; their locations and names may be incomplete or
 outdated. Routing checks reachability before an order is offered. The extract
