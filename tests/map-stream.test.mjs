@@ -320,6 +320,97 @@ test("OSM building types tint apartment, commercial, and industrial facades diff
   assert.notDeepEqual(colorFor("commercial"), colorFor("industrial"));
 });
 
+test("clipped road junctions preserve continuous height across different grades", () => {
+  const nodes = { a: [-30, 0], b: [0, 0], c: [30, 0], d: [0, 30] };
+  const edges = [["a", "b"], ["b", "d"]].map(([a, b]) => ({
+    id: a + b, a, b, way: a + b, name: "Local road", kind: "service", width: 4,
+    bridge: "no", tunnel: "no", layer: "0", oneway: true,
+  }));
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    nodes, data: { driving: { widths: { service: 4 } } },
+    elevation: { node_heights: { a: 5, b: 5, c: 5, d: 8 },
+      road_profiles: {}, road_junctions: {}, pilot: { triangles: [] } },
+    groundMap: { unique: edges, collisionLines: { all: () => [] } },
+    camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
+    scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
+    *curbMarkings() { return []; },
+  });
+  const task = view.roadSurfaceGeometry();
+  while (!task.next().done) {}
+  const decks = view.structures.map(({ mesh }) => mesh).filter(mesh =>
+    mesh.name === "level-separated-solid-road-decks" || mesh.name === "continuous-shared-node-road-joints");
+  const height = (x, z) => {
+    const ray = new THREE.Raycaster(new THREE.Vector3(x, 100, z), new THREE.Vector3(0, -1, 0), 0, 200);
+    const hit = ray.intersectObjects(decks)[0];
+    assert(hit, `road surface is missing at ${x}, ${z}`);
+    return hit.point.y;
+  };
+  for (const z of [.2, .6, 1, 1.4, 1.8])
+    assert(Math.abs(height(-.001, z) - height(.001, z)) < .01, "junction edges must meet without a vertical step");
+  for (const x of [-1.8, -1.4, -.6, .001, .6, 1.4, 1.8]) {
+    const before = height(x, 1.999), after = height(x, 2.001);
+    assert(Math.abs(before - after) < .01, `clipped sections must meet continuously: ${before}, ${after}`);
+  }
+  for (const geometry of new Set(decks.map(mesh => mesh.geometry))) geometry.dispose();
+  for (const resource of view.resources) resource.dispose();
+});
+
+test("road clipping combines same-level crossings but preserves different heights", () => {
+  const nodes = { a: [-30, 0], b: [30, 0], c: [0, -30], d: [0, 30] };
+  const edges = [["a", "b"], ["c", "d"]].map(([a, b]) => ({
+    id: a + b, a, b, way: a + b, name: "Local road", kind: "service", width: 4,
+    bridge: "no", tunnel: "no", layer: "0", oneway: true,
+  }));
+  for (const upper of [0, 6]) {
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      nodes, data: { driving: { widths: { service: 4 } } },
+      elevation: { node_heights: { a: 0, b: 0, c: upper, d: upper },
+        road_profiles: {}, road_junctions: {}, pilot: { triangles: [] } },
+      groundMap: { unique: edges, collisionLines: { all: () => [] } },
+      camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
+      scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
+      *curbMarkings() { return []; },
+    });
+    const task = view.roadSurfaceGeometry();
+    while (!task.next().done) {}
+    const decks = view.structures.map(({ mesh }) => mesh).filter(mesh => mesh.name === "level-separated-solid-road-decks");
+    const ray = new THREE.Raycaster(new THREE.Vector3(.3, 100, .4), new THREE.Vector3(0, -1, 0), 0, 200);
+    const heights = ray.intersectObjects(decks).map(hit => hit.point.y).sort((a, b) => a - b);
+    assert.equal(heights.length, upper ? 2 : 1);
+    assert(Math.abs(heights[0] - .08) < 1e-5);
+    if (upper) assert(Math.abs(heights[1] - 6.08) < 1e-5);
+    for (const geometry of new Set(decks.map(mesh => mesh.geometry))) geometry.dispose();
+    for (const resource of view.resources) resource.dispose();
+  }
+});
+
+test("overlapping connected ramps remain separate as their heights diverge", () => {
+  const nodes = { a: [-30, 0], b: [0, 0], c: [-30, 0] };
+  const edges = [["a", "b"], ["b", "c"]].map(([a, b]) => ({
+    id: a + b, a, b, way: a + b, name: "Local road", kind: "service", width: 4,
+    bridge: "yes", tunnel: "no", layer: "1", oneway: true,
+  }));
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    nodes, data: { driving: { widths: { service: 4 } } },
+    elevation: { node_heights: { a: 6, b: 0, c: 0 }, node_quality: { a: 1, b: 1, c: 1 },
+      road_profiles: {}, road_junctions: {}, pilot: { triangles: [] } },
+    groundMap: { unique: edges, collisionLines: { all: () => [] } },
+    camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
+    scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
+    *curbMarkings() { return []; },
+  });
+  const task = view.roadSurfaceGeometry();
+  while (!task.next().done) {}
+  const decks = view.structures.map(({ mesh }) => mesh).filter(mesh => mesh.name === "level-separated-solid-road-decks");
+  const ray = new THREE.Raycaster(new THREE.Vector3(-15, 100, .4), new THREE.Vector3(0, -1, 0), 0, 200);
+  const heights = ray.intersectObjects(decks).map(hit => hit.point.y).sort((a, b) => a - b);
+  assert.equal(heights.length, 2);
+  assert(Math.abs(heights[0] - .08) < 1e-5);
+  assert(Math.abs(heights[1] - 3.08) < 1e-5);
+  for (const geometry of new Set(decks.map(mesh => mesh.geometry))) geometry.dispose();
+  for (const resource of view.resources) resource.dispose();
+});
+
 test("3D road surfaces and tunnel shells blocking the taxi become transparent", () => {
   const previousDocument = globalThis.document;
   const previousWidth = globalThis.innerWidth, previousHeight = globalThis.innerHeight;

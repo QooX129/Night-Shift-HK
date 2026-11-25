@@ -9,7 +9,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await expect(page.locator("#start")).toBeEnabled();
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const render = Map3DView.prototype.render;
     await new Promise(resolve => {
       Map3DView.prototype.render = function (...args) {

@@ -149,7 +149,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=connected-road-fade-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=junction-surface-1", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -546,10 +546,144 @@ export class Map3DView {
     const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeSurfaces = new Map();
     const junctions = new Map();
     this.roadFadeNeighbors = new Map();
-    for (const edge of this.groundMap.unique) for (const node of [edge.a, edge.b]) {
-      if (!this.roadFadeNeighbors.has(node)) this.roadFadeNeighbors.set(node, []);
-      this.roadFadeNeighbors.get(node).push(edge);
+    const edges = this.groundMap.unique, edgeOrder = new Map(edges.map((edge, i) => [edge, i]));
+    const snapped = point => point.map(value => Math.round(value * 1000) / 1000);
+    const footprints = new Map();
+    for (const edge of edges) {
+      const a = this.nodes[edge.a], b = this.nodes[edge.b];
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const radius = roadWidth(this.data.driving, edge) / 2;
+      const nx = -(b[1] - a[1]) / length * radius, ny = (b[0] - a[0]) / length * radius;
+      const ring = [[a[0] - nx, a[1] - ny], [a[0] + nx, a[1] + ny],
+        [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny]].map(snapped);
+      ring.push(ring[0]);
+      footprints.set(edge, { polygon: [ring], bounds: pointBounds(ring) });
+      for (const node of [edge.a, edge.b]) {
+        if (!this.roadFadeNeighbors.has(node)) this.roadFadeNeighbors.set(node, []);
+        this.roadFadeNeighbors.get(node).push(edge);
+        nodeRadii.set(node, Math.max(nodeRadii.get(node) ?? 0, radius));
+        const owners = this.elevation.road_junctions?.[edge.id];
+        if (!nodeSurfaces.has(node) || owners?.some(owner => owner.node === node)) nodeSurfaces.set(node, edge);
+        if (isElevatedRoad(edge)) elevatedNodes.add(node);
+      }
     }
+    const roadIndex = new SpatialGrid(edges, edge => footprints.get(edge).bounds, 32);
+    const overlap = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+    const touches = (a, b) => a[0] <= b[2] + .001 && b[0] <= a[2] + .001
+      && a[1] <= b[3] + .001 && b[1] <= a[3] + .001;
+    const sameSurface = (edge, other, point) => {
+      const connected = edge.a === other.a || edge.a === other.b || edge.b === other.a || edge.b === other.b;
+      if (!connected && (isElevatedRoad(edge) !== isElevatedRoad(other) || isTunnelRoad(edge) !== isTunnelRoad(other)
+          || Number(edge.layer || 0) !== Number(other.layer || 0))) return false;
+      const position = { x: point[0], y: point[1] };
+      // Match the road network's vertical compatibility tolerance.
+      return Math.abs(surfacePose(this, edge, position, 0).height
+        - surfacePose(this, other, position, 0).height) <= .35;
+    };
+    const overlappingRoads = (edge, bounds) => roadIndex.query(bounds).filter(other => {
+      const otherBounds = footprints.get(other).bounds;
+      if (!overlap(bounds, otherBounds)) return false;
+      const point = [(Math.max(bounds[0], otherBounds[0]) + Math.min(bounds[2], otherBounds[2])) / 2,
+        (Math.max(bounds[1], otherBounds[1]) + Math.min(bounds[3], otherBounds[3])) / 2];
+      return sameSurface(edge, other, point);
+    });
+    const nodes = [...nodeRadii].map(([node, radius], order) => ({
+      node, radius, order, edge: nodeSurfaces.get(node), bounds: pointBounds([this.nodes[node]], radius),
+    }));
+    const nodeIndex = new SpatialGrid(nodes, item => item.bounds, 32);
+    const nodeData = new Map(nodes.map(item => [item.node, item]));
+    const disk = item => {
+      const [x, y] = this.nodes[item.node], ring = [];
+      for (let i = 0; i < 32; i++) {
+        const angle = i * Math.PI / 16;
+        ring.push(snapped([x + item.radius * Math.cos(angle), y + item.radius * Math.sin(angle)]));
+      }
+      ring.push(ring[0]);
+      return [ring];
+    };
+    const caps = new Map(nodes.map(item => [item.node, disk(item)]));
+    const area = ring => ring.reduce((sum, point, i) => {
+      const next = ring[(i + 1) % ring.length];
+      return sum + point[0] * next[1] - next[0] * point[1];
+    }, 0);
+    const clipHalfPlane = (ring, a, b, direction) => {
+      const distance = p => direction * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]));
+      const result = [];
+      let previous = ring.at(-1), previousDistance = distance(previous);
+      for (const point of ring) {
+        const currentDistance = distance(point);
+        if ((previousDistance < 0 && currentDistance > 0) || (previousDistance > 0 && currentDistance < 0)) {
+          const t = previousDistance / (previousDistance - currentDistance);
+          result.push([previous[0] + (point[0] - previous[0]) * t,
+            previous[1] + (point[1] - previous[1]) * t]);
+        }
+        if (currentDistance >= 0) result.push(point);
+        previous = point;
+        previousDistance = currentDistance;
+      }
+      return result;
+    };
+    const intersection = (first, second) => {
+      let ring = first[0].slice(0, -1);
+      const boundary = second[0].slice(0, -1), direction = Math.sign(area(boundary));
+      for (let i = 0; i < boundary.length && ring.length >= 3; i++)
+        ring = clipHalfPlane(ring, boundary[i], boundary[(i + 1) % boundary.length], direction);
+      return ring.length >= 3 && Math.abs(area(ring)) > 1e-8 ? ring : [];
+    };
+    // Partition convex road pieces against convex footprints without overlapping output pieces.
+    const subtract = (polygon, cuts) => {
+      let result = [polygon[0].slice(0, -1)];
+      for (const cut of cuts) {
+        if (!result.length) break;
+        const boundary = cut[0].slice(0, -1), direction = Math.sign(area(boundary));
+        const bounds = pointBounds(boundary), next = [];
+        for (const ring of result) {
+          if (!overlap(pointBounds(ring), bounds)) { next.push(ring); continue; }
+          let inside = ring;
+          for (let i = 0; i < boundary.length && inside.length >= 3; i++) {
+            const a = boundary[i], b = boundary[(i + 1) % boundary.length];
+            const outside = clipHalfPlane(inside, a, b, -direction);
+            if (outside.length >= 3 && Math.abs(area(outside)) > 1e-8) next.push(outside);
+            inside = clipHalfPlane(inside, a, b, direction);
+          }
+        }
+        result = next;
+      }
+      return result.map(ring => [[...ring, ring[0]]]);
+    };
+    const junctionPolygons = (item, roads) => {
+      const cuts = roads.map(edge => footprints.get(edge).polygon);
+      for (const previous of nodeIndex.query(item.bounds)) {
+        if (previous.order >= item.order || !overlap(item.bounds, previous.bounds)) continue;
+        const point = [(Math.max(item.bounds[0], previous.bounds[0]) + Math.min(item.bounds[2], previous.bounds[2])) / 2,
+          (Math.max(item.bounds[1], previous.bounds[1]) + Math.min(item.bounds[3], previous.bounds[3])) / 2];
+        if (sameSurface(item.edge, previous.edge, point)) cuts.push(caps.get(previous.node));
+      }
+      return subtract(caps.get(item.node), cuts);
+    };
+    const addPolygons = (buffer, polygons, edge, owners = []) => {
+      const candidates = owners.map(other => {
+        const ring = footprints.get(other).polygon[0];
+        return { edge: other, ring, direction: Math.sign(area(ring.slice(0, -1))) };
+      });
+      for (const polygon of polygons) {
+        const rings = polygon.map(ring => ring.slice(0, -1).map(([x, y]) => new THREE.Vector2(x, y)));
+        const [outer, ...holes] = rings;
+        const faces = THREE.ShapeUtils.triangulateShape(outer, holes);
+        const vertices = [outer, ...holes].flat();
+        for (const face of faces) for (const index of face) {
+          const { x, y } = vertices[index];
+          const owner = candidates.find(({ ring, direction }) => {
+            for (let i = 0; i < ring.length - 1; i++) {
+              const a = ring[i], b = ring[i + 1], dx = b[0] - a[0], dy = b[1] - a[1];
+              if (direction * (dx * (y - a[1]) - dy * (x - a[0])) < -1e-7 * Math.hypot(dx, dy)) return false;
+            }
+            return true;
+          })?.edge ?? edge;
+          buffer.push(x, surfacePose(this, owner, { x, y }, 0).height + .08, y);
+        }
+      }
+    };
     const physicalKey = edge => `${edge.width ?? edge.kind}:${[edge.a, edge.b].sort().join(":")}`;
     const boundaries = new Map(), decorated = new Set();
     for (const line of this.groundMap.collisionLines.all()) {
@@ -605,13 +739,51 @@ export class Map3DView {
       const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
       const upper = p => [p[0], p[1] + WORLD_SCALE.tunnelClearance, p[2]];
       const deckStart = tile[deckKind].length;
+      const earlier = overlappingRoads(edge, footprints.get(edge).bounds)
+        .filter(other => edgeOrder.get(other) < edgeOrder.get(edge))
+        .map(other => ({ edge: other,
+          overlap: intersection(footprints.get(edge).polygon, footprints.get(other).polygon) }))
+        .filter(item => item.overlap.length);
+      const breaks = earlier.flatMap(item => {
+        const distances = item.overlap.map(p =>
+          ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length);
+        const first = Math.min(...distances), last = Math.max(...distances);
+        return [first - 8, first, last, last + 8].filter(value => value > 0 && value < length);
+      }).sort((first, last) => first - last);
+      const lateralBreaks = earlier.flatMap(item => item.overlap.map(p =>
+        ((p[0] - a[0]) * nx + (p[1] - a[1]) * ny) / r))
+        .filter(value => value > -1 + 1e-6 && value < 1 - 1e-6);
+      const sections = [];
       for (const [start, end] of surfaceSegments(this, edge)) {
+        const distance = p => ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length;
+        const first = distance(start), last = distance(end);
+        const points = [start, ...breaks.filter(value => value > first + 1e-6 && value < last - 1e-6)
+          .map(value => [a[0] + (b[0] - a[0]) * value / length, a[1] + (b[1] - a[1]) * value / length]), end];
+        for (let i = 1; i < points.length; i++) {
+          if (Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]) > 1e-6)
+            sections.push([points[i - 1], points[i]]);
+        }
+      }
+      for (const [start, end] of sections) {
         const al = point(start, -1), ar = point(start, 1),
           bl = point(end, -1), br = point(end, 1);
         const strips = this.elevation.road_junctions?.[edge.id] ? Math.ceil(r * 2) : 1;
-        for (let i = 0; i < strips; i++) {
-          const left = -1 + 2 * i / strips, right = -1 + 2 * (i + 1) / strips;
-          quad(tile[deckKind], point(start, left), point(start, right), point(end, right), point(end, left));
+        const sides = [...Array.from({ length: strips + 1 }, (_, i) => -1 + 2 * i / strips),
+          ...lateralBreaks].sort((first, last) => first - last)
+          .filter((value, i, values) => !i || value - values[i - 1] > 1e-6);
+        for (let i = 1; i < sides.length; i++) {
+          const left = sides[i - 1], right = sides[i];
+          const vertices = [point(start, left), point(start, right), point(end, right), point(end, left)];
+          const ring = vertices.map(vertex => snapped([vertex[0], vertex[2]]));
+          const bounds = pointBounds(ring);
+          const owners = earlier.filter(item => touches(bounds, footprints.get(item.edge).bounds))
+            .map(item => item.edge).sort((a, b) => edgeOrder.get(a) - edgeOrder.get(b));
+          const cuts = owners.map(other => footprints.get(other).polygon);
+          if (!cuts.length) quad(tile[deckKind], ...vertices);
+          else {
+            ring.push(ring[0]);
+            addPolygons(tile[deckKind], subtract([ring], cuts), edge, owners);
+          }
         }
         if (bridge && !(this.elevation.node_quality?.[edge.a] && this.elevation.node_quality?.[edge.b])) {
           quad(tile.shell, lower(al), lower(bl), lower(br), lower(ar));
@@ -627,19 +799,11 @@ export class Map3DView {
       for (let i = deckStart; i < tile[deckKind].length; i += 3)
         tile.colors[deckKind].push(tint.r, tint.g, tint.b);
       for (const node of [edge.a, edge.b]) {
-        nodeRadii.set(node, Math.max(nodeRadii.get(node) ?? 0, r));
-        const [x, y] = this.nodes[node], z = surfacePose(this, edge, { x, y }, 0).height + .08;
-        const owners = this.elevation.road_junctions?.[edge.id];
-        if (!nodeSurfaces.has(node) || owners?.some(owner => owner.node === node)) nodeSurfaces.set(node, edge);
-        if (!bridge) continue;
-        elevatedNodes.add(node);
-        const rim = angle => {
-          const dx = r * Math.cos(angle), dy = r * Math.sin(angle);
-          return [x + dx, surfacePose(this, edge, { x: x + dx, y: y + dy }, 0).height + .08, y + dy];
-        };
+        if (!elevatedNodes.has(node) || nodeSurfaces.get(node) !== edge) continue;
         const start = tile.elevatedDeck.length;
-        for (let i = 0; i < 16; i++) triangle(tile.elevatedDeck, [x, z, y],
-          rim(i * Math.PI / 8), rim((i + 1) * Math.PI / 8));
+        const item = nodeData.get(node);
+        const owners = overlappingRoads(edge, item.bounds).sort((a, b) => edgeOrder.get(a) - edgeOrder.get(b));
+        addPolygons(tile.elevatedDeck, junctionPolygons(item, owners), edge, owners);
         for (let i = start; i < tile.elevatedDeck.length; i += 3)
           tile.colors.elevatedDeck.push(tint.r, tint.g, tint.b);
       }
@@ -828,7 +992,6 @@ export class Map3DView {
         edge: this.groundMap.unique.find(edge => edge.id === pilot.bridge) });
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
-    // Matching world-space asphalt makes coplanar road overlaps visually identical.
     const material = new THREE.MeshBasicMaterial({ vertexColors: true, map: this.asphaltTexture,
       side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     const faded = material.clone();
@@ -836,25 +999,21 @@ export class Map3DView {
     this.resources.push(faded);
     const jointTiles = new Map();
     let nodeSteps = 0;
-    for (const [node, radius] of nodeRadii) {
+    for (const node of nodeRadii.keys()) {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
       if (!jointTiles.has(key)) jointTiles.set(key, { positions: [], colors: [], ranges: [] });
       const edge = nodeSurfaces.get(node), { positions, colors, ranges } = jointTiles.get(key), tint = roadTint(edge);
       const start = positions.length / 3;
-      const centre = [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
-      const rim = angle => {
-        const px = x + radius * Math.cos(angle), py = y + radius * Math.sin(angle);
-        return [px, surfacePose(this, edge, { x: px, y: py }, 0).height + .08, py];
-      };
-      for (let i = 0; i < 32; i++) {
-        triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
-        for (let vertex = 0; vertex < 3; vertex++) colors.push(tint.r, tint.g, tint.b);
-      }
-      ranges.push({ edge, start, end: positions.length / 3 });
+      const item = nodeData.get(node);
+      const owners = overlappingRoads(edge, item.bounds).sort((a, b) => edgeOrder.get(a) - edgeOrder.get(b));
+      addPolygons(positions, junctionPolygons(item, owners), edge, owners);
+      for (let i = start; i < positions.length / 3; i++) colors.push(tint.r, tint.g, tint.b);
+      if (positions.length / 3 > start) ranges.push({ edge, start, end: positions.length / 3 });
       if (++nodeSteps % 4 === 0) yield;
     }
     for (const { positions, colors, ranges } of jointTiles.values()) {
+      if (!positions.length) continue;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));

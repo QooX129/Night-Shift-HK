@@ -488,6 +488,8 @@ Solid bridge decks and estimated tunnel floors/walls/ceilings render separately;
 obstructing structures fade, and terrain fades for readable tunnel interiors.
 Visible roads connected to an obstructing road fade with it, gradually returning
 to full opacity toward the edge of the screen.
+Overlapping road ends are clipped into shared junction surfaces so fading does
+not accumulate at joins; crossings at different heights stay separate.
 The OSM graph includes motorway and trunk roads and their links, including
 drivable flyovers such as Gascoigne Road Flyover. Short OSM connectors are
 retained; the 2D map draws higher road layers above lower ones. Flyover heights

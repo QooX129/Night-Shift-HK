@@ -6,7 +6,7 @@ test.use({ trace: "off" });
 test("layer-only OSM roads build an elevated deck instead of a ground road", async ({ page }) => {
   await page.goto("/");
   const tile = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const edge = { id: "layer-one", a: "a", b: "b", way: 1, kind: "primary", width: 10,
       layer: "1", bridge: "no", tunnel: "no", oneway: true };
     const tiles = [];
@@ -15,7 +15,8 @@ test("layer-only OSM roads build an elevated deck instead of a ground road", asy
       data: { driving: { widths: { primary: 16 } } },
       elevation: { node_heights: { a: 6, b: 6 }, road_profiles: {}, road_junctions: {},
         pilot: { triangles: [] } },
-      groundMap: { unique: [edge] }, camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
+      groundMap: { unique: [edge], collisionLines: { all: () => [] } },
+      camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
       addRoadTile(road) { tiles.push(road); }, scene: { add() {} },
     });
     const task = view.roadSurfaceGeometry();
@@ -32,7 +33,7 @@ test("Nathan Road stays drivable beneath the Gascoigne flyover", async ({ page }
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const roads = new RoadNetwork(data);
     const previous = roads.edges.get("436371172:1:9891388476");
     const following = roads.edges.get("987256904:0:5057028185");
@@ -57,7 +58,8 @@ test("Nathan Road stays drivable beneath the Gascoigne flyover", async ({ page }
     const tiles = [];
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: roads.nodes, data, elevation: data.elevation,
-      groundMap: { unique: [upper, lower] }, camera: { x: 0, y: 0 }, stream: null,
+      groundMap: { unique: [upper, lower], collisionLines: { all: () => [] } },
+      camera: { x: 0, y: 0 }, stream: null,
       resources: [], structures: [], addRoadTile(tile) { tiles.push(tile); }, scene: { add() {} },
     });
     const task = view.roadSurfaceGeometry();
@@ -67,8 +69,8 @@ test("Nathan Road stays drivable beneath the Gascoigne flyover", async ({ page }
       separated: !roads.candidates(crossing, lower).some(edge => edge.id === upper.id),
       junctionDifference: Math.abs(surfacePose(roads, side, junction, 0).height
         - surfacePose(roads, owner, junction, 0).height),
-      upperDeck: tiles.reduce((sum, tile) => sum + tile.elevatedDeck.length, 0),
-      lowerDeck: tiles.reduce((sum, tile) => sum + tile.deck.length, 0) };
+      upperDeck: tiles.reduce((sum, tile) => sum + (tile.elevatedDeck?.length ?? 0), 0),
+      lowerDeck: tiles.reduce((sum, tile) => sum + (tile.deck?.length ?? 0), 0) };
   });
   expect(result.fits).toBe(true);
   expect(result.matched).toBe(true);
@@ -86,14 +88,15 @@ test("Central Kowloon Bypass roof remains below the overlapping ground road", as
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork, project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const roads = new RoadNetwork(data);
     const tunnel = roads.edges.get("504423499:2:13108582004");
     const ground = roads.edges.get("1389172580:0:12859244962");
     const tiles = [];
     const view = Object.assign(Object.create(Map3DView.prototype), {
       nodes: roads.nodes, data, elevation: data.elevation,
-      groundMap: { unique: [tunnel] }, camera: { x: 0, y: 0 }, stream: null,
+      groundMap: { unique: [tunnel], collisionLines: { all: () => [] } },
+      camera: { x: 0, y: 0 }, stream: null,
       resources: [], structures: [], addRoadTile(tile) { tiles.push(tile); }, scene: { add() {} },
     });
     const task = view.roadSurfaceGeometry();
@@ -164,7 +167,7 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const { RoadNetwork } = await import("/physics.mjs?v=steering-grip-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
@@ -201,7 +204,7 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const { Map3DView } = await import("/map3d.mjs?v=junction-surface-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();
