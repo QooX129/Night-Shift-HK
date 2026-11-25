@@ -1,4 +1,4 @@
-import { Map3DView } from "./map3d.mjs?v=curved-curbs-4";
+import { Map3DView } from "./map3d.mjs?v=connected-road-fade-1";
 import { MapView } from "./map.mjs?v=building-road-types-1";
 
 let view;

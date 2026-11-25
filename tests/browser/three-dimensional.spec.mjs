@@ -4,10 +4,92 @@ test.beforeEach(async ({ page }) => useLegacyInitialView(page));
 
 test.use({ trace: "off" });
 
+test("connected visible roads fade gradually and recover with the blocking road", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
+    const THREE = await import("/vendor/three/three.module.min.js");
+    const nodes = { a: [-80, 0], b: [0, 0], c: [40, 0], d: [100, 0],
+      e: [200, 0], f: [300, 0], g: [60, 30], h: [90, 30] };
+    const edges = [["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"], ["e", "f"], ["g", "h"]]
+      .map(([a, b]) => ({ id: a + b, a, b, way: a + b, kind: "service", width: 4,
+        bridge: "yes", tunnel: "no", layer: "1", oneway: true }));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("black");
+    const lens = new THREE.OrthographicCamera(-100, 100, 100, -100, .1, 200);
+    lens.position.set(0, 100, 0);
+    lens.up.set(0, 0, -1);
+    lens.lookAt(0, 0, 0);
+    lens.updateMatrixWorld();
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      nodes, data: { driving: { widths: { service: 4 } } },
+      elevation: { node_heights: Object.fromEntries(Object.keys(nodes).map(node => [node, 5])),
+        road_profiles: {}, road_junctions: {}, pilot: { triangles: [] } },
+      groundMap: { unique: edges, collisionLines: { all: () => [] } },
+      camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [],
+      scene, lens, sceneSize: new THREE.Vector2(256, 256), asphaltTexture: null,
+      *curbMarkings() { return []; },
+    });
+    const task = view.roadSurfaceGeometry();
+    while (!task.next().done) {}
+    for (const { mesh } of view.structures) {
+      const color = mesh.geometry.getAttribute("color");
+      if (color) { color.array.fill(1); color.needsUpdate = true; }
+      mesh.material.color.set("white");
+    }
+    const ray = new THREE.Raycaster(new THREE.Vector3(-40, 100, 0), new THREE.Vector3(0, -1, 0), 0, 200);
+    view.updateRoadFades(ray);
+    const flags = () => Object.fromEntries(edges.map(edge => {
+      const values = view.structures.flatMap(({ mesh, ranges }) => (ranges ?? [])
+        .filter(range => range.edge === edge)
+        .map(range => mesh.geometry.getAttribute("roadFade").getX(range.start)));
+      return [edge.id, Math.max(...values)];
+    }));
+    const faded = flags();
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(256, 256);
+    const target = new THREE.WebGLRenderTarget(256, 256);
+    renderer.setRenderTarget(target);
+    renderer.render(scene, lens);
+    const pixel = new Uint8Array(4);
+    const sample = (x, z) => {
+      renderer.readRenderTargetPixels(target, Math.floor((x / 100 + 1) * 128),
+        Math.floor((1 - z / 100) * 128), 1, 1, pixel);
+      return pixel[0];
+    };
+    const pixels = [sample(-40, 0), sample(20, 0), sample(70, 0), sample(95, 0), sample(80, 30)];
+    view.updateRoadFades(null);
+    const restored = flags();
+    const pilotMaterial = new THREE.MeshBasicMaterial();
+    const pilotFaded = pilotMaterial.clone();
+    const pilot = new THREE.Mesh(new THREE.BufferGeometry(), pilotMaterial);
+    view.structures.push({ mesh: pilot, material: pilotMaterial, faded: pilotFaded, edge: edges[0] });
+    view.updateRoadFades({ intersectObject: mesh => mesh === pilot
+      ? [{ distance: 1, point: new THREE.Vector3(-40, 5, 0) }] : [] });
+    const pilotFade = flags();
+    pilot.geometry.dispose();
+    pilotMaterial.dispose();
+    pilotFaded.dispose();
+    renderer.dispose();
+    target.dispose();
+    for (const geometry of new Set(view.structures.map(({ mesh }) => mesh.geometry))) geometry.dispose();
+    for (const resource of view.resources) resource.dispose();
+    return { faded, restored, pilotFade, pixels };
+  });
+  expect(result.faded).toEqual({ ab: 2, bc: 1, cd: 1, de: 1, ef: 0, gh: 0 });
+  expect(Object.values(result.restored)).toEqual([0, 0, 0, 0, 0, 0]);
+  expect(result.pilotFade).toEqual(result.faded);
+  expect(result.pixels[0]).toBeLessThan(result.pixels[1]);
+  expect(result.pixels[1]).toBeLessThan(result.pixels[2]);
+  expect(result.pixels[2]).toBeLessThan(result.pixels[3]);
+  expect(result.pixels[3]).toBeGreaterThan(235);
+  expect(result.pixels[4]).toBeGreaterThan(240);
+});
+
 test("translucent canopy occludes only the road boundaries behind it", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const canvas = document.body.appendChild(document.createElement("canvas"));
     const view = new Map3DView(canvas, {
@@ -58,7 +140,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
@@ -118,7 +200,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -162,7 +244,7 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -275,7 +357,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -310,7 +392,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.create(Map3DView.prototype);
     view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
@@ -356,7 +438,7 @@ test("GPS route progress reuses traffic geometry and completed route segments", 
 test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = await (await fetch("/api/map")).json();
     const session = await (await fetch("/api/sessions", { method: "POST" })).json();
@@ -410,7 +492,7 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -465,7 +547,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -654,7 +736,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },

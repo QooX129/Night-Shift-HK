@@ -5,7 +5,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-300, -300, 300, 300],
@@ -178,7 +178,7 @@ for (const density of [1, 2]) {
     test("renders the city at screen resolution with multisampled silhouettes", async ({ page }) => {
       await page.goto("/");
       const result = await page.evaluate(async () => {
-        const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+        const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
         const { DEFAULT_SETTINGS } = await import("/settings.mjs");
         const THREE = await import("/vendor/three/three.module.min.js");
         const data = {

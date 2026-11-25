@@ -5,7 +5,7 @@ test.use({ trace: "off" });
 test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
@@ -64,7 +64,7 @@ test("overlapping road joints match the road surface without visible patches", a
 test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const data = {
       bounds: [-20, -40, 100, 50],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
@@ -147,7 +147,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
 test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map?stream=true")).json();
     const center = data.nodes["1151084860"];
@@ -197,7 +197,7 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
 test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const data = {
       bounds: [-20, -20, 220, 140],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },
@@ -268,7 +268,7 @@ test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", 
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const { RoadNetwork } = await import("/physics.mjs?v=parabolic-steering-1");
     const data = {
       bounds: [-10, -20, 110, 30], backdrop: [
@@ -407,7 +407,7 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const { RoadNetwork, project } = await import("/physics.mjs?v=parabolic-steering-1");
     const roads = new RoadNetwork(data);
     const side = roads.edges.get("485635353:2:6505945379"), main = roads.edges.get("1067815827:9:13108528146");
@@ -454,7 +454,7 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
   await page.locator("#welcome").evaluate(dialog => dialog.close());
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=curved-curbs-4");
+    const { Map3DView } = await import("/map3d.mjs?v=connected-road-fade-1");
     const { project } = await import("/physics.mjs?v=parabolic-steering-1");
     const { surfacePose, isGroundRoad } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const { roadWidth } = await import("/road-width.mjs");

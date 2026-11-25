@@ -149,7 +149,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=curved-curbs-4", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=connected-road-fade-1", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -545,6 +545,11 @@ export class Map3DView {
   *roadSurfaceGeometry() {
     const tiles = new Map(), nodeRadii = new Map(), elevatedNodes = new Set(), nodeSurfaces = new Map();
     const junctions = new Map();
+    this.roadFadeNeighbors = new Map();
+    for (const edge of this.groundMap.unique) for (const node of [edge.a, edge.b]) {
+      if (!this.roadFadeNeighbors.has(node)) this.roadFadeNeighbors.set(node, []);
+      this.roadFadeNeighbors.get(node).push(edge);
+    }
     const physicalKey = edge => `${edge.width ?? edge.kind}:${[edge.a, edge.b].sort().join(":")}`;
     const boundaries = new Map(), decorated = new Set();
     for (const line of this.groundMap.collisionLines.all()) {
@@ -590,8 +595,10 @@ export class Map3DView {
       const key = roadKey(edge);
       if (!tiles.has(key)) tiles.set(key, { deck: [], shell: [], elevatedDeck: [],
         colors: { deck: [], elevatedDeck: [] }, markings: [], yellow: [], box: [],
+        roadRanges: { deck: [], shell: [], elevatedDeck: [], markings: [] },
         sidewalk: [], railing: [], signal: [], signalRed: [] });
       const tile = tiles.get(key);
+      const starts = Object.fromEntries(Object.keys(tile.roadRanges).map(kind => [kind, tile[kind].length / 3]));
       const bridge = isElevatedRoad(edge), tunnel = isTunnelRoad(edge);
       const deckKind = bridge ? "elevatedDeck" : "deck";
       const tint = roadTint(edge);
@@ -772,6 +779,10 @@ export class Map3DView {
           }
         }
       }
+      for (const kind of Object.keys(tile.roadRanges)) {
+        const end = tile[kind].length / 3;
+        if (end > starts[kind]) tile.roadRanges[kind].push({ edge, start: starts[kind], end });
+      }
       remaining.set(key, remaining.get(key) - 1);
       if (this.stream && remaining.get(key) === 0) {
         this.addRoadTile(tile);
@@ -813,7 +824,8 @@ export class Map3DView {
       mesh.name = "official-LandsD-pilot-bridge-estimated-datum-alignment";
       this.scene.add(mesh);
       this.resources.push(material, faded);
-      this.structures.push({ mesh, material, faded });
+      this.structures.push({ mesh, material, faded,
+        edge: this.groundMap.unique.find(edge => edge.id === pilot.bridge) });
     }
     for (const node of elevatedNodes) nodeRadii.delete(node);
     // Matching world-space asphalt makes coplanar road overlaps visually identical.
@@ -827,8 +839,9 @@ export class Map3DView {
     for (const [node, radius] of nodeRadii) {
       const [x, y] = this.nodes[node];
       const key = `${Math.floor(x / 200)}:${Math.floor(y / 200)}`;
-      if (!jointTiles.has(key)) jointTiles.set(key, { positions: [], colors: [] });
-      const edge = nodeSurfaces.get(node), { positions, colors } = jointTiles.get(key), tint = roadTint(edge);
+      if (!jointTiles.has(key)) jointTiles.set(key, { positions: [], colors: [], ranges: [] });
+      const edge = nodeSurfaces.get(node), { positions, colors, ranges } = jointTiles.get(key), tint = roadTint(edge);
+      const start = positions.length / 3;
       const centre = [x, surfacePose(this, edge, { x, y }, 0).height + .08, y];
       const rim = angle => {
         const px = x + radius * Math.cos(angle), py = y + radius * Math.sin(angle);
@@ -838,9 +851,10 @@ export class Map3DView {
         triangle(positions, centre, rim(i * Math.PI / 16), rim((i + 1) * Math.PI / 16));
         for (let vertex = 0; vertex < 3; vertex++) colors.push(tint.r, tint.g, tint.b);
       }
+      ranges.push({ edge, start, end: positions.length / 3 });
       if (++nodeSteps % 4 === 0) yield;
     }
-    for (const { positions, colors } of jointTiles.values()) {
+    for (const { positions, colors, ranges } of jointTiles.values()) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
@@ -851,8 +865,125 @@ export class Map3DView {
       const joints = new THREE.Mesh(geometry, material);
       joints.name = "continuous-shared-node-road-joints";
       this.scene.add(joints);
-      this.structures.push({ mesh: joints, material, faded });
+      this.addRoadFadeStructure(joints, material, faded, ranges);
       yield;
+    }
+  }
+  addRoadFadeStructure(mesh, material, faded, ranges) {
+    const geometry = mesh.geometry;
+    geometry.setAttribute("roadFade", new THREE.BufferAttribute(
+      new Float32Array(geometry.getAttribute("position").count), 1).setUsage(THREE.DynamicDrawUsage));
+    this.roadFadeUniforms ??= {
+      roadFadeSegment: { value: new THREE.Vector4() },
+      roadFadeSize: { value: this.sceneSize },
+    };
+    const configure = (target, transparent) => {
+      target.onBeforeCompile = shader => {
+        Object.assign(shader.uniforms, this.roadFadeUniforms);
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nattribute float roadFade;\nvarying float vRoadFade;")
+          .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRoadFade = roadFade;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", `#include <common>
+            varying float vRoadFade;
+            uniform vec4 roadFadeSegment;
+            uniform vec2 roadFadeSize;`)
+          .replace("#include <opaque_fragment>", transparent ? `
+            if (vRoadFade < 0.5) discard;
+            vec2 p = gl_FragCoord.xy / roadFadeSize * 2.0 - 1.0;
+            vec2 a = roadFadeSegment.xy, b = roadFadeSegment.zw, ab = b - a;
+            float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 0.000001), 0.0, 1.0);
+            vec2 origin = clamp(a + t * ab, vec2(-0.999), vec2(0.999));
+            vec2 delta = p - origin;
+            vec2 remaining = max(vec2(0.001), vec2(1.0) - sign(delta) * origin);
+            float gradient = clamp(max(abs(delta.x) / remaining.x, abs(delta.y) / remaining.y), 0.0, 1.0);
+            diffuseColor.a *= vRoadFade > 1.5 ? 0.12 : mix(0.12, 1.0, gradient);
+            #include <opaque_fragment>` : `
+            if (vRoadFade > 0.5) discard;
+            #include <opaque_fragment>`);
+      };
+      target.customProgramCacheKey = () => transparent ? "road-fade-transparent" : "road-fade-solid";
+    };
+    configure(material, false);
+    faded.opacity = 1;
+    configure(faded, true);
+    const overlay = new THREE.Mesh(geometry, faded);
+    overlay.visible = false;
+    this.scene.add(overlay);
+    this.structures.push({ mesh, material, faded, overlay, ranges });
+  }
+  updateRoadFades(raycaster) {
+    const sources = new Set();
+    let nearest = null;
+    for (const structure of this.structures || []) {
+      const { mesh, material, faded, ranges, edge } = structure;
+      if (raycaster) mesh.updateWorldMatrix(true, false);
+      const hits = raycaster ? raycaster.intersectObject(mesh, false) : [];
+      if (!ranges) {
+        mesh.material = hits.length ? faded : material;
+        if (edge && hits.length) {
+          sources.add(edge);
+          if (!nearest || hits[0].distance < nearest.distance) nearest = { ...hits[0], edge };
+        }
+        continue;
+      }
+      for (const hit of hits) {
+        const range = ranges.find(item => hit.face.a >= item.start && hit.face.a < item.end);
+        if (!range) throw new Error(`Missing road owner for ${mesh.name} vertex ${hit.face.a}`);
+        sources.add(range.edge);
+        if (!nearest || hit.distance < nearest.distance) nearest = { ...hit, edge: range.edge };
+      }
+    }
+    const connected = new Set(sources);
+    if (nearest) {
+      this.lens.updateMatrixWorld();
+      const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(this.lens.projectionMatrix, this.lens.matrixWorldInverse));
+      const visible = edge => {
+        const a = this.nodes[edge.a], b = this.nodes[edge.b];
+        const heights = this.elevation.node_heights, margin = roadWidth(this.data.driving, edge) / 2 + 8;
+        return frustum.intersectsBox(new THREE.Box3(
+          new THREE.Vector3(Math.min(a[0], b[0]) - margin, Math.min(heights[edge.a], heights[edge.b]) - margin, Math.min(a[1], b[1]) - margin),
+          new THREE.Vector3(Math.max(a[0], b[0]) + margin, Math.max(heights[edge.a], heights[edge.b]) + margin, Math.max(a[1], b[1]) + margin)));
+      };
+      const queue = [...sources];
+      for (let i = 0; i < queue.length; i++) for (const node of [queue[i].a, queue[i].b]) {
+        for (const edge of this.roadFadeNeighbors.get(node) ?? []) {
+          if (!connected.has(edge) && visible(edge)) { connected.add(edge); queue.push(edge); }
+        }
+      }
+      const edge = nearest.edge, a = this.nodes[edge.a], b = this.nodes[edge.b];
+      const point = (node, coordinates) => new THREE.Vector3(coordinates[0],
+        this.elevation.node_heights[node] + .08, coordinates[1]).applyMatrix4(this.lens.matrixWorldInverse);
+      let first = point(edge.a, a), last = point(edge.b, b);
+      const near = -this.lens.near;
+      if (first.z >= near && last.z >= near) {
+        first = nearest.point.clone().project(this.lens);
+        last = first;
+      } else {
+        if (first.z >= near) first.lerp(last, (near - first.z) / (last.z - first.z));
+        if (last.z >= near) last.lerp(first, (near - last.z) / (first.z - last.z));
+        first.applyMatrix4(this.lens.projectionMatrix);
+        last.applyMatrix4(this.lens.projectionMatrix);
+      }
+      this.roadFadeUniforms.roadFadeSegment.value.set(first.x, first.y, last.x, last.y);
+    }
+    if (!nearest && !this.roadFadeActive) return;
+    this.roadFadeActive = Boolean(nearest);
+    for (const { mesh, overlay, ranges } of this.structures || []) {
+      if (!ranges) continue;
+      const attribute = mesh.geometry.getAttribute("roadFade");
+      let changed = false, active = false;
+      for (const { edge, start, end } of ranges) {
+        const value = sources.has(edge) ? 2 : connected.has(edge) ? 1 : 0;
+        active ||= value > 0;
+        if (attribute.array[start] !== value) {
+          attribute.array.fill(value, start, end);
+          changed = true;
+        }
+      }
+      if (changed) attribute.needsUpdate = true;
+      overlay.visible = active;
     }
   }
   addRoadTile(tile) {
@@ -893,7 +1024,8 @@ export class Map3DView {
         const faded = material.clone();
         faded.transparent = true; faded.opacity = .12; faded.depthWrite = false;
         this.resources.push(faded);
-        this.structures.push({ mesh, material, faded });
+        if (tile.roadRanges) this.addRoadFadeStructure(mesh, material, faded, tile.roadRanges[kind]);
+        else this.structures.push({ mesh, material, faded });
       }
     }
     if (details.length) {
@@ -2212,10 +2344,7 @@ export class Map3DView {
     const sightDirection = line.delta(new THREE.Vector3());
     const raycaster = this.overview ? null
       : new THREE.Raycaster(line.start, sightDirection.clone().normalize(), 0, sightDirection.length());
-    for (const { mesh, material, faded } of this.structures || []) {
-      if (raycaster) mesh.updateWorldMatrix(true, false);
-      mesh.material = raycaster && raycaster.intersectObject(mesh, false).length ? faded : material;
-    }
+    this.updateRoadFades(raycaster);
     if (state) {
       this.updateCitizens(state, car, lang);
       this.updateOverlays(state, approach, previewExit);

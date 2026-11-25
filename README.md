@@ -486,6 +486,8 @@ No rigid-body jumps, suspension or rollover physics are added. Cars remain on th
 connected road surface, never switching to an unconnected bridge at a crossing.
 Solid bridge decks and estimated tunnel floors/walls/ceilings render separately;
 obstructing structures fade, and terrain fades for readable tunnel interiors.
+Visible roads connected to an obstructing road fade with it, gradually returning
+to full opacity toward the edge of the screen.
 The OSM graph includes motorway and trunk roads and their links, including
 drivable flyovers such as Gascoigne Road Flyover. Short OSM connectors are
 retained; the 2D map draws higher road layers above lower ones. Flyover heights
