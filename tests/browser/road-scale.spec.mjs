@@ -5,7 +5,7 @@ test.use({ trace: "off" });
 test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
@@ -64,7 +64,7 @@ test("overlapping road joints match the road surface without visible patches", a
 test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const data = {
       bounds: [-20, -40, 100, 50],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
@@ -118,7 +118,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
 test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map?stream=true")).json();
     const center = data.nodes["1151084860"];
@@ -168,7 +168,7 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
 test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const data = {
       bounds: [-20, -20, 220, 140],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },

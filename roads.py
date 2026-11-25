@@ -73,6 +73,8 @@ class Edge:
     wrongway: bool = False
     width: float | None = None
     width_source: str | None = None
+    lanes: str | None = None
+    surface: str = ""
 
 
 @dataclass(frozen=True, slots=True)

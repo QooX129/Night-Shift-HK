@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prototype — Hong Kong building and road styles</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 14px/1.45 system-ui, sans-serif;
+      background: #10191c;
+      color: #edf2eb;
+      --panel: #172326ed;
+      --line: #405052;
+      --muted: #9eb0ad;
+      --accent: #f0c46c;
+    }
+    * { box-sizing: border-box }
+    body { margin: 0; min-height: 100vh; overflow: hidden }
+    header {
+      position: absolute; z-index: 2; top: 20px; left: 22px;
+      max-width: min(620px, calc(100vw - 44px));
+      padding: 14px 18px; border: 1px solid var(--line); border-radius: 14px;
+      background: var(--panel); box-shadow: 0 8px 26px #0006; pointer-events: none;
+    }
+    h1 { margin: 0 0 3px; font-size: 19px; letter-spacing: .01em }
+    #variant-title { color: var(--accent); font-weight: 650 }
+    #summary, #caveat { margin: 6px 0 0; color: var(--muted); font-size: 12px }
+    #caveat { max-width: 550px }
+    #controls {
+      position: absolute; z-index: 2; right: 20px; top: 20px; width: min(280px, 42vw);
+      padding: 14px; border: 1px solid var(--line); border-radius: 14px;
+      background: var(--panel); box-shadow: 0 8px 26px #0006;
+    }
+    label { display: block; margin: 0 0 11px; color: var(--muted); font-size: 12px }
+    select {
+      display: block; width: 100%; margin-top: 4px; padding: 8px;
+      border: 1px solid var(--line); border-radius: 8px; background: #10191c; color: #edf2eb;
+    }
+    #legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px }
+    .swatch {
+      display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px;
+      border: 1px solid #ffffff20; border-radius: 20px; color: #d7dfd9; font-size: 11px;
+    }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--swatch) }
+    #scene { display: block; width: 100vw; height: 100vh }
+    #status {
+      position: absolute; left: 22px; bottom: 22px; padding: 8px 11px;
+      border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+      color: var(--muted); font-size: 12px;
+    }
+    #switcher {
+      position: absolute; z-index: 3; left: 50%; bottom: 20px; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 12px; padding: 8px 11px;
+      border: 1px solid #f0c46c88; border-radius: 999px;
+      background: #0c1415f2; box-shadow: 0 6px 24px #0009;
+    }
+    #switcher button {
+      width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 50%;
+      background: #1c292b; color: #fff; cursor: pointer; font-size: 17px;
+    }
+    #variant-label { min-width: 190px; text-align: center; font-size: 12px }
+    #prototype-flag {
+      position: absolute; right: 20px; bottom: 21px; color: #a7b6b0;
+      font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+    }
+    @media (max-width: 680px) {
+      header { top: 10px; left: 10px; padding: 10px 12px; max-width: 60vw }
+      h1 { font-size: 15px }
+      #summary { font-size: 10px }
+      #caveat { display: none }
+      #controls { top: 122px; right: 10px; width: 165px; padding: 9px }
+      #status { left: 10px; bottom: 75px }
+      #prototype-flag { display: none }
+      #variant-label { min-width: 150px }
+    }
+  </style>
+</head>
+<body>
+  <!-- Three visual directions for the same real OSM district, switchable with ?variant=a|b|c. -->
+  <header>
+    <h1>Building &amp; road styles <span id="variant-title"></span></h1>
+    <p id="summary">Loading the local OpenStreetMap extract…</p>
+    <p id="caveat">Geometry and tags come from the source extract. Materials, facade details, and untagged heights are illustrative—not surveyed building designs.</p>
+  </header>
+  <aside id="controls">
+    <label>Highlight building type
+      <select id="building-filter"><option value="">All building types</option></select>
+    </label>
+    <label>Highlight road type
+      <select id="road-filter"><option value="">All road types</option></select>
+    </label>
+    <div id="legend"></div>
+  </aside>
+  <canvas id="scene" aria-label="Prototype view of real Hong Kong roads and building footprints"></canvas>
+  <div id="status">Reading source data…</div>
+  <div id="switcher" aria-label="Prototype visual styles">
+    <button id="previous" aria-label="Previous visual style">←</button>
+    <span id="variant-label"></span>
+    <button id="next" aria-label="Next visual style">→</button>
+  </div>
+  <div id="prototype-flag">Prototype · not in-game</div>
+  <script>
+    const variants = {
+      a: { name: "A · Hong Kong street realism", sky: "#b9d1c9", ground: "#89928a" },
+      b: { name: "B · OSM planning map", sky: "#d6d5c9", ground: "#d4d0c3" },
+      c: { name: "C · Night-shift arcade", sky: "#101a25", ground: "#18232b" },
+    };
+    const center = { lat: 22.314, lon: 114.1695 };
+    const radius = 390;
+    const metersPerDegree = { lat: 111320, lon: 111320 * Math.cos(center.lat * Math.PI / 180) };
+    const palette = {
+      residential: "#c5a989", apartments: "#78938f", house: "#c5a989",
+      commercial: "#c39973", retail: "#d7a65d", hotel: "#78a6a4",
+      office: "#78919e", school: "#d2bd8c", hospital: "#bd8d86",
+      industrial: "#8e9690", warehouse: "#919b91", civic: "#c9b394",
+      church: "#d7bd81", temple: "#d7bd81", mosque: "#b7a176",
+      roof: "#718d98", yes: "#b8aa91",
+    };
+    const archetypes = [
+      ["Homes", "#c5a989"], ["Glass / hotel", "#78a6a4"],
+      ["Civic", "#d2bd8c"], ["Industry", "#8e9690"],
+    ];
+    const canvas = document.querySelector("#scene");
+    const ctx = canvas.getContext("2d");
+    const filterBuilding = document.querySelector("#building-filter");
+    const filterRoad = document.querySelector("#road-filter");
+    let data = null, variant = new URLSearchParams(location.search).get("variant") || "a";
+    let roads = [], buildings = [], parks = [], sceneScale = 1, width = 0, height = 0;
+    if (!variants[variant]) variant = "a";
+
+    function xy(node) {
+      return [(node.lon - center.lon) * metersPerDegree.lon,
+        (center.lat - node.lat) * metersPerDegree.lat];
+    }
+    function heightFor(tags, id) {
+      const marked = Number.parseFloat(String(tags.height || "").replace(/[^\d.].*$/, ""));
+      const levels = Number.parseFloat(tags["building:levels"]);
+      if (Number.isFinite(marked) && marked > 0) return Math.min(marked, 110);
+      if (Number.isFinite(levels) && levels > 0) return Math.min(levels * 3.2, 100);
+      const kind = tags.building;
+      const defaults = { apartments: 44, residential: 32, hotel: 48, office: 42,
+        commercial: 26, retail: 14, school: 13, hospital: 24, industrial: 9,
+        warehouse: 8, house: 9, roof: 5, yes: 20 };
+      return (defaults[kind] || 18) + (Number(id) % 4) * 2;
+    }
+    function typeColor(type) { return palette[type] || "#b8aa91"; }
+    function project(point, z = 0) {
+      const x = point[0], y = point[1];
+      if (variant === "b") return [width / 2 + x * sceneScale, height / 2 + y * sceneScale];
+      const isNight = variant === "c";
+      const iso = .866;
+      return [width / 2 + (x - y) * iso * sceneScale,
+        height / 2 + (x + y) * .5 * sceneScale - z * sceneScale * (isNight ? .78 : .68)];
+    }
+    function path(points, close = false) {
+      if (!points.length) return;
+      const first = project(points[0]);
+      ctx.beginPath(); ctx.moveTo(first[0], first[1]);
+      for (let i = 1; i < points.length; i++) {
+        const p = project(points[i]); ctx.lineTo(p[0], p[1]);
+      }
+      if (close) ctx.closePath();
+    }
+    function projectedPath(points, close = false) {
+      if (!points.length) return;
+      ctx.beginPath(); ctx.moveTo(points[0][0], points[0][1]);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+      if (close) ctx.closePath();
+    }
+    function roadWidth(road) {
+      const lanes = Number.parseInt(road.tags.lanes, 10);
+      const base = { motorway: 17, trunk: 15, primary: 13, secondary: 11,
+        tertiary: 9, unclassified: 8, residential: 7, living_street: 6, service: 5 };
+      return Math.min(24, Math.max(base[road.tags.highway] || 6,
+        Number.isFinite(lanes) ? lanes * 3.15 : 0));
+    }
+    function paintGround() {
+      ctx.fillStyle = variants[variant].ground;
+      ctx.fillRect(0, 0, width, height);
+      if (variant === "c") {
+        const glow = ctx.createRadialGradient(width * .48, height * .44, 15, width * .48, height * .44, width * .64);
+        glow.addColorStop(0, "#26394a"); glow.addColorStop(1, "#101820");
+        ctx.fillStyle = glow; ctx.fillRect(0, 0, width, height);
+      } else if (variant === "a") {
+        ctx.fillStyle = "#738579";
+        for (let i = 0; i < 80; i++) {
+          const x = (i * 193) % width, y = (i * 317) % height;
+          ctx.globalAlpha = .06; ctx.fillRect(x, y, 2, 2);
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+    function paintRoads() {
+      const sorted = [...roads].sort((a, b) => roadWidth(b) - roadWidth(a));
+      for (const road of sorted) {
+        const selected = !filterRoad.value || road.tags.highway === filterRoad.value;
+        const focusFade = filterRoad.value && !selected ? .16 : 1;
+        const widthPx = Math.max(2, roadWidth(road) * sceneScale);
+        path(road.points);
+        ctx.globalAlpha = focusFade;
+        ctx.lineCap = "round"; ctx.lineJoin = "round";
+        if (variant === "b") {
+          ctx.strokeStyle = road.tags.highway === "motorway" || road.tags.highway === "trunk"
+            ? "#d2a27b" : road.tags.highway === "primary" ? "#e4bd8c" : "#faf7ec";
+          ctx.lineWidth = widthPx + 4; ctx.stroke();
+          ctx.strokeStyle = road.tags.highway === "motorway" || road.tags.highway === "trunk"
+            ? "#bb8667" : road.tags.highway === "primary" ? "#d8aa77" : "#aaa99f";
+          ctx.lineWidth = Math.max(1, widthPx); ctx.setLineDash([]); ctx.stroke();
+        } else {
+          ctx.strokeStyle = variant === "c" ? "#48535a" : "#c2b9a2";
+          ctx.lineWidth = widthPx + Math.max(2, sceneScale * 3); ctx.setLineDash([]); ctx.stroke();
+          ctx.strokeStyle = variant === "c" ? "#303d47" :
+            (road.tags.surface === "concrete" ? "#51595b" : "#454e50");
+          ctx.lineWidth = widthPx; ctx.stroke();
+          if (widthPx > 5) {
+            ctx.strokeStyle = variant === "c" ? "#9ba9a5" : "#d9d4bf";
+            ctx.globalAlpha = focusFade * (variant === "c" ? .48 : .7);
+            ctx.lineWidth = Math.max(.8, sceneScale * .75);
+            ctx.setLineDash(road.tags.highway === "residential" || road.tags.highway === "service"
+              ? [] : [sceneScale * 3, sceneScale * 5]);
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+      }
+    }
+    function paintParks() {
+      for (const park of parks) {
+        path(park.points, true);
+        ctx.fillStyle = variant === "c" ? "#213d37" : variant === "b" ? "#a8bd98" : "#597b59";
+        ctx.fill();
+        if (variant !== "b") {
+          for (let i = 0; i < park.points.length; i += 3) {
+            const p = project(park.points[i]);
+            ctx.fillStyle = variant === "c" ? "#72a287" : "#294f39";
+            ctx.beginPath(); ctx.arc(p[0], p[1], Math.max(1.5, sceneScale * 2.2), 0, Math.PI * 2); ctx.fill();
+          }
+        }
+      }
+    }
+    function paintTopDownBuilding(building, faded) {
+      path(building.points, true);
+      ctx.fillStyle = typeColor(building.visualType);
+      ctx.globalAlpha = faded ? .15 : .92;
+      ctx.fill();
+      ctx.strokeStyle = variant === "c" ? "#d0a56b" : "#645e50";
+      ctx.lineWidth = .7; ctx.stroke(); ctx.globalAlpha = 1;
+      const bounds = building.points.map(project);
+      if (building.type === "industrial" || building.type === "warehouse") {
+        ctx.save(); ctx.globalAlpha = faded ? .12 : .28; ctx.strokeStyle = "#fff4d0";
+        ctx.lineWidth = .7;
+        for (let y = -40; y < 40; y += 6) {
+          ctx.beginPath(); ctx.moveTo(bounds[0][0], bounds[0][1] + y);
+          ctx.lineTo(bounds[1][0], bounds[1][1] + y); ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    function paintExtrudedBuilding(building, faded) {
+      const z = heightFor(building.tags, building.id);
+      const color = typeColor(building.visualType);
+      ctx.globalAlpha = faded ? .13 : 1;
+      for (let i = 0; i < building.points.length; i++) {
+        const a = building.points[i], b = building.points[(i + 1) % building.points.length];
+        const p = [a, b, b, a].map((point, index) => project(point, index < 2 ? 0 : z));
+        const face = (i % 2 === 0) ? "#6d6357" : "#867867";
+        ctx.beginPath(); ctx.moveTo(...p[0]); ctx.lineTo(...p[1]); ctx.lineTo(...p[2]);
+        ctx.lineTo(...p[3]); ctx.closePath();
+        ctx.fillStyle = variant === "c" ? "#263744" : face;
+        ctx.fill();
+        if (variant === "c" || building.type === "apartments" || building.type === "hotel" ||
+            building.type === "office" || building.type === "residential") {
+          const length = Math.hypot(p[2][0] - p[3][0], p[2][1] - p[3][1]);
+          const count = Math.min(8, Math.floor(length / Math.max(5, sceneScale * 4)));
+          ctx.fillStyle = variant === "c" ? (Number(building.id) % 3 ? "#e4ba70" : "#6797a3") : "#b9b29b";
+          for (let j = 0; j < count; j++) {
+            const t = (j + 1) / (count + 1);
+            const x = p[3][0] + (p[2][0] - p[3][0]) * t;
+            const y = p[3][1] + (p[2][1] - p[3][1]) * t;
+            ctx.fillRect(x - 1.1, y + 3, 2.2, Math.max(1.5, z * sceneScale * .18));
+          }
+        }
+      }
+      projectedPath(building.points.map(point => project(point, z)), true);
+      ctx.fillStyle = variant === "c" ? color : color;
+      ctx.fill();
+      ctx.strokeStyle = variant === "c" ? "#71909a" : "#574f44";
+      ctx.lineWidth = .6; ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    function render() {
+      if (!data) return;
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      width = rect.width; height = rect.height;
+      canvas.width = Math.ceil(width * dpr); canvas.height = Math.ceil(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const denominator = variant === "b" ? radius * 2.15 : radius * 3.65;
+      sceneScale = Math.min((width - 48) / denominator,
+        (height - (variant === "b" ? 70 : 120)) / (variant === "b" ? radius * 2.15 : radius * 2.35));
+      sceneScale = Math.max(.25, sceneScale);
+      paintGround();
+      paintRoads();
+      paintParks();
+      const visible = buildings.filter(building => {
+        const centerPoint = building.center;
+        return Math.abs(centerPoint[0]) < radius && Math.abs(centerPoint[1]) < radius;
+      }).sort((a, b) => a.center[0] + a.center[1] - b.center[0] - b.center[1]);
+      for (const building of visible) {
+        const faded = filterBuilding.value && building.type !== filterBuilding.value;
+        if (variant === "b") paintTopDownBuilding(building, faded);
+        else paintExtrudedBuilding(building, faded);
+      }
+      if (variant === "c") {
+        ctx.save(); ctx.globalAlpha = .45; ctx.fillStyle = "#f3ce83";
+        for (let i = 0; i < 35; i++) {
+          const x = (i * 173 + 41) % width, y = (i * 223 + 77) % height;
+          ctx.beginPath(); ctx.arc(x, y, 1.4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+    function setVariant(next) {
+      const keys = Object.keys(variants);
+      variant = keys[(keys.indexOf(variant) + next + keys.length) % keys.length];
+      const url = new URL(location.href); url.searchParams.set("variant", variant);
+      history.replaceState(null, "", url);
+      updateSwitcher(); render();
+    }
+    function updateSwitcher() {
+      const current = variants[variant];
+      document.querySelector("#variant-title").textContent = current.name;
+      document.querySelector("#variant-label").textContent = current.name;
+      document.querySelector("#summary").textContent = current.description ||
+        (variant === "a" ? "Isometric blocks · facade cues · road widths and lane markings"
+          : variant === "b" ? "Plan view · footprints and road hierarchy first"
+            : "Night lighting · glass towers · warm shopfronts and road reflections");
+    }
+    function addOptions(select, values, label) {
+      for (const value of values) {
+        const option = document.createElement("option");
+        option.value = value; option.textContent = `${label}=${value}`; select.append(option);
+      }
+    }
+    function loadSource(source) {
+      data = source;
+      const elements = source.elements;
+      const nodes = new Map(elements.filter(e => e.type === "node" && Number.isFinite(e.lat) && Number.isFinite(e.lon))
+        .map(node => [String(node.id), xy(node)]));
+      const inView = point => point && Math.abs(point[0]) <= radius * 1.3 && Math.abs(point[1]) <= radius * 1.3;
+      for (const way of elements.filter(e => e.type === "way")) {
+        const tags = way.tags || {};
+        const points = way.nodes.map(id => nodes.get(String(id)));
+        if (points.length < 2 || !points.some(inView) || points.some(point => !point)) continue;
+        if (tags.highway) roads.push({ id: way.id, tags, points });
+        if (tags.building && points.length >= 4) {
+          const polygon = points[0][0] === points[points.length - 1][0] &&
+            points[0][1] === points[points.length - 1][1] ? points.slice(0, -1) : points;
+          const centerPoint = polygon.reduce((sum, p) => [sum[0] + p[0] / polygon.length, sum[1] + p[1] / polygon.length], [0, 0]);
+          const type = tags.building;
+          const visualType = type === "yes" ? (tags.amenity || tags.tourism || tags.shop || type) : type;
+          buildings.push({ id: way.id, type, visualType, tags, points: polygon, center: centerPoint });
+        } else if (tags.leisure === "park" && points.length >= 4) {
+          parks.push({ points });
+        }
+      }
+      addOptions(filterBuilding, [...new Set(buildings.map(b => b.type))].sort(), "building");
+      addOptions(filterRoad, [...new Set(roads.map(r => r.tags.highway))].sort(), "highway");
+      const selectedBuildings = buildings.filter(b => Math.abs(b.center[0]) < radius && Math.abs(b.center[1]) < radius);
+      const selectedRoads = roads.filter(r => r.points.some(p => Math.abs(p[0]) < radius && Math.abs(p[1]) < radius));
+      document.querySelector("#status").textContent =
+        `${selectedRoads.length} real road ways · ${selectedBuildings.length} building footprints · ${parks.length} parks`;
+      document.querySelector("#legend").innerHTML = archetypes.map(([name, color]) =>
+        `<span class="swatch"><i class="dot" style="--swatch:${color}"></i>${name}</span>`).join("");
+      render();
+    }
+    document.querySelector("#previous").addEventListener("click", () => setVariant(-1));
+    document.querySelector("#next").addEventListener("click", () => setVariant(1));
+    for (const select of [filterBuilding, filterRoad]) select.addEventListener("change", render);
+    addEventListener("resize", render);
+    addEventListener("keydown", event => {
+      if (event.target instanceof HTMLSelectElement || event.target.isContentEditable) return;
+      if (event.key === "ArrowLeft") setVariant(-1);
+      if (event.key === "ArrowRight") setVariant(1);
+    });
+    updateSwitcher();
+    fetch("/api/source").then(response => response.json()).then(loadSource)
+      .catch(error => { document.querySelector("#status").textContent = `Could not load local OSM source: ${error.message}`; });
+  </script>
+</body>
+</html>

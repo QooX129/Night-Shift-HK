@@ -73,7 +73,10 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   still use a worker and progressive GPU uploads.
 - The 3D view uses procedural asphalt, varied façades and fictional shop
   advertisements, each either wall-mounted or projecting where roadside space permits.
-  Langham Place's mapped mall and office tower receive a glass-toned treatment.
+  Facade tints follow OSM building type/use; tagged heights determine building
+  height where available. Road lane/surface tags guide the night-style palette and
+  markings. Langham Place's mapped mall and
+  office tower receive a glass-toned treatment.
   Sidewalks, railings, traffic lights, double yellow lines and crossings are
   decorative approximations on eligible ground-level streets across the map.
   Yellow boxes are restricted to individually verified locations: currently

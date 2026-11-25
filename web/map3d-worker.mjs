@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=roof-canopies-3";
-import { MapView } from "./map.mjs?v=roof-canopies-1";
+import { Map3DView } from "./map3d.mjs?v=building-road-types-1";
+import { MapView } from "./map.mjs?v=building-road-types-1";
 
 let view;
 let revision = 0;

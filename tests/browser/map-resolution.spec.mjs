@@ -5,7 +5,7 @@ test("elevated terrain uses a sharp scrolling texture for nearby building footpr
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-300, -300, 300, 300],

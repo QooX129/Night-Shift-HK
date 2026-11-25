@@ -220,6 +220,28 @@ test("each shop sign is either wall-mounted or projecting, with a wall fallback"
   view.advertMaterial.dispose();
 });
 
+test("OSM building types tint apartment, commercial, and industrial facades differently", () => {
+  const colorFor = building_type => {
+    const view = Object.assign(Object.create(Map3DView.prototype), {
+      data: { driving: { widths: {} } }, elevation: { buildings: [] },
+      groundMap: { roadIndex: { query: () => [] } }, scene: new THREE.Scene(),
+      cityMaterial: new THREE.MeshBasicMaterial(), landmarkMaterial: new THREE.MeshBasicMaterial(),
+      advertMaterial: new THREE.MeshBasicMaterial(),
+    });
+    const task = view.cityGeometry([{ kind: "building", building: { height: 24, building_type },
+      points: [[0, 0], [10, 0], [10, 10], [0, 10]] }]);
+    let next;
+    do { next = task.next(); } while (!next.done);
+    const mesh = next.value.find(item => item.name === "building-block");
+    const color = Array.from(mesh.geometry.getAttribute("color").array.slice(0, 3));
+    for (const item of next.value) { view.scene.remove(item); item.geometry.dispose(); }
+    view.cityMaterial.dispose(); view.landmarkMaterial.dispose(); view.advertMaterial.dispose();
+    return color;
+  };
+  assert.notDeepEqual(colorFor("apartments"), colorFor("commercial"));
+  assert.notDeepEqual(colorFor("commercial"), colorFor("industrial"));
+});
+
 test("3D road surfaces and tunnel shells blocking the taxi become transparent", () => {
   const previousDocument = globalThis.document;
   const previousWidth = globalThis.innerWidth, previousHeight = globalThis.innerHeight;

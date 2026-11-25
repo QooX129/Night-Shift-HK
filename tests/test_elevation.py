@@ -26,6 +26,26 @@ class ElevationTests(unittest.TestCase):
         self.assertTrue(buildings.isdisjoint({1429930361, 1375568987, 1431338189}))
         self.assertIn(160323946, buildings)  # Nearby Prosperous Garden apartment block.
 
+    def test_building_types_and_uses_are_preserved_for_visual_styles(self):
+        source = json.loads((ROOT / "data/source.osm.json").read_text())
+        elevation = json.loads((ROOT / "data/elevation.json").read_text())
+        tags = {item["id"]: item["tags"] for item in source["elements"]
+                if item["type"] == "way" and "building" in item.get("tags", {})}
+        metadata = {item["osm_way"]: item for item in elevation["buildings"]}
+        self.assertEqual(metadata[160323946]["building_type"], tags[160323946]["building"])
+        self.assertEqual(metadata[102411832]["building_type"], tags[102411832]["building"])
+        self.assertEqual(metadata[102411832]["building_use"], tags[102411832]["shop"])
+
+    def test_road_lane_and_surface_tags_reach_the_render_dataset(self):
+        source = json.loads((ROOT / "data/source.osm.json").read_text())
+        district = json.loads((ROOT / "data/district.json").read_text())
+        tags = next(item["tags"] for item in source["elements"]
+                    if item["type"] == "way" and item["id"] == 4793007)
+        roads = [edge for edge in district["edges"] if edge["way"] == 4793007]
+        self.assertTrue(roads)
+        self.assertTrue(all(edge["lanes"] == tags["lanes"] and edge["surface"] == tags["surface"]
+                            for edge in roads))
+
     def junction(self):
         nodes = {"a": (-100, 0), "b": (0, 0), "c": (100, 0), "d": (0, 100)}
         heights = {"a": 0, "b": 5, "c": 10, "d": 15}

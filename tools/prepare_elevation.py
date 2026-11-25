@@ -174,15 +174,20 @@ def build(refresh=False):
             continue
         points = [[round((osm_nodes[n]["lon"] - lon) * sx, 2),
                    round((lat - osm_nodes[n]["lat"]) * 111320, 2)] for n in e["nodes"]]
-        footprints[json.dumps(points, separators=(",", ":"))] = (e["id"], *building_height(e["tags"]))
+        tags = e["tags"]
+        use = next((tags[key] for key in ("amenity", "tourism", "shop", "office") if tags.get(key)), None)
+        footprints[json.dumps(points, separators=(",", ":"))] = (
+            e["id"], *building_height(tags), tags.get("building"), use)
     buildings = []
     for index, footprint in enumerate(document["backdrop"]):
         if footprint["kind"] != "building":
             continue
-        osm_id, height, quality = footprints.get(json.dumps(footprint["points"], separators=(",", ":")),
-                                                 (None, 18, "estimated-default-18m"))
+        osm_id, height, quality, building_type, building_use = footprints.get(
+            json.dumps(footprint["points"], separators=(",", ":")),
+            (None, 18, "estimated-default-18m", None, None))
         buildings.append({"index": index, "osm_way": osm_id, "height": height, "quality": quality,
-                          "base": round(sample(ground, footprint["points"][0]), 3)})
+                          "base": round(sample(ground, footprint["points"][0]), 3),
+                          "building_type": building_type, "building_use": building_use})
     package = {
         "schema": 1, "map_version": document["version"], "built": dt.datetime.now(dt.timezone.utc).isoformat(),
         "datum": "Hong Kong Principal Datum (DTM); road/building bases estimated in same datum",

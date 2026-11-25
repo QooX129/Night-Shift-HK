@@ -10,6 +10,25 @@ import { roadLayer, isElevatedRoad, isTunnelRoad } from "./elevation.mjs?v=tunne
 export const TAXI_ICON_MIN_LENGTH = { map: 20, minimap: 20 };
 export const MAP_TILE_PIXELS = 256;
 export const MAP_TILE_CACHE_LIMIT = 128;
+const BUILDING_COLORS = {
+  apartments: "#34494f", residential: "#38484a", house: "#4b4b42",
+  commercial: "#51473d", retail: "#584438", hotel: "#354e58", office: "#344d56",
+  industrial: "#414944", warehouse: "#414944", school: "#534b3a",
+  hospital: "#54413f", church: "#59503d", temple: "#59503d", mosque: "#504938",
+};
+const ROAD_COLORS = {
+  motorway: "#536166", motorway_link: "#4e5e62", trunk: "#505f63", trunk_link: "#4c5a5f",
+  primary: "#4c5b5e", primary_link: "#49585b", secondary: "#465558", secondary_link: "#445255",
+  tertiary: "#425355", tertiary_link: "#405052", residential: "#3d4d4f",
+  living_street: "#45544c", unclassified: "#3e5050", service: "#39484a",
+};
+
+function buildingColor(shape) {
+  const building = shape.building ?? {};
+  const type = building.building_type ?? shape.building_type;
+  const use = building.building_use ?? shape.building_use;
+  return BUILDING_COLORS[type] ?? BUILDING_COLORS[use] ?? "#354649";
+}
 
 export class MapView {
   constructor(canvas, data, stops, { compact = false, interactive = false } = {}) {
@@ -81,8 +100,8 @@ export class MapView {
       c.beginPath();
       shape.points.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y));
       c.closePath();
-      c.fillStyle = shape.kind === "park" ? "#28483c" : "#263c3d";
-      c.strokeStyle = shape.kind === "park" ? "#355743" : "#304748";
+      c.fillStyle = shape.kind === "park" ? "#28483c" : buildingColor(shape);
+      c.strokeStyle = shape.kind === "park" ? "#355743" : "#425356";
       c.fill(); c.stroke();
     }
     c.lineCap = "round"; c.lineJoin = "round";
@@ -96,9 +115,10 @@ export class MapView {
     for (const level of [...levels.keys()].sort((a, b) => a - b)) {
       for (const border of [true, false]) for (const e of levels.get(level)) {
         const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
-        const major = ["motorway", "trunk", "primary", "secondary"].includes(e.kind);
         c.lineWidth = roadWidth(this.data.driving, e) + (border ? .2 : 0);
-        c.strokeStyle = border ? "#17292d" : level !== 0 ? "#52605b" : major ? "#4b5955" : "#3b504f";
+        const surface = e.surface === "concrete" ? "#526166"
+          : e.surface === "paving_stones" ? "#4b514c" : ROAD_COLORS[e.kind] ?? "#3b504f";
+        c.strokeStyle = border ? "#17292d" : level !== 0 ? "#52605b" : surface;
         c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
       }
     }

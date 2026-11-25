@@ -7,7 +7,7 @@ test.use({ trace: "off" });
 test("translucent canopy occludes only the road boundaries behind it", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const canvas = document.body.appendChild(document.createElement("canvas"));
     const view = new Map3DView(canvas, {
@@ -58,7 +58,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
@@ -118,7 +118,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -162,7 +162,7 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -201,7 +201,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=roof-canopies-1");
+    const { MapView } = await import("/map.mjs?v=building-road-types-1");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -465,7 +465,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;

@@ -35,7 +35,7 @@ test("sustained 3D driving has no application-wide freezes", async ({ page }, te
     window.freezeFrame = requestAnimationFrame(sample);
   });
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=roof-canopies-3");
+    const { Map3DView } = await import("/map3d.mjs?v=building-road-types-1");
     const refresh = Map3DView.prototype.refreshGroundDetail;
     Map3DView.prototype.refreshGroundDetail = function (...args) {
       const start = performance.now();
