@@ -1,9 +1,9 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=hk-transport-models-5";
+import { MapView } from "./map.mjs?v=hk-transport-models-7";
 import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
-import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=parabolic-steering-1";
+import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=chase-distance-4";
 import { visualStream, VISUAL_STREAM_RADIUS } from "./map-stream.mjs?v=roof-canopies-1";
 import { interpolateCar } from "./visual-motion.mjs";
 import { routeDistance } from "./route-distance.mjs";
@@ -645,7 +645,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=hk-transport-models-5");
+      const { Map3DView } = await import("./map3d.mjs?v=hk-transport-models-7");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);

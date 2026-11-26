@@ -38,7 +38,7 @@ const enums = {
 const ranges = {
   cameraSmoothness: [0, 100],
   cameraRotationSpeed: [20, 200],
-  chaseDistance: [70, 150],
+  chaseDistance: [50, 150],
   steeringSensitivity: [75, 600],
   junctionGrace: [0, 500],
   minimapZoom: [50, 200],

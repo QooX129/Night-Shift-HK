@@ -7,7 +7,7 @@ test.use({ trace: "off" });
 test("faded road junctions do not stack transparent surfaces", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = (bridge, branch, short = false, mixed = false) => {
       const nodes = { a: [-30, 0], b: [0, 0], c: [short ? 1 : 30, 0], d: [0, 30], e: [30, 0] };
@@ -89,7 +89,7 @@ test("faded road junctions do not stack transparent surfaces", async ({ page }) 
 test("connected visible roads fade gradually and recover with the blocking road", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const nodes = { a: [-80, 0], b: [0, 0], c: [40, 0], d: [100, 0],
       e: [200, 0], f: [300, 0], g: [60, 30], h: [90, 30] };
@@ -171,7 +171,7 @@ test("connected visible roads fade gradually and recover with the blocking road"
 test("translucent canopy occludes only the road boundaries behind it", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const canvas = document.body.appendChild(document.createElement("canvas"));
     const view = new Map3DView(canvas, {
@@ -218,11 +218,11 @@ test("translucent canopy occludes only the road boundaries behind it", async ({ 
 
 test("chase camera keeps the taxi centered and clear of the dashboard", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1",
-    JSON.stringify({ defaultView: "2d", chaseDistance: 70 })));
+    JSON.stringify({ defaultView: "2d" })));
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
@@ -238,6 +238,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
       window.cameraView = this;
       window.taxiFraming = {
         x: (position.x + 1) * innerWidth / 2, y: (1 - position.y) * innerHeight / 2,
+        distance: this.lens.position.distanceTo(this.taxi.position),
         bottom: Math.max(...corners.map(point => (1 - point.y) * innerHeight / 2)),
         dashboardTop: document.querySelector(".dashboard").getBoundingClientRect().top,
       };
@@ -245,6 +246,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
   });
   await page.locator("#start").click();
   await toggleDrivingView(page);
+  await expect.poll(() => page.evaluate(() => window.cameraView?.chaseDistanceScale)).toBe(.7);
   const check = async () => {
     await expect.poll(() => page.evaluate(() => Boolean(window.taxiFraming))).toBe(true);
     const framing = await page.evaluate(() => window.taxiFraming);
@@ -253,7 +255,7 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
     expect(Math.abs(framing.y - centeredY)).toBeLessThan(8);
     expect(framing.bottom).toBeLessThan(framing.dashboardTop);
   };
-  for (const [zoom, distance] of [[1.65, .7], [3.5, .7], [1.65, 1.5]]) {
+  for (const [zoom, distance] of [[1.65, .5], [3.5, .5], [1.65, .7], [1.65, 1.5]]) {
     await page.evaluate(([zoom, distance]) => {
       window.cameraView.zoom = zoom;
       window.cameraView.chaseDistanceScale = distance;
@@ -261,12 +263,16 @@ test("chase camera keeps the taxi centered and clear of the dashboard", async ({
       window.taxiFraming = null;
     }, [zoom, distance]);
     await check();
+    if (zoom === 1.65) {
+      const actual = await page.evaluate(() => window.taxiFraming.distance);
+      expect(actual).toBeCloseTo((48 * 5 / 7) * distance * Math.hypot(.9, .6), 3);
+    }
   }
   await page.setViewportSize({ width: 844, height: 390 });
   await expect.poll(() => page.evaluate(() => window.cameraView.lens.aspect)).toBeCloseTo(844 / 390, 2);
   await page.evaluate(() => {
     window.cameraView.zoom = 3.5;
-    window.cameraView.chaseDistanceScale = .7;
+    window.cameraView.chaseDistanceScale = .5;
     window.cameraView.cameraReady = false;
     window.taxiFraming = null;
   });
@@ -282,7 +288,7 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
@@ -326,11 +332,18 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const render = Map3DView.prototype.render;
+    const updateSkids = Map3DView.prototype.updateSkids;
+    Map3DView.prototype.updateSkids = function (now) {
+      if (this.skids.length && window.skidPhase === "fade") now = this.skids[0].expires - .75;
+      if (this.skids.length && window.skidPhase === "expired") now = this.skids.at(-1).expires + .01;
+      updateSkids.call(this, now);
+    };
     Map3DView.prototype.render = function (...args) {
       render.apply(this, args);
       const { geometry } = this.skidMesh;
+      window.skidView = this;
       window.skidFrame = { count: geometry.drawRange.count, alpha: geometry.attributes.color.getW(0) };
     };
   });
@@ -345,7 +358,15 @@ test("a brake tap stays clean; sustained braking draws tracks that fade", async 
   await page.keyboard.down("s");
   await expect.poll(() => page.evaluate(() => window.skidFrame.count)).toBeGreaterThanOrEqual(12);
   await page.keyboard.up("s");
+  await expect.poll(() => page.evaluate(() => window.skidFrame.alpha)).toBeGreaterThan(.6);
+  await page.evaluate(() => {
+    const marks = window.skidView.skids;
+    while (marks.length < 300) marks.push({ ...marks.at(-1) });
+  });
+  await expect.poll(() => page.evaluate(() => window.skidFrame.count)).toBeGreaterThanOrEqual(300 * 12);
+  await page.evaluate(() => { window.skidPhase = "fade"; });
   await expect.poll(() => page.evaluate(() => window.skidFrame.alpha)).toBeLessThan(.5);
+  await page.evaluate(() => { window.skidPhase = "expired"; });
   await expect.poll(() => page.evaluate(() => window.skidFrame.count)).toBe(0);
 });
 
@@ -365,7 +386,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=hk-transport-models-5");
+    const { MapView } = await import("/map.mjs?v=hk-transport-models-7");
     const render = MapView.prototype.render;
     MapView.prototype.render = function (...args) {
       const result = render.apply(this, args);
@@ -439,7 +460,7 @@ test("3D minimap follows the taxi, fits around the HUD, and hides in 2D", async 
 test("chase heading eases turns, takes the shortest angle, and resets on activation", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const simulate = hz => {
       const view = Object.create(Map3DView.prototype);
       view.updateCameraHeading(0, 0);
@@ -474,7 +495,7 @@ test("chase heading eases turns, takes the shortest angle, and resets on activat
 test("GPS route progress reuses traffic geometry and completed route segments", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.create(Map3DView.prototype);
     view.nodes = { a: [0, 0], b: [20, 0], c: [40, 0], d: [60, 0] };
@@ -520,7 +541,7 @@ test("GPS route progress reuses traffic geometry and completed route segments", 
 test("real passenger GPS progress does not rebuild geometry at road transitions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = await (await fetch("/api/map")).json();
     const session = await (await fetch("/api/sessions", { method: "POST" })).json();
@@ -574,7 +595,7 @@ test("real passenger GPS progress does not rebuild geometry at road transitions"
 test("3D guides retain routes and selected previews without current-road or available-exit ribbons", async ({ page }) => {
   await page.goto("/");
   const results = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const edge = { id: "in", a: "a", b: "b", way: 1 };
     const exit = { id: "exit", a: "b", b: "c", way: 2 };
@@ -629,7 +650,7 @@ test("legacy flat 3D fallback renders locally and toggles without resetting the 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.threeView = this;
@@ -818,7 +839,7 @@ test("3D boundary detail preserves physical edges and refreshes without accumula
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },

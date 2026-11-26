@@ -16,6 +16,33 @@ function response(key) {
     backdrop: [{ id: x * 10000 + y, kind: "building", points: [[0, 0], [1, 0], [0, 1]] }] }) };
 }
 
+test("brake marks remain for one minute before fading, even beyond initial capacity", () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(256 * 12 * 3), 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(256 * 12 * 4), 4));
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data: { driving: { taxi_length: 2.61, taxi_width: 1.35 } },
+    edges: new Map([["road", { id: "road" }]]), skids: [], skidMesh: { geometry },
+  });
+  const started = performance.now() / 1000;
+  for (let i = 0; i < 300; i++) {
+    view.recordSkid({ x: i * .4, y: 0, heading: 0, edge: "road" },
+      { x: (i + 1) * .4, y: 0, heading: 0, edge: "road" }, true);
+  }
+  const firstExpiry = view.skids[0].expires;
+  assert(firstExpiry >= started + 61.5 && firstExpiry < started + 61.6);
+  view.updateSkids(firstExpiry - 1.5);
+  assert.equal(view.skids.length, 300);
+  assert.equal(geometry.drawRange.count, 300 * 12);
+  assert(Math.abs(geometry.attributes.color.getW(0) - .62) < 1e-6);
+  view.updateSkids(firstExpiry - .75);
+  assert(Math.abs(geometry.attributes.color.getW(0) - .31) < 1e-6);
+  view.updateSkids(view.skids.at(-1).expires + .01);
+  assert.equal(view.skids.length, 0);
+  assert.equal(geometry.drawRange.count, 0);
+  geometry.dispose();
+});
+
 test("spatial queries deduplicate crossing objects and omit distant objects", () => {
   const near = { points: [[-5, -5], [270, 10]] }, far = { points: [[10000, 10000], [10010, 10010]] };
   const grid = new SpatialGrid([near, far], shape => pointBounds(shape.points));

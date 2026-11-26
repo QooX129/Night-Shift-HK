@@ -112,6 +112,7 @@ scale with the whole district; this pipeline does not stream gameplay topology.
 
 - **W / Up:** accelerate. **S / Down:** brake; keep holding after stopping to
   reverse at up to 4 m/s. Release the pedal to slow down. **A/D / Left/Right:** steer.
+  Brake marks remain for one minute before fading.
 - **Space:** handbrake; it slows the taxi without engaging reverse. Tap it while
   steering at about 29 km/h or faster to start a drift. The slide continues after
   release until the taxi regains grip; countersteering helps. Grip `1` gives full
@@ -412,8 +413,10 @@ Settings also includes the
 default 2D/3D view and graphics preset; chase-camera smoothing, turn speed,
 distance, and reduced motion; steering sensitivity and junction-key grace time;
 minimap visibility, size, zoom, and refresh rate; junction HUD opacity, shortcut
-hints, and English / Traditional Chinese. Changes apply immediately. Settings
-are stored separately in this browser's local storage; read/write failures are
+hints, and English / Traditional Chinese. Chase distance adjusts the base camera
+distance from 50% to 150%, with 70% as the default; saved preferences are retained.
+Changes apply immediately. Settings are stored
+separately in this browser's local storage; read/write failures are
 shown in the interface.
 
 The taxi meter adapts the [urban taxi tariff](https://www.td.gov.hk/en/transport_in_hong_kong/public_transport/taxi/taxi_fare_of_hong_kong/index.html)

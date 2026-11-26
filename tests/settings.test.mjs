@@ -27,6 +27,15 @@ test("settings load with validated defaults and persist independently of a shift
   assert.deepEqual(loadSettings(store), { settings: changed, error: null });
 });
 
+test("chase distance keeps its original default and preserves saved preferences", () => {
+  assert.equal(loadSettings(storage()).settings.chaseDistance, 70);
+  assert.equal(loadSettings(storage(JSON.stringify({ chaseDistance: 50 }))).settings.chaseDistance, 50);
+  assert.equal(loadSettings(storage(JSON.stringify({ chaseDistance: 60 }))).settings.chaseDistance, 60);
+  assert.equal(loadSettings(storage(JSON.stringify({ chaseDistance: 70 }))).settings.chaseDistance, 70);
+  assert.equal(normalizeSettings({ chaseDistance: 45 }).settings.chaseDistance, 50);
+  assert.equal(resetSettingsCategory({ ...DEFAULT_SETTINGS, chaseDistance: 85 }, "camera").chaseDistance, 70);
+});
+
 test("invalid saved values use defaults or safe bounds and report a load warning", () => {
   const store = storage(JSON.stringify({
     language: "fr", defaultView: "3d", minimapVisible: "yes",

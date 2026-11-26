@@ -6,7 +6,7 @@ test.use({ trace: "off" });
 test("layer-only OSM roads build an elevated deck instead of a ground road", async ({ page }) => {
   await page.goto("/");
   const tile = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const edge = { id: "layer-one", a: "a", b: "b", way: 1, kind: "primary", width: 10,
       layer: "1", bridge: "no", tunnel: "no", oneway: true };
     const tiles = [];
@@ -33,7 +33,7 @@ test("Nathan Road stays drivable beneath the Gascoigne flyover", async ({ page }
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const roads = new RoadNetwork(data);
     const previous = roads.edges.get("436371172:1:9891388476");
     const following = roads.edges.get("987256904:0:5057028185");
@@ -88,7 +88,7 @@ test("Central Kowloon Bypass roof remains below the overlapping ground road", as
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork, project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const roads = new RoadNetwork(data);
     const tunnel = roads.edges.get("504423499:2:13108582004");
     const ground = roads.edges.get("1389172580:0:12859244962");
@@ -167,7 +167,7 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const { RoadNetwork } = await import("/physics.mjs?v=steering-grip-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
@@ -204,7 +204,7 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-5");
+    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();

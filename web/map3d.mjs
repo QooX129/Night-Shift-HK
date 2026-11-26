@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=hk-transport-models-5";
+import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=hk-transport-models-7";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
@@ -18,8 +18,10 @@ const CHASE_PITCH = Math.atan2(.6, .9);
 const MIN_CHASE_PITCH = Math.PI / 10;
 const MAX_CHASE_PITCH = Math.PI * .4;
 const MIN_CHASE_GRADE = Math.tan(MIN_CHASE_PITCH);
-const SKID_LIFETIME = 3;
-const SKID_LIMIT = 256;
+const DEFAULT_CHASE_DISTANCE = 48 * 5 / 7;
+const SKID_LIFETIME = 60;
+const SKID_FADE_TIME = 1.5;
+const SKID_INITIAL_CAPACITY = 256;
 const SIDEWALK_COLOR = "#687873";
 const BUILDING_TINTS = {
   apartments: "#a9c2c2", residential: "#b9ad96", house: "#c5ad8f",
@@ -108,8 +110,8 @@ export class Map3DView {
     window.addEventListener("blur", endDrag, listen);
     this.skids = [];
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(SKID_LIMIT * 12 * 3), 3).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(SKID_LIMIT * 12 * 4), 4).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(SKID_INITIAL_CAPACITY * 12 * 3), 3).setUsage(THREE.DynamicDrawUsage));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(SKID_INITIAL_CAPACITY * 12 * 4), 4).setUsage(THREE.DynamicDrawUsage));
     geometry.setDrawRange(0, 0);
     this.skidMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
       transparent: true, depthWrite: false, vertexColors: true, side: THREE.DoubleSide,
@@ -150,7 +152,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=hk-transport-models-5", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=hk-transport-models-7", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -2530,17 +2532,22 @@ export class Map3DView {
       }));
       for (const index of [0, 1, 2, 1, 3, 2]) vertices.push(...corners[index]);
     }
-    this.skids.push({ vertices, expires: performance.now() / 1000 + SKID_LIFETIME });
-    if (this.skids.length > SKID_LIMIT) this.skids.shift();
+    this.skids.push({ vertices, expires: performance.now() / 1000 + SKID_LIFETIME + SKID_FADE_TIME });
     this.skidStart = { ...car };
   }
   updateSkids(now) {
     while (this.skids[0]?.expires <= now) this.skids.shift();
     const geometry = this.skidMesh.geometry;
+    if (this.skids.length * 12 > geometry.attributes.position.count) {
+      const capacity = Math.max(this.skids.length * 12, geometry.attributes.position.count * 2);
+      geometry.dispose();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage));
+      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage));
+    }
     const { position, color } = geometry.attributes;
     for (const [index, skid] of this.skids.entries()) {
       position.array.set(skid.vertices, index * 36);
-      const alpha = .62 * Math.min(1, (skid.expires - now) / 1.5);
+      const alpha = .62 * Math.min(1, (skid.expires - now) / SKID_FADE_TIME);
       for (let vertex = index * 12; vertex < (index + 1) * 12; vertex++) color.setXYZW(vertex, .025, .02, .018, alpha);
     }
     geometry.setDrawRange(0, this.skids.length * 12);
@@ -2580,7 +2587,7 @@ export class Map3DView {
     }
     this.taxi.position.copy(position);
     this.taxi.rotation.set(0, -car.heading, pose.pitch, "YXZ");
-    const distance = Math.min(150, 48 * 1.65 / this.zoom) * this.chaseDistanceScale;
+    const distance = Math.min(150 * 5 / 7, DEFAULT_CHASE_DISTANCE * 1.65 / this.zoom) * this.chaseDistanceScale;
     const target = position.clone();
     target.y = pose.height + 1;
     const inTunnel = this.elevation && isTunnelRoad(this.edges.get(car.edge));
