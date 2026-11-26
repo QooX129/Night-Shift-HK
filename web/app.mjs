@@ -1,6 +1,6 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=hk-transport-models-7";
-import { en, zh } from "./i18n.mjs?v=panel-shortcuts-1";
+import { MapView } from "./map.mjs?v=junction-markings-1";
+import { en, zh } from "./i18n.mjs?v=traffic-chevrons-2";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=chase-distance-4";
@@ -13,13 +13,13 @@ const $ = id => document.getElementById(id);
 const loadedPreferences = loadSettings();
 let preferences = loadedPreferences.settings;
 let lang = preferences.language, state = null, view = null, mapData, stops;
-let map2d = null, map3d = null, changingView = false, viewError = null;
+let map2d = null, map3d = null, renderedView = null, changingView = false, viewError = null;
 let popupMap = null, mapDrag = null;
 let mapStream = null, mapStreamFailure = null;
 let minimap = null, lastMinimapFrame = -Infinity;
 let car = { x: 0, y: 0, speed: 0, heading: 0, edge: null }, roads;
 let previousCar = null;
-let paused = true, busy = false, moving = false, pending = null, elapsed = 0, trail = [];
+let paused = true, busy = false, initializing = true, moving = false, pending = null, elapsed = 0, trail = [];
 let inFlightElapsed = 0;
 let visualElapsed = 0;
 let junctionLatch = null, boundary = false, closureWarning = false, lastFrame = 0, stepBank = 0;
@@ -507,11 +507,13 @@ function updateUI() {
   document.documentElement.lang = lang === "zh" ? "zh-Hant" : "en";
   document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
+  if ($("congestion-notice").textContent !== t("congestionNotice"))
+    $("congestion-notice").textContent = t("congestionNotice");
   $("language").textContent = lang === "en" ? "繁中" : "EN";
   updateSettingsControls();
+  updateStartUI();
   if (!state) return;
   updateTripPanel();
-  $("start").disabled = busy; $("start").textContent = t("start");
   const passenger = state.passenger;
   $("passenger-name").textContent = lang === "zh" ? passenger.zh : passenger.name;
   $("passenger-role").textContent = lang === "zh" ? passenger.role_zh : passenger.role;
@@ -583,7 +585,15 @@ function updateUI() {
   $("notice").textContent = notice ? t(notice) : "";
   if ($("junction").open) renderExits();
 }
+function updateStartUI() {
+  const loading = !state || initializing || changingView || view !== renderedView
+    || (view === map3d && Boolean(map3d?.roadBuildTask));
+  const button = $("start"), disabled = busy || loading, text = t(loading ? "loading" : "start");
+  if (button.disabled !== disabled) button.disabled = disabled;
+  if (button.textContent !== text) button.textContent = text;
+}
 function updateViewUI() {
+  updateStartUI();
   $("view-mode").disabled = !state || changingView;
   $("view-mode").textContent = "M";
   $("view-mode").setAttribute("aria-label", t("mapTitle"));
@@ -645,7 +655,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=hk-transport-models-7");
+      const { Map3DView } = await import("./map3d.mjs?v=startup-road-markings-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
@@ -731,7 +741,11 @@ function frame(timestamp) {
     const visualState = { ...state, elapsed: visualElapsed,
       route: upcomingRoute(state.route, roads.edges, car.edge) };
     const visualCar = interpolateCar(previousCar, car, stepBank * 60);
-    view.render(visualCar, visualState, lang, approach, preview);
+    const preparing = $("welcome").open || ($("settings-dialog").open && settingsOrigin === "welcome");
+    const activeView = view;
+    activeView.render(visualCar, visualState, lang, approach, preview, preparing);
+    if (view === activeView) renderedView = activeView;
+    if ($("welcome").open) updateStartUI();
     if (popupMap && !$("map-popup").hidden) popupMap.render(visualCar, visualState, lang, approach, preview);
     if (view === map3d && minimap && preferences.minimapVisible
         && timestamp - lastMinimapFrame >= 1000 / preferences.minimapRefreshRate - 0.5) {
@@ -739,6 +753,10 @@ function frame(timestamp) {
       lastMinimapFrame = timestamp;
     }
   }
+  const currentEdge = roads?.edges.get(car.edge);
+  const trafficFactor = currentEdge && state?.traffic[currentEdge.way];
+  const congested = trafficFactor > 0 && trafficFactor < 1 && !state.closed.includes(currentEdge.way);
+  if ($("congestion-notice").hidden === congested) $("congestion-notice").hidden = !congested;
   $("speed").textContent = Math.round(Math.abs(car.speed) * 3.6);
   $("speed-needle").setAttribute("transform", `rotate(${-90 + Math.min(160, Math.abs(car.speed) * 3.6) / 160 * 180} 60 60)`);
   $("drive-mode").hidden = car.speed >= -0.05;
@@ -1007,3 +1025,4 @@ try {
   view.camera = { x: car.x, y: car.y };
   if (preferences.defaultView === "3d") await toggleView();
 } catch (error) { showError(new Error(`${t("loadFailed")} (${error.message})`), false); }
+finally { initializing = false; updateUI(); }

@@ -1,5 +1,57 @@
 import { test, expect } from "@playwright/test";
 
+test("starting a 3D shift waits for road markings to finish", async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.addInitScript(() => { window.holdRoadMarkings = true; });
+  await page.route("**/map3d.mjs?v=startup-road-markings-1", async route => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = "    if (this.roadBuildTask) {";
+    expect(source).toContain(marker);
+    await route.fulfill({ response, body: source.replace(marker,
+      "    window.startupRoadView = this;\n    if (this.roadBuildTask && !window.holdRoadMarkings) {") });
+  });
+  await page.goto("/");
+  await expect.poll(() => page.evaluate(() => Boolean(window.startupRoadView?.roadBuildTask)),
+    { timeout: 45_000 }).toBe(true);
+  await expect(page.locator("#start")).toBeDisabled();
+  await expect(page.locator("#start")).toContainText(/loading/i);
+  await page.locator("#welcome-settings").click();
+  await page.locator("#setting-default-view").selectOption("2d");
+  await page.locator("#settings-close").click();
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#welcome-settings").click();
+  await page.locator("#setting-default-view").selectOption("3d");
+  await expect(page.locator("#map-3d")).toBeVisible();
+  await page.locator("#settings-close").click();
+  await expect(page.locator("#start")).toBeDisabled();
+  await page.evaluate(() => { window.holdRoadMarkings = false; });
+  await expect(page.locator("#start")).toBeEnabled({ timeout: 100_000 });
+  expect(await page.evaluate(() => ({
+    pending: window.startupRoadView.roadBuildTask,
+    curbs: window.startupRoadView.curbWorkerPending,
+  }))).toEqual({ pending: null, curbs: false });
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).toBeHidden();
+});
+
+test("road construction failure reports an error and permits 2D startup", async ({ page }) => {
+  await page.route("**/map3d.mjs?v=startup-road-markings-1", async route => {
+    const response = await route.fetch();
+    const source = await response.text();
+    const marker = "        while (performance.now() < deadline && steps++ < (preparing ? 1024 : 48)) {";
+    expect(source).toContain(marker);
+    await route.fulfill({ response, body: source.replace(marker,
+      `        throw new Error("Road construction test failure");\n${marker}`) });
+  });
+  await page.goto("/");
+  await expect(page.locator("#view-error")).toContainText("Road construction test failure");
+  await expect(page.locator("#map")).toBeVisible();
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#welcome")).toBeHidden();
+});
+
 test("map bootstrap streams nearby visuals while driving and 3D construction remain live", async ({ page }) => {
   test.setTimeout(90_000);
   const requests = [], errors = [];
@@ -9,7 +61,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await expect(page.locator("#start")).toBeEnabled();
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const render = Map3DView.prototype.render;
     await new Promise(resolve => {
       Map3DView.prototype.render = function (...args) {
@@ -49,7 +101,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await page.keyboard.press("m");
   await expect(page.locator("#map-popup")).toBeVisible();
   const farURL = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=hk-transport-models-7");
+    const { MapView } = await import("/map.mjs?v=junction-markings-1");
     const view = window.streamingView;
     const key = [...view.stream.keys].sort((a, b) => {
       const distance = key => {

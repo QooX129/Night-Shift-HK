@@ -223,13 +223,31 @@ test("road arrows show only legal directions with left-side opposing arrows on t
   expect(arrows[2].angle).toBeCloseTo(Math.PI);
 });
 
+test("road-direction arrows do not overlap a same-level crossing", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=junction-markings-1");
+    const nodes = { a: [0, 0], b: [100, 0], c: [50, -50], d: [50, 50] };
+    const edges = [
+      { id: "main", a: "a", b: "b", way: 1, width: 10, length: 100 },
+      { id: "cross", a: "c", b: "d", way: 2, width: 10, length: 100 },
+    ];
+    const arrows = items => [...MapView.prototype.directionArrows.call({
+      data: { nodes, edges: items, driving: { widths: {} } },
+    })];
+    return { ground: arrows(edges), bridge: arrows([edges[0], { ...edges[1], layer: "1", bridge: "yes" }]) };
+  });
+  expect(result.ground).toHaveLength(0);
+  expect(result.bridge).toHaveLength(2);
+});
+
 test("2D guides keep routes and selected exits without normal road guidance", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
-  const colors = await page.evaluate(async () => {
+  const { results, closedColors } = await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
     const edges = [
-      { id: "in", a: "a", b: "b", way: 1, kind: "residential", length: 100, name: "Local road", layer: "0" },
+      { id: "in", a: "a", b: "b", way: 1, kind: "residential", width: 14, length: 100, name: "Local road", layer: "0" },
       { id: "exit", a: "b", b: "c", way: 2, kind: "residential", length: 100, name: "Local road", layer: "0" },
     ];
     const view = new MapView(document.createElement("canvas"), {
@@ -242,8 +260,20 @@ test("2D guides keep routes and selected exits without normal road guidance", as
       highlights.push(edge.id);
       return highlight.call(this, context, edge, ...rest);
     };
-    const colors = [], stroke = view.ctx.stroke.bind(view.ctx);
-    view.ctx.stroke = function (...args) { colors.push(this.strokeStyle); return stroke(...args); };
+    const colors = [], trafficWidths = [], trafficSides = [], stroke = view.ctx.stroke.bind(view.ctx);
+    view.ctx.stroke = function (...args) {
+      colors.push(this.strokeStyle);
+      if (this.strokeStyle === "#ff975e" && this.globalAlpha === .12) trafficWidths.push(this.lineWidth);
+      if (this.strokeStyle === "#ff975e" && this.globalAlpha === .18) colors.push("traffic-hatching");
+      return stroke(...args);
+    };
+    for (const method of ["moveTo", "lineTo"]) {
+      const original = view.ctx[method].bind(view.ctx);
+      view.ctx[method] = function (x, y) {
+        if (this.strokeStyle === "#ff975e" && this.globalAlpha === .85) trafficSides.push(y);
+        return original(x, y);
+      };
+    }
     const results = [];
     for (const phase of ["pickup", "onboard"]) {
       colors.length = 0;
@@ -255,8 +285,14 @@ test("2D guides keep routes and selected exits without normal road guidance", as
       start: { x: 80, y: 0 }, edges: [edges[0]], incoming: "in",
       exits: [{ edge: edges[1], path: { edges: [edges[1]] } }],
     });
-      results.push({ phase, colors: [...colors] });
+      results.push({ phase, colors: [...colors], widths: [...trafficWidths], sides: [...trafficSides] });
     }
+    colors.length = 0;
+    view.render({ x: 80, y: 0, heading: 0, edge: "in" }, {
+      edge: "in", closed: [1], traffic: { 1: .5 }, route: null,
+      selected_exit: null, phase: "available",
+    }, "en");
+    const closedColors = [...colors];
     highlights.length = 0;
     view.render({ x: 80, y: 0, heading: 0, edge: "in" }, {
       edge: "in", closed: [], traffic: {}, route: null,
@@ -266,14 +302,61 @@ test("2D guides keep routes and selected exits without normal road guidance", as
       exits: [{ edge: edges[1], path: { edges: [edges[1]] } }],
     });
     if (highlights.length) throw new Error("Unselected road guides must not be drawn.");
-    return results;
+    return { results, closedColors };
   });
-  for (const { phase, colors: strokes } of colors) {
+  for (const { phase, colors: strokes, widths, sides } of results) {
     const selected = strokes.lastIndexOf("#55e9ff");
     const route = strokes.lastIndexOf(phase === "pickup" ? "#92d7b6" : "#f5c65a");
     expect(route).toBeGreaterThanOrEqual(0);
     expect(selected).toBeGreaterThan(route);
+    expect(strokes).toContain("#ff975e");
+    expect(strokes).toContain("traffic-hatching");
+    expect(widths).toContain(14);
+    expect(Math.min(...sides)).toBe(-7);
+    expect(Math.max(...sides)).toBe(7);
     expect(strokes).not.toContain("#b5e3d780");
     if (phase === "pickup") expect(strokes).not.toContain("#f5c65a");
   }
+  expect(closedColors).toContain("#ed8879");
+  expect(closedColors).not.toContain("#ff975e");
+});
+
+test("2D congestion patterns stop at junction edges while the GPS stays continuous", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=junction-markings-1");
+    const edges = [
+      { id: "main", a: "a", b: "b", way: 1, kind: "residential", width: 12, length: 40, name: "Local road" },
+      { id: "cross", a: "b", b: "c", way: 2, kind: "residential", width: 10, length: 30, name: "Local road" },
+    ];
+    const view = new MapView(document.createElement("canvas"), {
+      nodes: { a: [-40, 0], b: [0, 0], c: [0, 30] }, edges, backdrop: [],
+      bounds: [-80, -40, 40, 70], driving: { widths: { residential: 10 } },
+    }, []);
+    const traffic = [], route = [], clips = [];
+    const roadPath = view.roadPath.bind(view);
+    view.roadPath = function (context, edge) {
+      route.push(this.data.nodes[edge.a], this.data.nodes[edge.b]);
+      return roadPath(context, edge);
+    };
+    for (const method of ["moveTo", "lineTo"]) {
+      const original = view.ctx[method].bind(view.ctx);
+      view.ctx[method] = function (x, y) {
+        if (this.strokeStyle === "#ff975e" && this.globalAlpha === .12) traffic.push([x, y]);
+        return original(x, y);
+      };
+    }
+    const rect = view.ctx.rect.bind(view.ctx);
+    view.ctx.rect = function (...args) {
+      if (this.strokeStyle === "#ff975e" && this.globalAlpha === .12) clips.push(args);
+      return rect(...args);
+    };
+    view.render({ x: -20, y: 0, heading: 0, edge: "main" }, {
+      closed: [], traffic: { 1: .48 }, route: ["main"], phase: "onboard",
+    }, "en");
+    return { traffic, route, clips };
+  });
+  expect(result.traffic).toEqual([[-40, 0], [-5, 0]]);
+  expect(result.clips).toEqual([[0, -6, 35, 12]]);
+  expect(result.route).toEqual([[-40, 0], [0, 0]]);
 });

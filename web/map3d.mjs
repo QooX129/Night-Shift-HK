@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=hk-transport-models-7";
+import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=junction-markings-1";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
@@ -8,6 +8,7 @@ import { surfacePose, surfaceSegments, terrainHeight, isElevatedRoad, isGroundRo
 import { staticCollisionLines, COLLISION_LINE_WIDTH, capsuleIntervals, subtractIntervals }
   from "./collision-lines.mjs?v=hk-streets-2";
 import { roadWidth } from "./road-width.mjs";
+import { roadMarkingRanges } from "./road-markings.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { mergeStraightSegments, straightJoin } from "./straight-lines.mjs";
 import { project } from "./physics.mjs?v=tunnel-clearance-1";
@@ -152,7 +153,7 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=hk-transport-models-7", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=startup-road-markings-1", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
         edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
@@ -825,16 +826,23 @@ export class Map3DView {
           quad(buffer, q(a, -1), q(a, 1), q(b, 1), q(b, -1));
         }
       };
+      const markingRanges = roadMarkingRanges(this.data, edge);
       if (r * 2 >= 5.5) {
         const lanes = Math.max(1, Math.min(6, Number.parseInt(edge.lanes, 10) || 1));
         const dividers = lanes > 1 ? lanes - 1 : 1;
         for (let lane = 0; lane < dividers; lane++) {
           const offset = lanes > 1 ? -r + r * 2 * (lane + 1) / lanes : 0;
-          for (let distance = 0; distance < length; distance += WORLD_SCALE.dashLength + WORLD_SCALE.dashGap)
-            stripe(distance, Math.min(length, distance + WORLD_SCALE.dashLength), tile.markings, offset);
+          for (let distance = 0; distance < length; distance += WORLD_SCALE.dashLength + WORLD_SCALE.dashGap) {
+            for (const [first, last] of markingRanges) {
+              const start = Math.max(distance, first * length), end = Math.min(distance + WORLD_SCALE.dashLength, last * length);
+              if (end > start) stripe(start, end, tile.markings, offset);
+            }
+          }
         }
       }
-      if (length > 12) {
+      if (length > 12 && markingRanges.some(([first, last]) =>
+        first * length <= length / 2 - WORLD_SCALE.arrowLength * .6
+        && last * length >= length / 2 + WORLD_SCALE.arrowLength * .6)) {
         const angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
         const arrow = (direction, side) => {
           const x = (a[0] + b[0]) / 2 + nx * side, y = (a[1] + b[1]) / 2 + ny * side;
@@ -2405,6 +2413,52 @@ export class Map3DView {
     geometry.translate(0, height, 0);
     return geometry;
   }
+  trafficGeometry(edges, height) {
+    const positions = [], coordinates = [], coverage = [];
+    for (const edge of edges) {
+      const a = this.nodes[edge.a], b = this.nodes[edge.b];
+      const dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+      if (!length) continue;
+      const width = roadWidth(this.data.driving, edge);
+      const nx = -dy / length, ny = dx / length;
+      const vertex = (point, side) => {
+        const x = point[0] + nx * side, y = point[1] + ny * side;
+        positions.push(x, surfacePose(this, edge, { x, y }, 0).height + height + .08, y);
+        coordinates.push(((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length, side);
+        coverage.push(1, 1, 1);
+      };
+      for (const [first, last] of roadMarkingRanges(this.data, edge)) {
+        const from = [a[0] + dx * first, a[1] + dy * first], to = [a[0] + dx * last, a[1] + dy * last];
+        for (const [start, end] of surfaceSegments(this, edge, from, to)) {
+          vertex(start, -width / 2); vertex(end, -width / 2); vertex(end, width / 2);
+          vertex(start, -width / 2); vertex(end, width / 2); vertex(start, width / 2);
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute("trafficCoord", new THREE.Float32BufferAttribute(coordinates, 2));
+    geometry.setAttribute("boundaryCoord", new THREE.Float32BufferAttribute(coverage, 3));
+    return geometry;
+  }
+  trafficMaterial(color) {
+    const material = this.smoothLineMaterial(color);
+    const compile = material.onBeforeCompile;
+    material.onBeforeCompile = shader => {
+      compile(shader);
+      shader.vertexShader = `attribute vec2 trafficCoord;\nvarying vec2 vTrafficCoord;\n${shader.vertexShader}`
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvTrafficCoord = trafficCoord;");
+      shader.fragmentShader = `varying vec2 vTrafficCoord;\n${shader.fragmentShader}`
+        .replace("#include <opaque_fragment>", `
+          float chevron = abs(mod(vTrafficCoord.x + abs(vTrafficCoord.y) * 0.8 + 4.0, 8.0) - 4.0);
+          float hatch = abs(mod(vTrafficCoord.x + vTrafficCoord.y * 1.1 + 1.0, 2.0) - 1.0);
+          float mark = 1.0 - smoothstep(0.13, 0.13 + max(fwidth(chevron), 0.001), chevron);
+          float stripe = 1.0 - smoothstep(0.07, 0.07 + max(fwidth(hatch), 0.001), hatch);
+          diffuseColor.a *= max(mark, 0.08 + stripe * 0.14);
+          #include <opaque_fragment>`);
+    };
+    return material;
+  }
   updateOverlays(state, approach, previewExit) {
     this.overlayLayers ??= new Map();
     const suffixOffset = (original, ids) => {
@@ -2421,7 +2475,7 @@ export class Map3DView {
         this.overlayLayers.delete(name);
       }
       if (!geometry) return;
-      const mesh = new THREE.Mesh(geometry, this.smoothLineMaterial(color));
+      const mesh = new THREE.Mesh(geometry, name === "traffic" ? this.trafficMaterial(color) : this.smoothLineMaterial(color));
       mesh.renderOrder = Math.round(height * 100);
       this.overlays.add(mesh);
       this.overlayLayers.set(name, { key: JSON.stringify([ids, color]), ids: [...ids], color, mesh });
@@ -2479,13 +2533,22 @@ export class Map3DView {
         this.detailWorker.postMessage({ type: "route", request, ids, width, height });
         return;
       }
-      replaceLayer(name, ids, color, height,
-        ids.length ? this.ribbonGeometry(ids.map(id => this.edges.get(id)), width, height) : null);
+      const edges = ids.map(id => this.edges.get(id));
+      replaceLayer(name, ids, color, height, ids.length
+        ? name === "traffic" ? this.trafficGeometry(edges, height) : this.ribbonGeometry(edges, width, height)
+        : null);
     };
     const closed = new Set(state.closed);
     updateLayer("closed", [...this.edges.values()].filter(e => closed.has(e.way)).map(e => e.id), "#ed8879", 3, 0.12);
-    updateLayer("traffic", [...this.edges.values()].filter(e => !closed.has(e.way) && state.traffic[e.way]).map(e => e.id),
-      "#bd955c", 1, 0.14);
+    const seenTraffic = new Set();
+    const traffic = [...this.edges.values()].filter(edge => {
+      if (closed.has(edge.way) || !state.traffic[edge.way]) return false;
+      const key = `${edge.way}:${[edge.a, edge.b].sort().join(":")}`;
+      if (seenTraffic.has(key)) return false;
+      seenTraffic.add(key);
+      return true;
+    });
+    updateLayer("traffic", traffic.map(edge => edge.id), "#ff975e", 0, 0.14);
     updateLayer("selected", selectedPaths.flatMap(({ path }) => path.edges.map(edge => edge.id)), "#55e9ff", 2, 0.3);
     updateLayer("route", state.route ?? [],
       state.phase === "pickup" ? "#24ca72" : "#f3c047", 0.8, state.phase === "pickup" ? 0.25 : 0.22);
@@ -2553,7 +2616,7 @@ export class Map3DView {
     geometry.setDrawRange(0, this.skids.length * 12);
     if (this.skids.length) position.needsUpdate = color.needsUpdate = true;
   }
-  render(car, state, lang, approach, previewExit = null) {
+  render(car, state, lang, approach, previewExit = null, preparing = false) {
     // Use the animation-frame time the taxi was stepped with; performance.now() jitters with prior work.
     const now = document.timeline?.currentTime ?? performance.now();
     const dt = this.lastRender ? Math.min((now - this.lastRender) / 1000, 0.1) : 1;
@@ -2566,10 +2629,16 @@ export class Map3DView {
     this.updateSkids(performance.now() / 1000);
     this.camera.x = car.x; this.camera.y = car.y;
     if (this.roadBuildTask) {
-      const deadline = performance.now() + 6;
+      const deadline = performance.now() + (preparing ? 100 : 6);
       let steps = 0;
-      while (performance.now() < deadline && steps++ < 48) {
-        if (this.roadBuildTask.next().done) { this.roadBuildTask = null; break; }
+      try {
+        while (performance.now() < deadline && steps++ < (preparing ? 1024 : 48)) {
+          if (this.roadBuildTask.next().done) { this.roadBuildTask = null; break; }
+        }
+      } catch (error) {
+        console.error("3D road construction failed", error);
+        this.canvas.dispatchEvent(new CustomEvent("renderererror", { detail: error.message }));
+        return;
       }
     }
     this.updateStreamedCity();

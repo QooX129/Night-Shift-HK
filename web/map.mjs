@@ -2,6 +2,7 @@ import { doorSide, peopleOnMap, drawHailBubble, drawCitizen, HAIL_BUBBLE } from 
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import { staticCollisionLines, COLLISION_LINE_WIDTH } from "./collision-lines.mjs?v=hk-streets-2";
 import { roadWidth } from "./road-width.mjs";
+import { roadMarkingRanges } from "./road-markings.mjs";
 import { WORLD_SCALE } from "./world-scale.mjs";
 import { visualStream } from "./map-stream.mjs?v=roof-canopies-1";
 import { SpatialGrid, pointBounds } from "./spatial-grid.mjs";
@@ -203,6 +204,9 @@ export class MapView {
       const count = Math.max(1, Math.floor(edge.length / 55));
       for (let i = 0; i < count; i++) {
         const t = (i + 0.5) / count;
+        const halfLength = WORLD_SCALE.arrowLength / (2 * edge.length);
+        if (!roadMarkingRanges(this.data, edge).some(([first, last]) =>
+          t - halfLength >= first && t + halfLength <= last)) continue;
         yield { x: a[0] + (b[0] - a[0]) * t + Math.sin(angle) * offset,
           y: a[1] + (b[1] - a[1]) * t - Math.cos(angle) * offset, angle };
       }
@@ -304,9 +308,44 @@ export class MapView {
       c.lineCap = "round";
       for (const e of this.unique) {
         if (!closed.has(e.way) && !state.traffic[e.way]) continue;
-        c.strokeStyle = closed.has(e.way) ? "#ed8879" : "#bd955c";
-        c.lineWidth = (closed.has(e.way) ? 5 : 2) / Math.max(zoom, 0.8);
-        c.beginPath(); this.roadPath(c, e); c.stroke();
+        if (closed.has(e.way)) {
+          c.strokeStyle = "#ed8879"; c.lineWidth = 5 / Math.max(zoom, 0.8);
+          c.beginPath(); this.roadPath(c, e); c.stroke();
+          continue;
+        }
+        const a = this.data.nodes[e.a], b = this.data.nodes[e.b];
+        const dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+        if (!length) continue;
+        const width = roadWidth(this.data.driving, e), halfWidth = width / 2;
+        const ranges = roadMarkingRanges(this.data, e);
+        if (!ranges.length) continue;
+        c.save(); c.lineCap = "butt";
+        c.strokeStyle = "#ff975e"; c.globalAlpha = .12; c.lineWidth = width;
+        c.beginPath();
+        for (const [first, last] of ranges) {
+          c.moveTo(a[0] + dx * first, a[1] + dy * first);
+          c.lineTo(a[0] + dx * last, a[1] + dy * last);
+        }
+        c.stroke();
+        if (width * zoom >= 3) {
+          c.translate(...a); c.rotate(Math.atan2(dy, dx));
+          c.beginPath();
+          for (const [first, last] of ranges) c.rect(length * first, -halfWidth, length * (last - first), width);
+          c.clip();
+          c.globalAlpha = .18; c.lineWidth = 1 / zoom; c.beginPath();
+          for (let distance = -width; distance < length; distance += Math.max(4, 8 / zoom)) {
+            c.moveTo(distance, -halfWidth); c.lineTo(distance + width, halfWidth);
+          }
+          c.stroke();
+          c.globalAlpha = .85; c.lineWidth = 1.5 / zoom; c.beginPath();
+          const size = Math.min(halfWidth, length / 2);
+          for (let distance = Math.min(10 / zoom, length / 2); distance < length; distance += 20 / zoom) {
+            c.moveTo(distance - size, -halfWidth); c.lineTo(distance, 0);
+            c.lineTo(distance - size, halfWidth);
+          }
+          c.stroke();
+        }
+        c.restore();
       }
       if (state.route) {
         c.lineWidth = 5 / zoom; c.strokeStyle = "#f5c65a22"; c.beginPath();

@@ -362,6 +362,7 @@ test("clipped road junctions preserve continuous height across different grades"
     scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
     *curbMarkings() { return []; },
   });
+  Object.assign(view.data, { nodes, edges, elevation: view.elevation });
   const task = view.roadSurfaceGeometry();
   while (!task.next().done) {}
   const decks = view.structures.map(({ mesh }) => mesh).filter(mesh =>
@@ -398,6 +399,7 @@ test("road clipping combines same-level crossings but preserves different height
       scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
       *curbMarkings() { return []; },
     });
+    Object.assign(view.data, { nodes, edges, elevation: view.elevation });
     const task = view.roadSurfaceGeometry();
     while (!task.next().done) {}
     const decks = view.structures.map(({ mesh }) => mesh).filter(mesh => mesh.name === "level-separated-solid-road-decks");
@@ -426,6 +428,7 @@ test("overlapping connected ramps remain separate as their heights diverge", () 
     scene: new THREE.Scene(), sceneSize: new THREE.Vector2(100, 100), asphaltTexture: null,
     *curbMarkings() { return []; },
   });
+  Object.assign(view.data, { nodes, edges, elevation: view.elevation });
   const task = view.roadSurfaceGeometry();
   while (!task.next().done) {}
   const decks = view.structures.map(({ mesh }) => mesh).filter(mesh => mesh.name === "level-separated-solid-road-decks");

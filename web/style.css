@@ -871,6 +871,12 @@ blockquote {
     text-align: center
 }
 
+.congestion-notice {
+    background: #3a281bef;
+    border-color: #ff975e;
+    color: #ffd2ac
+}
+
 .dashboard {
     position: absolute;
     bottom: 62px;

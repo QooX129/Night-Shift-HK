@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#111b24">
   <title>Night Shift HK · 香港的士</title>
-  <link rel="stylesheet" href="/style.css?v=panel-shortcuts-1">
+  <link rel="stylesheet" href="/style.css?v=traffic-chevrons-2">
 </head>
 <body>
   <main id="game">
@@ -91,6 +91,7 @@
     <div class="district-label">九龍 <span>KOWLOON</span></div>
     <div id="road-notices" class="road-notices">
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="congestion-notice" class="notice congestion-notice" role="status" aria-live="polite" hidden></div>
     </div>
 
     <section class="dashboard panel" aria-label="Taxi dashboard">
@@ -278,6 +279,6 @@
     <button id="error-close" class="secondary" data-i18n="dismiss">Dismiss and stay paused</button>
     <button id="restart" class="text-button" data-i18n="restart">Start a new shift (lose progress)</button>
   </dialog>
-  <script type="module" src="/app.mjs?v=chase-distance-4"></script>
+  <script type="module" src="/app.mjs?v=startup-road-markings-1"></script>
 </body>
 </html>

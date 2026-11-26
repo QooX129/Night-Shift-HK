@@ -6,8 +6,8 @@ test("transport locations render as 2D icons and Hong Kong-style street models",
   await page.goto("/");
   await page.locator("#welcome").evaluate(dialog => dialog.close());
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=hk-transport-models-7");
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { MapView } = await import("/map.mjs?v=junction-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { SpatialGrid, pointBounds } = await import("/spatial-grid.mjs");
     const THREE = await import("/vendor/three/three.module.min.js");
     const features = [
@@ -191,7 +191,7 @@ test("transport locations render as 2D icons and Hong Kong-style street models",
 test("taxi, bus and MTR side sign faces align with the road direction", async ({ page }) => {
   await page.goto("/");
   const facing = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { SpatialGrid, pointBounds } = await import("/spatial-grid.mjs");
     const THREE = await import("/vendor/three/three.module.min.js");
     return [
@@ -234,7 +234,7 @@ test("taxi, bus and MTR side sign faces align with the road direction", async ({
 test("overlapping road joints match the road surface without visible patches", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const data = {
       bounds: [-50, -20, 50, 20], nodes: { a: [-40, 0], b: [0, 0], c: [40, 0] },
@@ -293,7 +293,7 @@ test("overlapping road joints match the road surface without visible patches", a
 test("street details extend beyond Nathan Road and stop at junction openings", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const data = {
       bounds: [-20, -40, 100, 50],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 30], d: [40, -30] },
@@ -346,6 +346,12 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
         });
       const deckColor = view.scene.children.find(mesh => mesh.name === "level-separated-solid-road-decks")
         .geometry.getAttribute("color");
+      const nathanMarkings = view.structures.flatMap(({ mesh, material, ranges }) => {
+        if (material.color.getHexString() !== "c2d0bf" || !ranges) return [];
+        const positions = mesh.geometry.getAttribute("position");
+        return ranges.filter(range => range.edge.id === "nathan").flatMap(range =>
+          Array.from({ length: range.end - range.start }, (_, i) => positions.getX(range.start + i)));
+      });
       const jointColors = view.scene.children.filter(mesh => mesh.name === "continuous-shared-node-road-joints")
         .every(mesh => {
           const p = mesh.geometry.getAttribute("position"), color = mesh.geometry.getAttribute("color"),
@@ -359,7 +365,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
           }
           return true;
         });
-      return { nathanCrossing, crossStreetLines, depth, boxes: boxes.length,
+      return { nathanCrossing, crossStreetLines, depth, boxes: boxes.length, maxNathanMarking: Math.max(...nathanMarkings),
         crossingCenter: (Math.min(...crossingLateral) + Math.max(...crossingLateral)) / 2,
         jointColors, readableBack: p?.count === 12 && uv.getX(0) !== uv.getX(6) };
     } finally { view.dispose(); view.renderer.forceContextLoss(); canvas.remove(); }
@@ -369,6 +375,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
   expect.soft(result.depth).toBeGreaterThan(1);
   expect.soft(result.readableBack).toBe(true);
   expect.soft(result.boxes).toBe(0);
+  expect(result.maxNathanMarking).toBeLessThanOrEqual(37.001);
   expect(result.crossingCenter).toBeCloseTo(0, 5);
   expect(result.jointColors).toBe(true);
 });
@@ -376,7 +383,7 @@ test("street details extend beyond Nathan Road and stop at junction openings", a
 test("the verified Nathan Road and Argyle Street junction has a yellow box", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map?stream=true")).json();
     const center = data.nodes["1151084860"];
@@ -426,7 +433,7 @@ test("the verified Nathan Road and Argyle Street junction has a yellow box", asy
 test("Hong Kong street details follow nearby buildings and ground-level Nathan Road junctions", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const data = {
       bounds: [-20, -20, 220, 140],
       nodes: { a: [0, 0], b: [40, 0], c: [40, 20], d: [-1, 0] },
@@ -496,7 +503,7 @@ test("parallel carriageways retain a visible metric gap in 2D and elevated 3D", 
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const { MapView } = await import("/map.mjs?v=parabolic-steering-1");
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { RoadNetwork } = await import("/physics.mjs?v=parabolic-steering-1");
     const data = {
       bounds: [-10, -20, 110, 30], backdrop: [
@@ -635,7 +642,7 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   await page.locator("#start").click();
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { RoadNetwork, project } = await import("/physics.mjs?v=parabolic-steering-1");
     const roads = new RoadNetwork(data);
     const side = roads.edges.get("485635353:2:6505945379"), main = roads.edges.get("1067815827:9:13108528146");
@@ -699,7 +706,7 @@ test("Waterloo and Ferry junction clips internal walls at the reported overlap",
   await page.locator("#welcome").evaluate(dialog => dialog.close());
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
-    const { Map3DView } = await import("/map3d.mjs?v=hk-transport-models-7");
+    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
     const { project } = await import("/physics.mjs?v=parabolic-steering-1");
     const { surfacePose, isGroundRoad } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const { roadWidth } = await import("/road-width.mjs");

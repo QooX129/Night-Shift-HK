@@ -68,8 +68,11 @@ district-scale maps. `/api/map` still provides the complete document for tools.
   four-millisecond scheduling budget and a maximum of eight building steps per
   render. Building meshes outside the buffered area are disposed; chunk data
   can remain cached for revisits. Road deck tiles are built nearest-first with
-  a separate six-millisecond scheduling budget. These are cooperative budgets,
-  not hard execution limits for a single polygon. Terrain texture refreshes
+  a separate scheduling budget: 100 ms on the initial welcome screen, then
+  six milliseconds during play. Starting in 3D waits for road surfaces and
+  painted markings, including curb markings, to finish; 2D can start without
+  waiting for 3D. These are cooperative budgets, not hard execution limits for
+  a single polygon. Terrain texture refreshes
   still use a worker and progressive GPU uploads.
 - The 3D view uses procedural asphalt, varied façades and fictional shop
   advertisements, each either wall-mounted or projecting where roadside space permits.
@@ -369,7 +372,13 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   One-way roads point one way; two-way roads have opposing arrows on the left
   side of each travel direction. Segments shorter than 16 m omit arrows to limit
   clutter. Arrows reflect the packaged graph, not live road signage.
-- Orange roads have simulated congestion; red roads are closed. A new simulated
+- Orange chevrons and subtle hatching cover the full width of congested roads;
+  a reminder appears while the taxi is on one. Their orientation does not indicate
+  legal travel direction. Congestion and painted lane markings leave same-level
+  junction interiors clear; GPS and turn guidance remain continuous through them.
+  Congestion is simulated: each shift selects the same
+  seeded set of up to 14 major roads, rather than live traffic. Red roads are
+  closed. A new simulated
   closure is selected approximately every 100 seconds of active game time.
   Closures block entry, not the controls: reversing and steering away remain
   available. If a closure appears on the taxi's current way, it may drive out,
