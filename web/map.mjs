@@ -16,6 +16,64 @@ export const TRANSPORT_STYLES = {
   taxi: { color: "#d85a45", label: "T", sign: "TAXI" },
   bus: { color: "#3988c2", label: "B", sign: "BUS" },
 };
+const MAP_LABEL_PRIORITY = { estate: 0, carpark: 1, hotel: 2, block: 3 };
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [x, y] = polygon[i], [px, py] = polygon[j];
+    if ((y > point[1]) !== (py > point[1])
+        && point[0] < (px - x) * (point[1] - y) / (py - y) + x) inside = !inside;
+  }
+  return inside;
+}
+
+function orientation(a, b, c) {
+  return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+}
+
+function onSegment(a, b, point) {
+  return Math.abs(orientation(a, b, point)) < 1e-7
+    && point[0] >= Math.min(a[0], b[0]) - 1e-7 && point[0] <= Math.max(a[0], b[0]) + 1e-7
+    && point[1] >= Math.min(a[1], b[1]) - 1e-7 && point[1] <= Math.max(a[1], b[1]) + 1e-7;
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const abC = orientation(a, b, c), abD = orientation(a, b, d);
+  const cdA = orientation(c, d, a), cdB = orientation(c, d, b);
+  return (abC > 0) !== (abD > 0) && (cdA > 0) !== (cdB > 0)
+    || onSegment(a, b, c) || onSegment(a, b, d)
+    || onSegment(c, d, a) || onSegment(c, d, b);
+}
+
+function roadOverlapsPolygon(segment, polygon) {
+  if (!polygon || polygon.length < 3) return false;
+  if (pointInPolygon(segment[0], polygon) || pointInPolygon(segment[1], polygon)) return true;
+  for (let i = 0; i < polygon.length; i++) {
+    if (segmentsIntersect(segment[0], segment[1], polygon[i], polygon[(i + 1) % polygon.length])) return true;
+  }
+  return false;
+}
+
+function polygonArea(polygon) {
+  return Math.abs(polygon.reduce((area, [x, y], i) => {
+    const [nextX, nextY] = polygon[(i + 1) % polygon.length];
+    return area + x * nextY - nextX * y;
+  }, 0)) / 2;
+}
+
+export function roadAreaLabel(edge, segment, labels, lang) {
+  const roadName = edge?.[lang === "zh" ? "zh" : "name"] ?? "";
+  if (edge?.name !== "Local road") return roadName;
+  let match = null, matchArea = Infinity;
+  for (const label of labels ?? []) {
+    if (!roadOverlapsPolygon(segment, label.polygon)) continue;
+    const area = polygonArea(label.polygon);
+    if (area > 0 && area < matchArea) { match = label; matchArea = area; }
+  }
+  return match ? (lang === "zh" ? match.zh : match.name) : roadName;
+}
+
 const BUILDING_COLORS = {
   apartments: "#34494f", residential: "#38484a", house: "#4b4b42",
   commercial: "#51473d", retail: "#584438", hotel: "#354e58", office: "#344d56",
@@ -74,6 +132,11 @@ export class MapView {
     }
     if (this.data.overview && !this.overviewIndex)
       this.overviewIndex = new SpatialGrid(this.data.overview, shape => pointBounds(shape.points));
+    if (this.indexedMapLabels !== this.data.mapLabels) {
+      this.indexedMapLabels = this.data.mapLabels;
+      this.mapLabelIndex = this.data.mapLabels?.length
+        ? new SpatialGrid(this.data.mapLabels, label => pointBounds([label.point])) : null;
+    }
     if (this.data.transport && !this.transportIndex)
       this.transportIndex = new SpatialGrid(this.data.transport, item => pointBounds([item.point]));
     if (this.collisionLines && !this.collisionIndex)
@@ -152,6 +215,30 @@ export class MapView {
       c.font = "7px system-ui"; c.fillStyle = "#9daea1"; c.fillText(e.zh, 0, 6);
       c.restore();
     }
+    this.drawMapLabels(c, bounds, s);
+  }
+  drawMapLabels(c, bounds, scale) {
+    const zoom = scale / this.ratio;
+    if ((this.compact && !this.interactive) || zoom < .55 || !this.mapLabelIndex) return;
+    const labels = this.mapLabelIndex.query(bounds)
+      .filter(label => label.kind !== "block" || zoom >= 1.45)
+      .sort((a, b) => MAP_LABEL_PRIORITY[a.kind] - MAP_LABEL_PRIORITY[b.kind]);
+    const occupied = new Set();
+    for (const label of labels) {
+      const text = this.lang === "zh" ? label.zh : label.name;
+      if (!text) continue;
+      c.font = `${label.kind === "block" ? 7 : 9}px system-ui`;
+      const [x, y] = label.point, width = c.measureText(text).width;
+      const left = Math.floor((x - width / 2) / 36), right = Math.floor((x + width / 2) / 36);
+      const top = Math.floor((y - 8) / 22), bottom = Math.floor((y + 8) / 22);
+      const cells = [];
+      for (let cx = left; cx <= right; cx++) for (let cy = top; cy <= bottom; cy++) cells.push(`${cx}:${cy}`);
+      if (cells.some(cell => occupied.has(cell))) continue;
+      cells.forEach(cell => occupied.add(cell));
+      c.textAlign = "center"; c.fillStyle = "#e1ece2";
+      c.strokeStyle = "#15282b"; c.lineWidth = 2;
+      c.strokeText(text, x, y); c.fillText(text, x, y);
+    }
   }
   roadPath(c, e) {
     c.moveTo(...this.data.nodes[e.a]); c.lineTo(...this.data.nodes[e.b]);
@@ -225,7 +312,7 @@ export class MapView {
     c.restore();
   }
   drawTiles(c, bounds, zoom) {
-    const revision = this.stream?.revision ?? 0;
+    const revision = `${this.stream?.revision ?? 0}:${this.lang ?? "en"}`;
     const rasterScale = 2 ** (Math.round(Math.log2(zoom * this.ratio) * 2) / 2);
     const span = MAP_TILE_PIXELS / rasterScale, gutter = 2 / rasterScale;
     const scales = [...new Set([...this.tileCache.keys()].map(key => Number(key.split(":")[0])))];
@@ -271,6 +358,7 @@ export class MapView {
     this.backdropScale = zoom * this.ratio;
   }
   render(car, state, lang, approach, previewExit = null) {
+    this.lang = lang;
     const ratio = this.compact ? Math.max(2, devicePixelRatio || 1) : devicePixelRatio || 1;
     if (this.ratio !== ratio) this.resize();
     const c = this.ctx, w = this.width, h = this.height;

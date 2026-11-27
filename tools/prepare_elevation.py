@@ -97,6 +97,54 @@ def sample(grid, point):
     return ((1 - u) * values[a] + u * values[a + 1]) * (1 - v) + ((1 - u) * values[b] + u * values[b + 1]) * v
 
 
+def reconstruct_ground_beneath_parks(grid, backdrop):
+    raised = [shape["points"] for shape in backdrop
+              if shape["kind"] == "park" and int(shape.get("layer", "0")) > 0]
+    if not raised:
+        return grid
+    width, height, spacing = grid["width"], grid["height"], grid["spacing"]
+    ox, oy = grid["origin"]
+    covered = set()
+    for polygon in raised:
+        left, right = min(p[0] for p in polygon), max(p[0] for p in polygon)
+        top, bottom = min(p[1] for p in polygon), max(p[1] for p in polygon)
+        for j in range(max(0, math.floor((top - oy) / spacing) - 1),
+                       min(height - 1, math.ceil((bottom - oy) / spacing) + 1) + 1):
+            y = oy + j * spacing
+            for i in range(max(0, math.floor((left - ox) / spacing) - 1),
+                           min(width - 1, math.ceil((right - ox) / spacing) + 1) + 1):
+                x = ox + i * spacing
+                inside = False
+                near = False
+                for a, b in zip(polygon, polygon[1:] + polygon[:1]):
+                    if (a[1] > y) != (b[1] > y) and x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]:
+                        inside = not inside
+                    dx, dy = b[0] - a[0], b[1] - a[1]
+                    length2 = dx * dx + dy * dy
+                    if length2:
+                        t = max(0, min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / length2))
+                        near |= math.hypot(x - a[0] - t * dx, y - a[1] - t * dy) <= spacing
+                if inside or near:
+                    covered.add((i, j))
+    values = list(grid["values"])
+    max_radius = math.hypot(width, height)
+    for i, j in covered:
+        radius = max(1, math.ceil(80 / spacing))
+        while True:
+            samples = [grid["values"][y * width + x]
+                       for y in range(max(0, j - radius), min(height, j + radius + 1))
+                       for x in range(max(0, i - radius), min(width, i + radius + 1))
+                       if (x, y) not in covered and (x - i) ** 2 + (y - j) ** 2 <= radius ** 2]
+            if len(samples) >= 5:
+                break
+            if radius >= max_radius:
+                raise ValueError("Insufficient terrain outside elevated parks to estimate ground")
+            radius = min(math.ceil(max_radius), radius * 2)
+        samples.sort()
+        values[j * width + i] = min(values[j * width + i], samples[len(samples) // 5])
+    return {**grid, "values": values}
+
+
 def building_height(tags):
     try:
         height = float(tags.get("height", "").removesuffix(" m"))
@@ -151,6 +199,7 @@ def build(refresh=False):
                       for y in range(max(0, j - 3), min(grid["height"], j + 4))
                       for x in range(max(0, i - 3), min(grid["width"], i + 4))]
             ground["values"].append(round(sorted(values)[len(values) // 5], 2))
+    ground = reconstruct_ground_beneath_parks(ground, document["backdrop"])
     nodes = document["nodes"]
     incident = {n: [] for n in nodes}
     for edge in document["edges"]:
@@ -188,26 +237,27 @@ def build(refresh=False):
         tags = e["tags"]
         use = next((tags[key] for key in ("amenity", "tourism", "shop", "office") if tags.get(key)), None)
         footprints[json.dumps(points, separators=(",", ":"))] = (
-            e["id"], *building_height(tags), tags.get("building"), use, building_min_height(tags))
+            e["id"], *building_height(tags), tags.get("building"), use, building_min_height(tags),
+            tags.get("layer", "0"))
     buildings = []
     for index, footprint in enumerate(document["backdrop"]):
         if footprint["kind"] != "building":
             continue
-        osm_id, height, quality, building_type, building_use, min_height = footprints.get(
+        osm_id, height, quality, building_type, building_use, min_height, building_layer = footprints.get(
             json.dumps(footprint["points"], separators=(",", ":")),
-            (None, 18, "estimated-default-18m", None, None, 0))
+            (None, 18, "estimated-default-18m", None, None, 0, "0"))
         if min_height >= height:
             raise ValueError(f"Building {osm_id} minimum height {min_height} is not below total height {height}")
         buildings.append({"index": index, "osm_way": osm_id, "height": height, "quality": quality,
                           "base": round(sample(ground, footprint["points"][0]), 3),
                           "building_type": building_type, "building_use": building_use,
-                          "min_height": min_height})
+                          "min_height": min_height, "building_layer": building_layer})
     package = {
         "schema": 1, "map_version": document["version"], "built": dt.datetime.now(dt.timezone.utc).isoformat(),
         "datum": "Hong Kong Principal Datum (DTM); road/building bases estimated in same datum",
         "dtm": grid, "terrain": ground, "node_heights": {n: round(z, 6) for n, z in heights.items()},
         "buildings": buildings,
-        "road_quality": "estimated-ground-envelope-plus-6m-per-OSM-layer-grade-limited",
+        "road_quality": "estimated-ground-envelope-reconstructed-under-raised-parks-plus-6m-per-OSM-layer-grade-limited",
         "max_grade": .12, "pilot": {"status": "topology-only; heights estimated, not survey verified"},
         "sources": [
             {"name": "Lands Department, HKSAR Government", "url": DTM_URL, "description": DTM_PAGE,

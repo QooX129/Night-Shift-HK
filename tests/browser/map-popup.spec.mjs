@@ -50,7 +50,7 @@ test("map popup keeps 3D driving live and supports keyboard, wheel zoom and drag
   await expect(page.locator("#view-mode")).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#map-3d")).toBeVisible();
   const before = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
+    const { MapView } = await import("/map.mjs?v=subroad-area-labels-1");
     const original = MapView.prototype.render;
     window.mapPopupProbe = { original, frames: 0 };
     MapView.prototype.render = function (car, state, ...args) {

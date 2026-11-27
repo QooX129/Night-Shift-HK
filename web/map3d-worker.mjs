@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=elevated-parks-1";
-import { MapView } from "./map.mjs?v=elevated-parks-1";
+import { Map3DView } from "./map3d.mjs?v=subroad-area-labels-1";
+import { MapView } from "./map.mjs?v=subroad-area-labels-1";
 
 let view;
 let revision = 0;

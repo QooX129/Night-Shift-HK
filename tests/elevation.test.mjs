@@ -13,6 +13,22 @@ test("OSM layer-only roads are rendered on their own vertical level", () => {
   assert.equal(isTunnelRoad({ layer: "0", bridge: "no", tunnel: "building_passage" }), true);
 });
 
+test("Park Avenue bus terminus is level with the adjacent Hoi Ting Road", () => {
+  const roads = JSON.parse(readFileSync(new URL("../data/district.json", import.meta.url)));
+  roads.elevation = JSON.parse(readFileSync(new URL("../data/elevation.json", import.meta.url)));
+  const terminal = roads.edges.find(edge => edge.id === "314017142:6:11068357605");
+  const street = roads.edges.find(edge => edge.id === "30148986:16:1172166326");
+  const point = { x: -699.925, y: -152.995 };
+  const difference = Math.abs(surfacePose(roads, terminal, point, 0).height
+    - surfacePose(roads, street, point, 0).height);
+  assert.ok(difference < 1, `bus terminus is ${difference.toFixed(2)} m above the adjacent road`);
+  const entrance = roads.edges.find(edge => edge.id === "185084381:0:1956604432");
+  const entrancePoint = { x: -620.935, y: -146.64 };
+  const entranceDifference = Math.abs(surfacePose(roads, entrance, entrancePoint, 0).height
+    - surfacePose(roads, street, point, 0).height);
+  assert.ok(entranceDifference < 3, `station entrance differs by ${entranceDifference.toFixed(2)} m`);
+});
+
 test("side roads conform across the main-road width with continuous blending and accurate grades", () => {
   const roads = { nodes: { a: [-100, 0], b: [0, 0], c: [100, 0], d: [0, 100] },
     elevation: { node_heights: { a: 0, b: 5, c: 10, d: 15 },

@@ -118,10 +118,6 @@ def build(raw_path: Path, output: Path) -> None:
         if tags.get("area") == "yes":
             continue
         restricted = taxi_restricted(tags)
-        if (tags.get("service") in {"parking_aisle", "driveway"} and not restricted
-                and tags.get("taxi") != "yes" and tags.get("covered") != "yes"
-                and tags.get("tunnel") != "building_passage"):
-            continue
         oneway = tags.get("oneway", "yes" if tags.get("junction") == "roundabout"
                           or tags["highway"] == "motorway" else "no")
         for index, (a, b) in enumerate(zip(ids, ids[1:])):
@@ -198,7 +194,7 @@ def build(raw_path: Path, output: Path) -> None:
     nodes = {k: v for k, v in nodes.items() if k in largest}
     edges = [e for e in edges if e["a"] in largest and e["b"] in largest]
     result = {
-        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-8").hexdigest()[:12],
+        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-9").hexdigest()[:12],
         "source": "OpenStreetMap contributors", "license": "ODbL-1.0",
         "downloaded": dt.datetime.now(dt.timezone.utc).isoformat(),
         "origin": [LAT, LON], "bounds": top_left + bottom_right,

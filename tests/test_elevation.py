@@ -6,12 +6,26 @@ import unittest
 from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
 from game import Game, RuleError, Session
 from roads import DRIVING, Edge, RoadMap, project
-from tools.prepare_elevation import building_height, building_min_height, road_layer_offset
+from tools.prepare_elevation import (
+    building_height, building_min_height, reconstruct_ground_beneath_parks, road_layer_offset,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ElevationTests(unittest.TestCase):
+    def test_raised_park_ground_uses_outside_samples_without_changing_other_terrain(self):
+        grid = {"origin": [0, 0], "spacing": 10, "width": 11, "height": 11,
+                "values": [15 if 20 <= x <= 80 and 20 <= y <= 80 else 7
+                           for y in range(0, 110, 10) for x in range(0, 110, 10)]}
+        footprint = {"kind": "park", "layer": "2",
+                     "points": [[20, 20], [80, 20], [80, 80], [20, 80], [20, 20]]}
+        corrected = reconstruct_ground_beneath_parks(grid, [footprint])
+        self.assertEqual(corrected["values"][5 * 11 + 5], 7)
+        self.assertEqual(corrected["values"][0], grid["values"][0])
+        self.assertEqual(grid["values"][5 * 11 + 5], 15)
+        self.assertEqual(reconstruct_ground_beneath_parks(grid, [{**footprint, "layer": "0"}]), grid)
+
     def test_flyover_roofs_are_not_packaged_as_buildings(self):
         source = json.loads((ROOT / "data/source.osm.json").read_text())
         elevation = json.loads((ROOT / "data/elevation.json").read_text())
@@ -35,6 +49,7 @@ class ElevationTests(unittest.TestCase):
         self.assertEqual(metadata[160323946]["building_type"], tags[160323946]["building"])
         self.assertEqual(metadata[102411832]["building_type"], tags[102411832]["building"])
         self.assertEqual(metadata[102411832]["building_use"], tags[102411832]["shop"])
+        self.assertEqual(metadata[26379391]["building_layer"], tags[26379391]["layer"])
 
     def test_road_lane_and_surface_tags_reach_the_render_dataset(self):
         source = json.loads((ROOT / "data/source.osm.json").read_text())

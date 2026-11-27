@@ -120,6 +120,35 @@ def build(source_path: Path, map_path: Path, output_path: Path) -> None:
             })
             place["parking_entrances"] = [list(point) for point in place["parking_entrances"]]
 
+    map_labels = []
+    for element in elements.values():
+        tags = element.get("tags", {})
+        kind = (
+            "carpark" if tags.get("amenity") == "parking"
+            else "hotel" if tags.get("tourism") == "hotel" or tags.get("building") == "hotel"
+            else "estate" if tags.get("landuse") == "residential"
+            or tags.get("residential") in {"apartments", "estate"}
+            else "block" if tags.get("building") in {"apartments", "residential"}
+            else None
+        )
+        if not kind:
+            continue
+        point = feature_point(element)
+        name = tags.get("name:en") or tags.get("name")
+        zh = tags.get("name:zh") or tags.get("name")
+        if point and name and zh:
+            label = {
+                "id": f"osm-{element['type']}-{element['id']}",
+                "name": name, "zh": zh, "point": point, "kind": kind,
+            }
+            if element["type"] == "way":
+                node_ids = element.get("nodes", [])
+                if len(node_ids) >= 4 and node_ids[0] == node_ids[-1]:
+                    label["polygon"] = [
+                        xy(nodes[node_id]["lat"], nodes[node_id]["lon"]) for node_id in node_ids
+                    ]
+            map_labels.append(label)
+
     taxi_stands = []
     no_stopping_ways = []
     no_stopping_points = []
@@ -154,10 +183,11 @@ def build(source_path: Path, map_path: Path, output_path: Path) -> None:
         })
 
     places = sorted(places.values(), key=lambda place: place["id"])
+    map_labels.sort(key=lambda label: label["id"])
     taxi_stands.sort(key=lambda stop: stop["id"])
     output = {"map_version": district["version"], "source": "OpenStreetMap contributors",
               "license": "ODbL-1.0", "source_timestamp": source.get("osm3s", {}).get("timestamp_osm_base"),
-              "places": places, "taxi_stands": taxi_stands,
+              "places": places, "map_labels": map_labels, "taxi_stands": taxi_stands,
               "no_stopping_ways": sorted(no_stopping_ways),
               "no_stopping_points": no_stopping_points}
     if not places:

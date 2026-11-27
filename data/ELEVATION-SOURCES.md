@@ -51,7 +51,9 @@ The original extract is from 2026-10-26; motorway and trunk roads, including
 their link roads, were supplemented from OSM on 2026-11-11. The supplemental
 timestamp is recorded separately in the source and district packages.
 All supported, accessible roads in the largest connected component are
-drivable, including elevated flyovers. Nonzero-length OSM connector segments
+drivable, including elevated flyovers, driveways, and parking aisles. Missing
+OSM access tags do not establish that a road is legally open to taxis.
+Nonzero-length OSM connector segments
 are retained even when shorter than 0.5 m, so adjacent roads remain connected.
 Some flyover components whose connections lie outside the district bounds are
 still excluded; the game does not invent connections across the map boundary.
@@ -62,7 +64,11 @@ No building's height is randomized in the elevation view.
 
 Outside the pilot, road profiles are estimated from a 30 m neighborhood lower
 envelope of the DTM plus 6 m per nonzero OSM road layer (and at least 6 m for
-bridge/tunnel tags). Shared graph-node
+bridge/tunnel tags). Beneath OSM parks tagged with a positive layer and within
+one 10 m grid cell of their edges, terrain is limited using the lower fifth of
+nearby samples outside those areas (within 80 m, expanded if necessary). This estimates the ground where the DTM may
+capture a raised park instead; it is not a surveyed ground level and can
+underestimate genuine slopes. Shared graph-node
 heights and grade-bounded propagation ensure continuous ramps, including reverse
 edges. A single DTM cannot establish ground under a flyover: reconstructed ground
 and underpass clearances must not be described as measured.
@@ -97,6 +103,16 @@ handbraked taxi does not roll downhill.
 
 Bridge thickness 0.65 m and tunnel clearance 5 m are visual/game estimates.
 `building_passage` stays at the connected road level but gets an interior shell.
+Elevated parks render as slabs with estimated perimeter supports, placed away from
+mapped road corridors. Where a lower-layer elevated road cannot clear a park
+slab, its footprint cuts an opening in the slab. Ground-road footprints and
+roads on lower mapped layers cut openings through buildings;
+low, positively layered podiums overlapping an elevated park are opened beneath
+the park. Elevated road decks do not automatically acquire support walls or
+pillars; standalone walls and bridge supports are not imported as features.
+These openings and supports are visual estimates, not evidence of
+surveyed structure. No new road ramps or pedestrian links between layers are
+invented.
 Terrain is visually carved around estimated ground roads and faded in tunnels.
 Cars use existing swept 2D road-corridor containment on their current surface;
 unconnected crossings never authorize a level switch. Decks support the car by

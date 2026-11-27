@@ -32,6 +32,22 @@ class RoadScaleTests(unittest.TestCase):
                 self.assertTrue(roads.body_fits(point, roads.angle(edge), edge), edge.id)
         self.assertTrue(any(edge.covered == "yes" for edge in roads.edges.values()))
 
+    def test_central_park_side_roads_are_connected_and_drivable(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        for way in (1365726722, 101515908):
+            edges = [edge for edge in roads.edges.values() if edge.way == way and not edge.wrongway]
+            self.assertTrue(edges, way)
+            for edge in edges:
+                self.assertFalse(edge.restricted)
+                point = tuple((a + b) / 2 for a, b in zip(roads.nodes[edge.a], roads.nodes[edge.b]))
+                self.assertTrue(roads.body_fits(point, roads.angle(edge), edge), edge.id)
+        pairs = {(edge.way, edge.a, edge.b) for edge in roads.edges.values() if not edge.wrongway}
+        self.assertIn((1365726722, "288991212", "1172166356"), pairs)
+        self.assertIn((101515908, "1172166356", "1172166412"), pairs)
+        self.assertIn((1365726722, "12647507206", "13464191437"), pairs)
+        self.assertIn((1467999747, "13464191437", "288991214"), pairs)
+        self.assertTrue(any(edge.way == 102548820 and not edge.restricted for edge in roads.edges.values()))
+
     def test_straight_merge_tolerance_and_real_collider_deduplication(self):
         self.assertTrue(straight_join([(0, 0), (1, 0)], (2, .01)))
         self.assertFalse(straight_join([(0, 0), (1, 0)], (2, .04)))

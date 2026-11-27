@@ -41,6 +41,36 @@ class PlaceTests(unittest.TestCase):
         self.assertEqual((result["places"][0]["name"], result["places"][0]["zh"]), ("Museum", "博物館"))
         self.assertEqual(result["places"][1]["zh"], "Park")
 
+    def test_map_labels_include_estates_blocks_hotels_and_carparks(self):
+        source = {"elements": [
+            {"type": "node", "id": 1, "lat": 22.314, "lon": 114.1695},
+            {"type": "node", "id": 2, "lat": 22.314, "lon": 114.1696},
+            {"type": "node", "id": 3, "lat": 22.3139, "lon": 114.1696},
+            {"type": "node", "id": 4, "lat": 22.3139, "lon": 114.1695},
+            {"type": "way", "id": 10, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"landuse": "residential", "name:en": "Sorrento", "name:zh": "擎天半島"}},
+            {"type": "way", "id": 11, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"building": "apartments", "name:en": "Tower 1", "name:zh": "1座"}},
+            {"type": "way", "id": 12, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"amenity": "parking", "name:en": "Car Park", "name:zh": "停車場"}},
+            {"type": "way", "id": 13, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"tourism": "hotel", "name:en": "Hotel", "name:zh": "酒店"}},
+            {"type": "way", "id": 14, "nodes": [1, 2, 3, 4, 1],
+             "tags": {"building": "hotel", "name:en": "Hotel Annex", "name:zh": "酒店附屬樓"}},
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "source.json").write_text(json.dumps(source), encoding="utf-8")
+            (path / "map.json").write_text(json.dumps({"version": "test", "bounds": [-50, -50, 50, 50]}))
+            build(path / "source.json", path / "map.json", path / "places.json")
+            result = json.loads((path / "places.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            {(label["kind"], label["name"]) for label in result["map_labels"]},
+            {("estate", "Sorrento"), ("block", "Tower 1"),
+             ("carpark", "Car Park"), ("hotel", "Hotel"), ("hotel", "Hotel Annex")},
+        )
+        self.assertTrue(all(len(label["polygon"]) == 5 for label in result["map_labels"]))
+
     def test_packaged_places_are_reproducible(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "places.json"

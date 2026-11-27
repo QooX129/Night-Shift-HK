@@ -1,5 +1,5 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=elevated-parks-1";
+import { MapView } from "./map.mjs?v=subroad-area-labels-1";
 import { en, zh } from "./i18n.mjs?v=access-warning-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
@@ -657,7 +657,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=elevated-parks-1");
+      const { Map3DView } = await import("./map3d.mjs?v=subroad-area-labels-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
@@ -1013,7 +1013,11 @@ applyPreferenceEffects();
 openDialog("welcome");
 requestAnimationFrame(frame);
 try {
-  [mapData, stops] = await Promise.all([fetchJSON("/api/map?stream=true"), fetchJSON("/api/stops")]);
+  let places;
+  [mapData, stops, places] = await Promise.all([
+    fetchJSON("/api/map?stream=true"), fetchJSON("/api/stops"), fetchJSON("/api/places"),
+  ]);
+  mapData.mapLabels = places.map_labels;
   mapStream = visualStream(mapData, {
     onError: error => {
       console.error("Visual map streaming failed", error);

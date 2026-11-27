@@ -226,7 +226,7 @@ test("road arrows show only legal directions with left-side opposing arrows on t
 test("road-direction arrows do not overlap a same-level crossing", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
+    const { MapView } = await import("/map.mjs?v=subroad-area-labels-1");
     const nodes = { a: [0, 0], b: [100, 0], c: [50, -50], d: [50, 50] };
     const edges = [
       { id: "main", a: "a", b: "b", way: 1, width: 10, length: 100 },
@@ -324,7 +324,7 @@ test("2D guides keep routes and selected exits without normal road guidance", as
 test("2D congestion patterns stop at junction edges while the GPS stays continuous", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
+    const { MapView } = await import("/map.mjs?v=subroad-area-labels-1");
     const edges = [
       { id: "main", a: "a", b: "b", way: 1, kind: "residential", width: 12, length: 40, name: "Local road" },
       { id: "cross", a: "b", b: "c", way: 2, kind: "residential", width: 10, length: 30, name: "Local road" },
