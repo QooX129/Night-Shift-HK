@@ -37,7 +37,7 @@ const t = key => (lang === "zh" ? zh : en)[key] || key;
 const moneyText = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
 const meterSegments = ["abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgecd", "abc", "abcdefg", "abfgcd"];
 const dialogs = ["welcome", "intro-dialog", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
-let introTimer = null;
+let introTimer = null, introRevealFrame = null;
 
 function resetControls() {
   car.slip = 0;
@@ -199,9 +199,50 @@ async function resume() {
 }
 function finishIntro() {
   if (introTimer !== null) clearTimeout(introTimer);
+  if (introRevealFrame !== null) cancelAnimationFrame(introRevealFrame);
   introTimer = null;
+  introRevealFrame = null;
+  if (map3d) {
+    map3d.introCameraWaiting = false;
+    map3d.introCameraStart = null;
+  }
   if ($("intro-dialog").open) $("intro-dialog").close();
   void resume();
+}
+function transitionFromIntro() {
+  const dialog = $("intro-dialog");
+  dialog.classList.add("fade-to-black");
+  introTimer = setTimeout(() => {
+    introTimer = null;
+    if (view === map3d) map3d.introCameraWaiting = true;
+    dialog.classList.add("reveal-game");
+    const reveal = () => {
+      if (!dialog.open) {
+        introRevealFrame = null;
+        if (map3d) map3d.introCameraWaiting = false;
+        return;
+      }
+      if (Number(getComputedStyle(dialog).opacity) > .05) {
+        introRevealFrame = requestAnimationFrame(reveal);
+        return;
+      }
+      if (view !== map3d) {
+        finishIntro();
+        return;
+      }
+      map3d.introCameraWaiting = false;
+      map3d.introCameraStart = document.timeline?.currentTime ?? performance.now();
+      const waitForCamera = () => {
+        if (!dialog.open) {
+          introRevealFrame = null;
+          if (map3d) map3d.introCameraStart = null;
+        } else if (view !== map3d || map3d.introCameraStart == null) finishIntro();
+        else introRevealFrame = requestAnimationFrame(waitForCamera);
+      };
+      introRevealFrame = requestAnimationFrame(waitForCamera);
+    };
+    introRevealFrame = requestAnimationFrame(reveal);
+  }, 600);
 }
 function showIntroFrame(index) {
   const frames = $("intro-dialog").querySelectorAll(".intro-frame");
@@ -213,8 +254,8 @@ function showIntroFrame(index) {
   $("intro-caption").textContent = t(`storyCaption${index + 1}`);
   introTimer = setTimeout(() => {
     if (index + 1 < frames.length) showIntroFrame(index + 1);
-    else finishIntro();
-  }, 1700);
+    else transitionFromIntro();
+  }, 3200);
 }
 function startShift() {
   if (preferences.reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -222,6 +263,7 @@ function startShift() {
     return;
   }
   $("welcome").close();
+  $("intro-dialog").classList.remove("fade-to-black", "reveal-game");
   $("intro-dialog").showModal();
   showIntroFrame(0);
 }
@@ -686,7 +728,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=subroad-area-labels-1");
+      const { Map3DView } = await import("./map3d.mjs?v=intro-camera-2");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);

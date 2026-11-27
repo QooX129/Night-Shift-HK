@@ -78,6 +78,8 @@ open the map or zoom.
 The default view is 3D and the interface supports English and Traditional
 Chinese. Preferences are stored in the browser; shift progress is not saved.
 Reloading starts a new shift, and restarting the server clears active sessions.
+Starting a shift plays a skippable illustrated story, then fades into the selected
+view. Reduced motion skips the story and camera transition.
 
 ## Map and elevation
 

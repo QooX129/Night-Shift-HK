@@ -2875,10 +2875,20 @@ export class Map3DView {
       const eye = this.lens.position;
       eye.y = Math.max(eye.y, this.lookAt.y + Math.hypot(eye.x - this.lookAt.x, eye.z - this.lookAt.z) * MIN_CHASE_GRADE);
     }
+    if (this.introCameraWaiting || this.introCameraStart != null) {
+      const progress = this.introCameraWaiting ? 0 : Math.max(0, Math.min(1, (now - this.introCameraStart) / 3000));
+      const ease = progress * progress * (3 - 2 * progress);
+      const forwardX = Math.cos(car.heading), forwardZ = Math.sin(car.heading);
+      const firstPerson = new THREE.Vector3(position.x + forwardX * 2.5, position.y + 1.5, position.z + forwardZ * 2.5);
+      const firstTarget = new THREE.Vector3(position.x + forwardX * 20, position.y + 1.5, position.z + forwardZ * 20);
+      this.lens.position.lerpVectors(firstPerson, eye, ease);
+      this.lookAt.lerpVectors(firstTarget, target, ease);
+      if (progress === 1) this.introCameraStart = null;
+    }
     this.lens.lookAt(this.lookAt);
     const viewOffset = innerHeight * 0.04;
     this.lens.setViewOffset(innerWidth, innerHeight, 0, viewOffset, innerWidth, innerHeight);
-    if (!this.overview && Number.isFinite(this.dashboardTop)) {
+    if (!this.overview && !this.introCameraWaiting && this.introCameraStart == null && Number.isFinite(this.dashboardTop)) {
       this.lens.updateMatrixWorld();
       this.taxiBounds ??= new THREE.Box3();
       this.taxiProjection ??= new THREE.Vector3();

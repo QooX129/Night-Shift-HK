@@ -2,13 +2,24 @@ import { test, expect } from "@playwright/test";
 
 test("the opening story can be skipped to start the shift", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({
+    defaultView: "2d", reducedMotion: false,
+  })));
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(() => {
+    let started;
+    document.querySelector("#start").addEventListener("click", () => { started = performance.now(); }, { capture: true });
+    const second = document.querySelectorAll(".intro-frame")[1];
+    new MutationObserver(() => {
+      if (second.classList.contains("active")) window.secondFrameDelay = performance.now() - started;
+    }).observe(second, { attributes: true, attributeFilter: ["class"] });
+  });
   await page.locator("#start").click();
   await expect(page.locator("#intro-dialog")).toBeVisible();
-  await expect(page.locator("#intro-frame").first()).toHaveClass(/active/);
+  await expect(page.locator(".intro-frame").first()).toHaveClass(/active/);
   await expect(page.locator("#intro-caption")).toHaveText("One night, he tried his luck at blackjack.");
-  await expect(page.locator("#intro-frame").nth(1)).toHaveClass(/active/, { timeout: 3000 });
+  await expect.poll(() => page.evaluate(() => window.secondFrameDelay ?? 0)).toBeGreaterThanOrEqual(3000);
   await expect(page.locator("#intro-caption")).toHaveText("The cards turned. Every last dollar was gone.");
   await page.locator("#intro-skip").click();
   await expect(page.locator("#intro-dialog")).not.toBeVisible();
@@ -21,6 +32,83 @@ test("reduced motion starts the shift without the story animation", async ({ pag
   await page.locator("#start").click();
   await expect(page.locator("#intro-dialog")).not.toBeVisible();
   await expect(page.locator("#welcome")).not.toBeVisible();
+});
+
+test("the in-game reduced motion setting also skips the story", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({
+    defaultView: "2d", reducedMotion: true,
+  })));
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#intro-dialog")).not.toBeVisible();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+});
+
+test("the complete story fades to black and pulls the 3D camera back before starting", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({
+    defaultView: "3d", reducedMotion: false,
+  })));
+  const unpauses = [];
+  page.on("request", request => {
+    if (request.url().includes("/commands")) {
+      const command = request.postDataJSON()?.command;
+      if (command?.action === "pause" && command.paused === false) unpauses.push(command);
+    }
+  });
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=intro-camera-2");
+    const render = Map3DView.prototype.render;
+    window.introCameraDistances = [];
+    Map3DView.prototype.render = function (...args) {
+      const transitioning = this.introCameraWaiting || this.introCameraStart != null;
+      const result = render.apply(this, args);
+      if (transitioning) window.introCameraDistances.push({
+        distance: this.lens.position.distanceTo(this.taxi.position),
+        opacity: Number(getComputedStyle(document.querySelector("#intro-dialog")).opacity),
+      });
+      else if (document.querySelector("#welcome").open)
+        window.introCameraBaseline = this.lens.position.distanceTo(this.taxi.position);
+      return result;
+    };
+  });
+  await expect.poll(() => page.evaluate(() => window.introCameraBaseline ?? 0)).toBeGreaterThan(5);
+  await page.locator("#start").click();
+  await expect(page.locator("#intro-dialog")).toHaveClass(/fade-to-black/, { timeout: 25000 });
+  expect(unpauses).toHaveLength(0);
+  await expect(page.locator("#intro-dialog")).toHaveClass(/reveal-game/);
+  await expect(page.locator("#clock")).toHaveText("00:00");
+  await expect(page.locator("#intro-dialog")).not.toBeVisible({ timeout: 5000 });
+  await expect.poll(() => unpauses.length).toBe(1);
+  const distances = await page.evaluate(() => window.introCameraDistances);
+  expect(distances.length).toBeGreaterThan(2);
+  const visible = distances.filter(sample => sample.opacity < .05);
+  expect(visible.length).toBeGreaterThan(2);
+  expect(visible[0].distance).toBeLessThan(5);
+  expect(visible.at(-1).distance).toBeGreaterThan(visible[0].distance + 5);
+  const baseline = await page.evaluate(() => window.introCameraBaseline);
+  expect(Math.abs(visible.at(-1).distance - baseline)).toBeLessThan(1);
+});
+
+test("the complete story fades into the selected 2D view", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.addInitScript(() => localStorage.setItem("night-shift-hk.settings.v1", JSON.stringify({
+    defaultView: "2d", reducedMotion: false,
+  })));
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#intro-dialog")).toHaveClass(/fade-to-black/, { timeout: 25000 });
+  await expect(page.locator("#intro-dialog")).toHaveClass(/reveal-game/);
+  await expect(page.locator("#intro-dialog")).not.toBeVisible({ timeout: 5000 });
+  await expect(page.locator("#map")).toBeVisible();
+  await expect(page.locator("#map-3d")).toBeHidden();
+  await page.locator("#pause").click();
+  await expect(page.locator("#pause-dialog")).toBeVisible();
 });
 
 test("junction direction keys preview while held, cancel on blur, and select on release", async ({ page }) => {
