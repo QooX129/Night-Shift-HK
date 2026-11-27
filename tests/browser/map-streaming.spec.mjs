@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test("starting a 3D shift waits for road markings to finish", async ({ page }) => {
   test.setTimeout(150_000);
   await page.addInitScript(() => { window.holdRoadMarkings = true; });
-  await page.route("**/map3d.mjs?v=startup-road-markings-1", async route => {
+  await page.route("**/map3d.mjs?v=elevated-parks-1", async route => {
     const response = await route.fetch();
     const source = await response.text();
     const marker = "    if (this.roadBuildTask) {";
@@ -36,7 +36,7 @@ test("starting a 3D shift waits for road markings to finish", async ({ page }) =
 });
 
 test("road construction failure reports an error and permits 2D startup", async ({ page }) => {
-  await page.route("**/map3d.mjs?v=startup-road-markings-1", async route => {
+  await page.route("**/map3d.mjs?v=elevated-parks-1", async route => {
     const response = await route.fetch();
     const source = await response.text();
     const marker = "        while (performance.now() < deadline && steps++ < (preparing ? 1024 : 48)) {";
@@ -61,7 +61,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await expect(page.locator("#start")).toBeEnabled();
   await expect(page.locator("#map-3d")).toBeVisible();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const render = Map3DView.prototype.render;
     await new Promise(resolve => {
       Map3DView.prototype.render = function (...args) {
@@ -101,7 +101,7 @@ test("map bootstrap streams nearby visuals while driving and 3D construction rem
   await page.keyboard.press("m");
   await expect(page.locator("#map-popup")).toBeVisible();
   const farURL = await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=junction-markings-1");
+    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
     const view = window.streamingView;
     const key = [...view.stream.keys].sort((a, b) => {
       const distance = key => {

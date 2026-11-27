@@ -279,6 +279,7 @@ class Game:
             edge
             for edge in roads.edges.values()
             if not edge.wrongway
+            and not edge.restricted
             and edge.way not in roads.no_stopping_ways
             and edge.length >= 30
             and edge.layer == "0"

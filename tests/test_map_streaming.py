@@ -41,6 +41,17 @@ class MapStreamingTests(unittest.TestCase):
             if index in metadata:
                 self.assertEqual(shapes[index]["building"], metadata[index])
 
+    def test_elevated_park_layer_survives_overview_and_chunks(self):
+        index, park = next((index, shape) for index, shape in enumerate(roads.document["backdrop"])
+                           if shape.get("osm_way") == 185084371)
+        core = json.loads(visual_map.core)
+        self.assertEqual(park["layer"], "2")
+        self.assertEqual(core["overview"][index]["layer"], park["layer"])
+        chunks = [shape for content in visual_map.chunks.values()
+                  for shape in json.loads(content)["backdrop"] if shape["id"] == index]
+        self.assertTrue(chunks)
+        self.assertTrue(all(shape["layer"] == park["layer"] for shape in chunks))
+
     def test_versioned_chunks_revalidate_and_reject_missing_or_stale_data(self):
         key = next(iter(visual_map.chunks))
         x, y = key.split(":")

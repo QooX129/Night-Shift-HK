@@ -1,5 +1,5 @@
 import * as THREE from "./vendor/three/three.module.min.js";
-import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=junction-markings-1";
+import { MapView, TRANSPORT_STYLES } from "./map.mjs?v=elevated-parks-1";
 import { doorSide, peopleOnMap, drawHailBubble, HAIL_BUBBLE } from "./citizens.mjs?v=passenger-extras-2";
 import { en, zh } from "./i18n.mjs?v=passenger-extras-1";
 import polygonClipping from "./vendor/polygon-clipping/polygon-clipping.mjs";
@@ -40,6 +40,26 @@ const ROAD_TINTS = {
 const VERIFIED_YELLOW_BOXES = [
   { road: "Argyle Street", crossing: "Nathan Road", nodes: ["1151084860", "308473424"] },
 ];
+
+function hasTunnelShell(edge) {
+  return isTunnelRoad(edge) && !(edge.tunnel === "building_passage" && Number(edge.layer || 0) >= 0);
+}
+
+function isSurfaceRoad(edge) {
+  return isGroundRoad(edge) || (!isElevatedRoad(edge) && edge.tunnel === "building_passage" && Number(edge.layer || 0) === 0);
+}
+
+function roadFootprint(view, edge) {
+  const a = view.nodes[edge.a], b = view.nodes[edge.b];
+  const dx = b[0] - a[0], dy = b[1] - a[1], length = Math.hypot(dx, dy);
+  if (!length) return null;
+  const radius = roadWidth(view.data.driving, edge) / 2 + .05;
+  const nx = -dy / length * radius, ny = dx / length * radius;
+  const ex = dx / length * radius, ey = dy / length * radius;
+  const points = [[a[0] - ex - nx, a[1] - ey - ny], [a[0] - ex + nx, a[1] - ey + ny],
+    [b[0] + ex + nx, b[1] + ey + ny], [b[0] + ex - nx, b[1] + ey - ny]];
+  return [...points, points[0]];
+}
 
 function roadTint(edge) {
   if (edge.surface === "concrete") return new THREE.Color("#3b484b");
@@ -153,10 +173,10 @@ export class Map3DView {
       this.boundaryScene.add(this.overlays);
       this.overlayKey = null;
       this.buildMarkers();
-      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=startup-road-markings-1", import.meta.url), { type: "module" });
+      this.detailWorker = new Worker(new URL("./map3d-worker.mjs?v=elevated-parks-1", import.meta.url), { type: "module" });
       this.curbWorkerPending = Boolean(this.roadBuildTask);
       this.detailWorker.postMessage({ type: "init", map: this.data,
-        edges: this.elevation ? this.groundMap.unique.filter(isGroundRoad)
+        edges: this.elevation ? this.groundMap.unique.filter(isSurfaceRoad)
           : this.groundMap.unique,
         size: this.detailSize, scale: this.detailScale, backdropColor: this.detailMap.backdropColor,
         curbs: this.curbWorkerPending,
@@ -222,6 +242,7 @@ export class Map3DView {
     const [left, top, right, bottom] = this.data.bounds;
     const map = Object.create(MapView.prototype);
     map.data = this.data;
+    map.suppressElevatedParks = true;
     map.collisionLines = staticCollisionLines(this.data);
     map.drawCollisionLines = () => {};
     map.backdrop = document.createElement("canvas");
@@ -233,7 +254,7 @@ export class Map3DView {
     });
     const allRoads = map.unique;
     if (this.elevation) {
-      map.unique = allRoads.filter(isGroundRoad);
+      map.unique = allRoads.filter(isSurfaceRoad);
       map.drawRoadDirections = () => {};
     }
     const scale = Math.min(1.5, 4096 / Math.max(right - left, bottom - top));
@@ -271,7 +292,7 @@ export class Map3DView {
       const positions = geometry.getAttribute("position");
       const cells = new Map();
       for (const edge of map.unique) {
-        if (!isGroundRoad(edge)) continue;
+        if (!isSurfaceRoad(edge)) continue;
         const a = this.nodes[edge.a], b = this.nodes[edge.b], margin = 20;
         for (let i = Math.floor((Math.min(a[0], b[0]) - margin) / 40); i <= Math.floor((Math.max(a[0], b[0]) + margin) / 40); i++)
           for (let j = Math.floor((Math.min(a[1], b[1]) - margin) / 40); j <= Math.floor((Math.max(a[1], b[1]) + margin) / 40); j++) {
@@ -325,7 +346,7 @@ export class Map3DView {
     this.groundMap = map;
     this.detailMap = Object.create(map);
     if (this.elevation) {
-      this.detailMap.unique = allRoads.filter(isGroundRoad);
+      this.detailMap.unique = allRoads.filter(isSurfaceRoad);
     }
     this.detailMap.drawRoadDirections = () => {};
     this.detailMap.backdrop = document.createElement("canvas");
@@ -445,7 +466,7 @@ export class Map3DView {
     while (!task.next().done) {}
   }
   *curbMarkings() {
-    const roads = [...new Map(this.groundMap.unique.filter(isGroundRoad).map(edge =>
+    const roads = [...new Map(this.groundMap.unique.filter(isSurfaceRoad).map(edge =>
       [`${roadWidth(this.data.driving, edge)}:${[edge.a, edge.b].sort().join(":")}`, edge])).values()];
     if (!roads.length) return [];
     let polygons = roads.map(edge => {
@@ -577,7 +598,7 @@ export class Map3DView {
       && a[1] <= b[3] + .001 && b[1] <= a[3] + .001;
     const sameSurface = (edge, other, point) => {
       const connected = edge.a === other.a || edge.a === other.b || edge.b === other.a || edge.b === other.b;
-      if (!connected && (isElevatedRoad(edge) !== isElevatedRoad(other) || isTunnelRoad(edge) !== isTunnelRoad(other)
+      if (!connected && (isElevatedRoad(edge) !== isElevatedRoad(other) || hasTunnelShell(edge) !== hasTunnelShell(other)
           || Number(edge.layer || 0) !== Number(other.layer || 0))) return false;
       const position = { x: point[0], y: point[1] };
       // Match the road network's vertical compatibility tolerance.
@@ -696,7 +717,7 @@ export class Map3DView {
       boundaries.get(key).push(line);
     }
     for (const edge of this.groundMap.unique) {
-      if (!isGroundRoad(edge)) continue;
+      if (!isSurfaceRoad(edge)) continue;
       for (const node of [edge.a, edge.b]) {
         if (!junctions.has(node)) junctions.set(node, []);
         junctions.get(node).push(edge);
@@ -737,7 +758,7 @@ export class Map3DView {
         railing: [], signal: [], signalRed: [] });
       const tile = tiles.get(key);
       const starts = Object.fromEntries(Object.keys(tile.roadRanges).map(kind => [kind, tile[kind].length / 3]));
-      const bridge = isElevatedRoad(edge), tunnel = isTunnelRoad(edge);
+      const bridge = isElevatedRoad(edge), tunnel = hasTunnelShell(edge);
       const deckKind = bridge ? "elevatedDeck" : "deck";
       const tint = roadTint(edge);
       const lower = p => [p[0], p[1] - WORLD_SCALE.bridgeDeckThickness, p[2]];
@@ -857,7 +878,7 @@ export class Map3DView {
         arrow(1, edge.oneway ? 0 : -r * .5);
         if (!edge.oneway) arrow(-1, r * .5);
       }
-      if (isGroundRoad(edge) && r >= 1.2 && length > .5) {
+      if (isSurfaceRoad(edge) && r >= 1.2 && length > .5) {
         const roadside = (distance, across, height) => {
           const x = a[0] + (b[0] - a[0]) * distance / length + nx * across;
           const y = a[1] + (b[1] - a[1]) * distance / length + ny * across;
@@ -885,7 +906,7 @@ export class Map3DView {
             const bounds = [Math.min(line.a[0], line.b[0]) - 24, Math.min(line.a[1], line.b[1]) - 24,
               Math.max(line.a[0], line.b[0]) + 24, Math.max(line.a[1], line.b[1]) + 24];
             for (const other of this.groundMap.roadIndex.query(bounds)) {
-              if (!isGroundRoad(other) || other.way === edge.way) continue;
+              if (!isSurfaceRoad(other) || other.way === edge.way) continue;
               const oa = this.nodes[other.a], ob = this.nodes[other.b];
               const otherLength = Math.hypot(ob[0] - oa[0], ob[1] - oa[1]);
               if (Math.abs(nx * (ob[0] - oa[0]) + ny * (ob[1] - oa[1])) / otherLength < .01) continue;
@@ -1163,7 +1184,7 @@ export class Map3DView {
       const [x, y] = point;
       let nearest = null, distance = Infinity;
       for (const edge of this.groundMap.roadIndex.query([x - 20, y - 20, x + 20, y + 20])) {
-        if (!isGroundRoad(edge)) continue;
+        if (!isSurfaceRoad(edge)) continue;
         const candidate = project({ x, y }, this.nodes[edge.a], this.nodes[edge.b]).distance;
         if (candidate < distance) { nearest = edge; distance = candidate; }
       }
@@ -1720,7 +1741,10 @@ export class Map3DView {
     this.roofMaterial = new THREE.MeshBasicMaterial({ color: "#9cc2c5", transparent: true,
       opacity: .48, side: THREE.DoubleSide, forceSinglePass: true });
     this.roofPostMaterial = new THREE.MeshBasicMaterial({ color: "#647679" });
-    this.resources.push(this.roofMaterial, this.roofPostMaterial);
+    this.parkMaterial = new THREE.MeshStandardMaterial({ color: "#355f48", roughness: 1, side: THREE.DoubleSide });
+    this.fadedParkMaterial = new THREE.MeshStandardMaterial({ color: "#355f48", roughness: 1,
+      side: THREE.DoubleSide, transparent: true, opacity: .18, depthWrite: false });
+    this.resources.push(this.roofMaterial, this.roofPostMaterial, this.parkMaterial, this.fadedParkMaterial);
     this.buildingCount = 0;
     this.buildings = [];
     if (this.stream) {
@@ -1765,7 +1789,7 @@ export class Map3DView {
     const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
     const roads = this.groundMap.roadIndex.query([
       Math.min(...xs) - 12, Math.min(...zs) - 12, Math.max(...xs) + 12, Math.max(...zs) + 12,
-    ]).filter(edge => !isTunnelRoad(edge));
+    ]).filter(edge => !hasTunnelShell(edge));
     let eave = Math.max(...ring.map(([x, z]) => terrainHeight(this.elevation, x, z))) + 2.8;
     for (const edge of roads) {
       const a = this.nodes[edge.a], b = this.nodes[edge.b];
@@ -1828,11 +1852,38 @@ export class Map3DView {
   *cityGeometry(footprints) {
     const tiles = new Map();
     const cover = [], posts = [];
+    const meshes = [];
     const buildingMetadata = new Map((this.elevation?.buildings || []).map(b => [b.index, b]));
     for (const [index, footprint] of footprints.entries()) {
       if (footprint.points.length < 3) continue;
       if (footprint.kind === "roof") {
         this.buildCanopy(footprint.points, cover, posts);
+        yield;
+        continue;
+      }
+      if (footprint.kind === "park" && Number(footprint.layer) > 0) {
+        const points = footprint.points;
+        const xs = points.map(point => point[0]), ys = points.map(point => point[1]);
+        let surface = Math.max(...points.map(([x, y]) => terrainHeight(this.elevation, x, y)));
+        for (const edge of this.groundMap.roadIndex.query([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)])) {
+          if (isElevatedRoad(edge) || hasTunnelShell(edge)) continue;
+          const road = roadFootprint(this, edge);
+          if (!road) continue;
+          for (const polygon of polygonClipping.intersection([points], [road])) {
+            for (const ring of polygon) for (const [x, y] of ring)
+              surface = Math.max(surface, surfacePose(this, edge, { x, y }, 0).height);
+          }
+        }
+        const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, -y)));
+        const geometry = new THREE.ExtrudeGeometry(shape, { depth: .8, bevelEnabled: false });
+        geometry.rotateX(-Math.PI / 2);
+        geometry.translate(0, surface + 5.2, 0);
+        geometry.computeBoundingSphere();
+        const mesh = new THREE.Mesh(geometry, this.parkMaterial);
+        mesh.name = "elevated-park";
+        mesh.userData.cityCanopy = true;
+        this.scene.add(mesh);
+        meshes.push(mesh);
         yield;
         continue;
       }
@@ -1848,27 +1899,56 @@ export class Map3DView {
       const shape = new THREE.Shape(points.map(([x, y]) => new THREE.Vector2(x, -y)));
       const seed = Math.abs(Math.round(cx * 13 + cy * 7));
       const height = metadata?.height ?? WORLD_SCALE.fallbackBuildingHeight;
-      const geometry = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, steps: 1 });
-      geometry.rotateX(-Math.PI / 2);
-      const position = geometry.getAttribute("position"), normal = geometry.getAttribute("normal");
+      const minHeight = metadata?.min_height ?? 0;
+      if (minHeight >= height) throw new Error(`Building ${metadata?.osm_way ?? footprint.id} has invalid height metadata`);
+      const base = metadata?.base ?? 0;
+      const openings = [];
+      let openingTop = minHeight;
+      // shortcut: openings use sampled road heights and estimated clearance until surveyed geometry is available.
+      for (const edge of this.groundMap.roadIndex.query(pointBounds(points))) {
+        if (!isSurfaceRoad(edge) || (edge.covered !== "yes" && edge.tunnel !== "building_passage")) continue;
+        const road = roadFootprint(this, edge);
+        if (!road) continue;
+        const overlap = polygonClipping.intersection([points], [road]);
+        if (!overlap.length) continue;
+        openings.push([road]);
+        for (const polygon of overlap) for (const ring of polygon) for (const [x, y] of ring)
+          openingTop = Math.max(openingTop, surfacePose(this, edge, { x, y }, 0).height + 5.2 - base);
+      }
+      openingTop = Math.min(height, openingTop);
+      const parts = [];
+      if (openings.length && openingTop > minHeight) {
+        for (const polygon of polygonClipping.difference([points], ...openings)) {
+          const lower = new THREE.Shape(polygon[0].map(([x, y]) => new THREE.Vector2(x, -y)));
+          for (const ring of polygon.slice(1))
+            lower.holes.push(new THREE.Path(ring.map(([x, y]) => new THREE.Vector2(x, -y))));
+          parts.push({ shape: lower, bottom: minHeight, depth: openingTop - minHeight });
+        }
+      }
+      if (height > openingTop) parts.push({ shape, bottom: openingTop, depth: height - openingTop });
       const buildingType = metadata?.building_type;
       const buildingUse = metadata?.building_use;
       const tint = BUILDING_TINTS[buildingType] ?? BUILDING_TINTS[buildingUse];
       const color = landmark ? new THREE.Color("#81a4ac") : tint
         ? new THREE.Color(tint).offsetHSL(0, 0, (seed % 5 - 2) * .012)
         : new THREE.Color().setHSL(0.10 + seed % 8 / 100, 0.10, 0.54 + seed % 8 / 100);
-      for (let i = 0; i < position.count; i++) {
-        tile.positions.push(position.getX(i), position.getY(i) + (metadata?.base ?? 0) + 0.05, position.getZ(i));
-        tile.normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
-        const shade = normal.getY(i) > 0.5 ? 0.7
-          : 0.7 + 0.3 * Math.max(0, -normal.getX(i) * 0.5 - normal.getZ(i) * 0.8);
-        tile.colors.push(color.r * shade, color.g * shade, color.b * shade);
-        tile.uvs.push(normal.getY(i) > 0.5 ? 0.03
-          : (Math.abs(normal.getX(i)) > 0.5 ? position.getZ(i) : position.getX(i)) / WORLD_SCALE.facadeBayWidth,
-        normal.getY(i) > 0.5 ? 0.03 : position.getY(i) / WORLD_SCALE.floorHeight);
+      for (const part of parts) {
+        const geometry = new THREE.ExtrudeGeometry(part.shape, { depth: part.depth, bevelEnabled: false, steps: 1 });
+        geometry.rotateX(-Math.PI / 2);
+        const position = geometry.getAttribute("position"), normal = geometry.getAttribute("normal");
+        for (let i = 0; i < position.count; i++) {
+          tile.positions.push(position.getX(i), position.getY(i) + base + part.bottom + 0.05, position.getZ(i));
+          tile.normals.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+          const shade = normal.getY(i) > 0.5 ? 0.7
+            : 0.7 + 0.3 * Math.max(0, -normal.getX(i) * 0.5 - normal.getZ(i) * 0.8);
+          tile.colors.push(color.r * shade, color.g * shade, color.b * shade);
+          tile.uvs.push(normal.getY(i) > 0.5 ? 0.03
+            : (Math.abs(normal.getX(i)) > 0.5 ? position.getZ(i) : position.getX(i)) / WORLD_SCALE.facadeBayWidth,
+          normal.getY(i) > 0.5 ? 0.03 : (position.getY(i) + part.bottom - minHeight) / WORLD_SCALE.floorHeight);
+        }
+        geometry.dispose();
       }
-      geometry.dispose();
-      if ((seed % 3 === 0 || metadata?.osm_way === 102411832) && height >= 7) {
+      if ((seed % 3 === 0 || metadata?.osm_way === 102411832) && height - openingTop >= 7) {
         let best = null;
         for (let i = 0; i < points.length; i++) {
           const a = points[i], b = points[(i + 1) % points.length];
@@ -1876,7 +1956,7 @@ export class Map3DView {
           if (length < 4) continue;
           const center = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
           for (const edge of this.groundMap.roadIndex.query([center.x - 25, center.y - 25, center.x + 25, center.y + 25])) {
-            if (!isGroundRoad(edge)) continue;
+            if (!isSurfaceRoad(edge)) continue;
             const nearest = project(center, this.nodes[edge.a], this.nodes[edge.b]);
             if (nearest.distance > 25 || (best && nearest.distance >= best.distance)) continue;
             best = { center, dx: dx / length, dy: dy / length, length, nearest, distance: nearest.distance, edge };
@@ -1894,10 +1974,10 @@ export class Map3DView {
             const depth = Math.min(3, best.distance - roadWidth(this.data.driving, best.edge) / 2 - .6);
             const tip = { x: best.center.x + nx * depth, y: best.center.y + ny * depth };
             const nearby = this.groundMap.roadIndex.query([tip.x - 20, tip.y - 20, tip.x + 20, tip.y + 20]);
-            if (direction && depth >= 1.2 && nearby.every(edge => !isGroundRoad(edge)
+            if (direction && depth >= 1.2 && nearby.every(edge => !isSurfaceRoad(edge)
                 || project(tip, this.nodes[edge.a], this.nodes[edge.b]).distance
                   > roadWidth(this.data.driving, edge) / 2 + .5)) {
-              const bottom = (metadata?.base ?? 0) + 5.1;
+              const bottom = base + openingTop + 5.1;
               const top = Math.min(bottom + 3.2, (metadata?.base ?? 0) + height - .3);
               const corner = (distance, y) => [best.center.x + nx * distance, y, best.center.y + ny * distance];
               const points = [corner(.08, bottom), corner(depth, bottom), corner(depth, top), corner(.08, top)];
@@ -1912,7 +1992,7 @@ export class Map3DView {
           }
           if (!projected) {
             const width = Math.min(metadata?.osm_way === 102411832 ? 8 : 3.5, best.length - .5);
-            const bottom = (metadata?.base ?? 0) + 3.2, top = Math.min(bottom + 3.2, (metadata?.base ?? 0) + height - .3);
+            const bottom = base + openingTop + 3.2, top = Math.min(bottom + 3.2, base + height - .3);
             const offsetX = best.distance ? (best.nearest.x - best.center.x) / best.distance * .08 : 0;
             const offsetY = best.distance ? (best.nearest.y - best.center.y) / best.distance * .08 : 0;
             const corner = (side, y) => [best.center.x + offsetX + best.dx * width * side,
@@ -1926,7 +2006,6 @@ export class Map3DView {
       }
       yield;
     }
-    const meshes = [];
     for (const tile of tiles.values()) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(tile.positions, 3));
@@ -1972,7 +2051,8 @@ export class Map3DView {
       this.cityRevision = revision;
       const groups = new Map();
       for (const shape of this.data.backdrop) {
-        if ((shape.kind !== "building" && shape.kind !== "roof") || shape.points.length < 3) continue;
+        if ((shape.kind !== "building" && shape.kind !== "roof"
+            && !(shape.kind === "park" && Number(shape.layer) > 0)) || shape.points.length < 3) continue;
         const cx = shape.points.reduce((sum, p) => sum + p[0], 0) / shape.points.length;
         const cy = shape.points.reduce((sum, p) => sum + p[1], 0) / shape.points.length;
         const radius = Math.max(...shape.points.map(([x, y]) => Math.hypot(x - cx, y - cy)));
@@ -2659,7 +2739,7 @@ export class Map3DView {
     const distance = Math.min(150 * 5 / 7, DEFAULT_CHASE_DISTANCE * 1.65 / this.zoom) * this.chaseDistanceScale;
     const target = position.clone();
     target.y = pose.height + 1;
-    const inTunnel = this.elevation && isTunnelRoad(this.edges.get(car.edge));
+    const inTunnel = this.elevation && hasTunnelShell(this.edges.get(car.edge));
     const heading = this.cameraHeading + this.orbitYaw;
     const radius = inTunnel ? Math.min(5.9, 3.3 / Math.sin(this.orbitPitch)) : distance * Math.hypot(.9, .6);
     const rise = radius * Math.sin(this.orbitPitch);
@@ -2731,9 +2811,17 @@ export class Map3DView {
     // Fade entire small blocks intersecting the camera sightline, keeping the taxi visible.
     const line = new THREE.Line3(this.lens.position, position.clone().add(new THREE.Vector3(0, 1, 0)));
     const closest = new THREE.Vector3();
+    const sightDirection = line.delta(new THREE.Vector3());
+    const raycaster = this.overview ? null
+      : new THREE.Raycaster(line.start, sightDirection.clone().normalize(), 0, sightDirection.length());
     for (const building of this.buildings) {
       const sphere = building.geometry.boundingSphere;
       building.visible = this.overview || sphere.center.distanceTo(position) < 220 + sphere.radius;
+      if (building.name === "elevated-park") {
+        building.material = raycaster && building.visible && raycaster.intersectObject(building).length
+          ? this.fadedParkMaterial : this.parkMaterial;
+        continue;
+      }
       if (!building.visible || building.userData.cityCanopy) continue;
       line.closestPointToPoint(sphere.center, true, closest);
       const obstructs = closest.distanceTo(sphere.center) < sphere.radius + 6
@@ -2744,9 +2832,6 @@ export class Map3DView {
           ? (!this.overview && obstructs ? this.fadedLandmarkMaterial : this.landmarkMaterial)
           : (!this.overview && obstructs ? this.fadedCityMaterial : this.cityMaterial);
     }
-    const sightDirection = line.delta(new THREE.Vector3());
-    const raycaster = this.overview ? null
-      : new THREE.Raycaster(line.start, sightDirection.clone().normalize(), 0, sightDirection.length());
     this.updateRoadFades(raycaster);
     if (state) {
       this.updateCitizens(state, car, lang);

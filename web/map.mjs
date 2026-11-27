@@ -105,6 +105,7 @@ export class MapView {
     const shapes = this.shapeIndex.query(bounds);
     const overview = (this.overviewIndex?.query(bounds) ?? []).filter(shape => !this.loadedShapeIds.has(shape.id));
     for (const shape of [...overview, ...shapes]) {
+      if (this.suppressElevatedParks && shape.kind === "park" && Number(shape.layer) > 0) continue;
       c.beginPath();
       shape.points.forEach(([x, y], i) => i ? c.lineTo(x, y) : c.moveTo(x, y));
       c.closePath();

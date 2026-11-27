@@ -6,7 +6,7 @@ import unittest
 from elevation import road_profiles, road_junctions, surface_pose, slope_speed_limit
 from game import Game, RuleError, Session
 from roads import DRIVING, Edge, RoadMap, project
-from tools.prepare_elevation import building_height, road_layer_offset
+from tools.prepare_elevation import building_height, building_min_height, road_layer_offset
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -145,6 +145,18 @@ class ElevationTests(unittest.TestCase):
         self.assertEqual(building_height({"building:levels": "10"}), (32, "estimated-levels-times-3.2m"))
         for value in ("NaN", "-1", "bad", "10000"):
             self.assertEqual(building_height({"height": value}), (18, "estimated-default-18m"))
+
+    def test_building_min_height_prefers_explicit_height_to_levels(self):
+        self.assertEqual(building_min_height({"min_height": "7.5", "building:min_level": "4"}), 7.5)
+        self.assertEqual(building_min_height({"building:min_level": "3"}), 9.6)
+        self.assertEqual(building_min_height({"min_height": "bad", "building:min_level": "2"}), 6.4)
+        self.assertEqual(building_min_height({"min_height": "-1"}), 0)
+
+    def test_packaged_building_preserves_tagged_clearance(self):
+        package = json.loads((ROOT / "data/elevation.json").read_text())
+        building = next(item for item in package["buildings"] if item["osm_way"] == 25608839)
+        self.assertEqual(building["min_height"], 20)
+        self.assertGreater(building["height"], building["min_height"])
 
     def test_road_layer_offsets_apply_without_bridge_or_tunnel_tags(self):
         edge = {"layer": "1", "bridge": "no", "tunnel": "no"}

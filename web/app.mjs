@@ -1,6 +1,6 @@
 import { stepCar, RoadNetwork } from "./physics.mjs?v=steering-grip-1";
-import { MapView } from "./map.mjs?v=junction-markings-1";
-import { en, zh } from "./i18n.mjs?v=traffic-chevrons-2";
+import { MapView } from "./map.mjs?v=elevated-parks-1";
+import { en, zh } from "./i18n.mjs?v=access-warning-1";
 import { describeTraits, describeCharges } from "./citizens.mjs?v=passenger-extras-2";
 import { JunctionInput, junctionDirection, junctionShortcuts } from "./junction-input.mjs?v=junction-hud-1";
 import { SETTINGS_CATEGORIES, loadSettings, normalizeSettings, resetSettingsCategory, saveSettings } from "./settings.mjs?v=chase-distance-4";
@@ -509,6 +509,8 @@ function updateUI() {
   document.querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label", t(el.dataset.i18nAria)));
   if ($("congestion-notice").textContent !== t("congestionNotice"))
     $("congestion-notice").textContent = t("congestionNotice");
+  if ($("access-notice").textContent !== t("accessNotice"))
+    $("access-notice").textContent = t("accessNotice");
   $("language").textContent = lang === "en" ? "繁中" : "EN";
   updateSettingsControls();
   updateStartUI();
@@ -655,7 +657,7 @@ async function toggleView() {
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     if (!map3d) {
-      const { Map3DView } = await import("./map3d.mjs?v=startup-road-markings-1");
+      const { Map3DView } = await import("./map3d.mjs?v=elevated-parks-1");
       map3d = new Map3DView($("map-3d"), mapData, stops);
       $("road-notices").prepend(map3d.roadLabel);
       map3d.applyPreferences(preferences);
@@ -757,6 +759,8 @@ function frame(timestamp) {
   const trafficFactor = currentEdge && state?.traffic[currentEdge.way];
   const congested = trafficFactor > 0 && trafficFactor < 1 && !state.closed.includes(currentEdge.way);
   if ($("congestion-notice").hidden === congested) $("congestion-notice").hidden = !congested;
+  const restricted = Boolean(currentEdge?.restricted);
+  if ($("access-notice").hidden === restricted) $("access-notice").hidden = !restricted;
   $("speed").textContent = Math.round(Math.abs(car.speed) * 3.6);
   $("speed-needle").setAttribute("transform", `rotate(${-90 + Math.min(160, Math.abs(car.speed) * 3.6) / 160 * 180} 60 60)`);
   $("drive-mode").hidden = car.speed >= -0.05;

@@ -11,16 +11,19 @@ CHUNK_SIZE = 256
 class VisualMap:
     def __init__(self, document: dict):
         encoded = json.dumps(document, separators=(",", ":"), ensure_ascii=False).encode()
-        self.version = hashlib.sha256(f"visual-map-v1:{CHUNK_SIZE}:".encode() + encoded).hexdigest()[:20]
+        self.version = hashlib.sha256(f"visual-map-v2:{CHUNK_SIZE}:".encode() + encoded).hexdigest()[:20]
         metadata = {item["index"]: item for item in document.get("elevation", {}).get("buildings", [])}
         chunks: dict[str, list[dict]] = {}
         overview = []
         for index, shape in enumerate(document["backdrop"]):
             xs, ys = zip(*shape["points"])
             left, right, top, bottom = min(xs), max(xs), min(ys), max(ys)
-            overview.append({"id": index, "kind": shape["kind"], "points": [
+            overview_shape = {"id": index, "kind": shape["kind"], "points": [
                 [left, top], [right, top], [right, bottom], [left, bottom],
-            ]})
+            ]}
+            if "layer" in shape:
+                overview_shape["layer"] = shape["layer"]
+            overview.append(overview_shape)
             item = {**shape, "id": index}
             if index in metadata:
                 item["building"] = metadata[index]

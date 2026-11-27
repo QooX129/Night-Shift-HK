@@ -75,6 +75,8 @@ class Edge:
     width_source: str | None = None
     lanes: str | None = None
     surface: str = ""
+    restricted: bool = False
+    covered: str = "no"
 
 
 @dataclass(frozen=True, slots=True)

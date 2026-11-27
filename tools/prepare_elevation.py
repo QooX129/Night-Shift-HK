@@ -113,6 +113,17 @@ def building_height(tags):
     return 18, "estimated-default-18m"
 
 
+def building_min_height(tags):
+    for key, multiplier in (("min_height", 1), ("building:min_level", 3.2)):
+        try:
+            value = float(tags.get(key, "").removesuffix(" m"))
+            if math.isfinite(value) and 0 <= value <= 500:
+                return round(value * multiplier, 2)
+        except ValueError:
+            pass
+    return 0
+
+
 def road_layer_offset(edge):
     try:
         layer = int(edge["layer"])
@@ -177,17 +188,20 @@ def build(refresh=False):
         tags = e["tags"]
         use = next((tags[key] for key in ("amenity", "tourism", "shop", "office") if tags.get(key)), None)
         footprints[json.dumps(points, separators=(",", ":"))] = (
-            e["id"], *building_height(tags), tags.get("building"), use)
+            e["id"], *building_height(tags), tags.get("building"), use, building_min_height(tags))
     buildings = []
     for index, footprint in enumerate(document["backdrop"]):
         if footprint["kind"] != "building":
             continue
-        osm_id, height, quality, building_type, building_use = footprints.get(
+        osm_id, height, quality, building_type, building_use, min_height = footprints.get(
             json.dumps(footprint["points"], separators=(",", ":")),
-            (None, 18, "estimated-default-18m", None, None))
+            (None, 18, "estimated-default-18m", None, None, 0))
+        if min_height >= height:
+            raise ValueError(f"Building {osm_id} minimum height {min_height} is not below total height {height}")
         buildings.append({"index": index, "osm_way": osm_id, "height": height, "quality": quality,
                           "base": round(sample(ground, footprint["points"][0]), 3),
-                          "building_type": building_type, "building_use": building_use})
+                          "building_type": building_type, "building_use": building_use,
+                          "min_height": min_height})
     package = {
         "schema": 1, "map_version": document["version"], "built": dt.datetime.now(dt.timezone.utc).isoformat(),
         "datum": "Hong Kong Principal Datum (DTM); road/building bases estimated in same datum",

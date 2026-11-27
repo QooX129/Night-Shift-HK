@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { VisualStream, VISUAL_CHUNK_CACHE_LIMIT } from "../web/map-stream.mjs";
 import { SpatialGrid, pointBounds } from "../web/spatial-grid.mjs";
 import { Map3DView } from "../web/map3d.mjs";
+import { surfacePose } from "../web/elevation.mjs";
 import * as THREE from "../web/vendor/three/three.module.min.js";
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -252,6 +253,145 @@ test("progressive building groups preserve streamed elevation and dispose distan
   view.cityMaterial.dispose();
   view.landmarkMaterial.dispose();
   view.advertMaterial.dispose();
+});
+
+test("elevated buildings and parks leave clearance below their surfaces", () => {
+  const edge = { id: "road", a: "a", b: "b", kind: "service", layer: "0", tunnel: "building_passage" };
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data: { driving: { widths: { service: 4 } } },
+    nodes: { a: [0, 10], b: [20, 10] },
+    elevation: { buildings: [], node_heights: { a: 3, b: 7 } },
+    groundMap: { roadIndex: { query: () => [edge] } }, scene: new THREE.Scene(),
+    cityMaterial: new THREE.MeshBasicMaterial(), landmarkMaterial: new THREE.MeshBasicMaterial(),
+    advertMaterial: new THREE.MeshBasicMaterial(), parkMaterial: new THREE.MeshBasicMaterial(),
+  });
+  const points = [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]];
+  const task = view.cityGeometry([
+    { kind: "building", points, building: { base: 2, height: 18, min_height: 7 } },
+    { kind: "park", points, layer: "2" },
+  ]);
+  let next;
+  do { next = task.next(); } while (!next.done);
+  const building = next.value.find(mesh => mesh.name === "building-block");
+  const park = next.value.find(mesh => mesh.name === "elevated-park");
+  assert(building && park);
+  building.geometry.computeBoundingBox();
+  park.geometry.computeBoundingBox();
+  assert(Math.abs(building.geometry.boundingBox.min.y - 9.05) < .001);
+  assert(Math.abs(building.geometry.boundingBox.max.y - 20.05) < .001);
+  assert(park.geometry.boundingBox.min.y >= 12.199);
+  for (const mesh of next.value) mesh.geometry.dispose();
+  for (const material of [view.cityMaterial, view.landmarkMaterial, view.advertMaterial, view.parkMaterial]) material.dispose();
+});
+
+test("Olympian Park's raised slab clears its restored station roads", () => {
+  const data = JSON.parse(readFileSync(new URL("../data/district.json", import.meta.url)));
+  data.elevation = JSON.parse(readFileSync(new URL("../data/elevation.json", import.meta.url)));
+  data.driving = { widths: { service: 6, residential: 6, primary: 9, secondary: 9 } };
+  const park = data.backdrop.find(shape => shape.osm_way === 185084371);
+  const roadIndex = new SpatialGrid(data.edges, edge => pointBounds([data.nodes[edge.a], data.nodes[edge.b]]));
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data, nodes: data.nodes, elevation: data.elevation, groundMap: { roadIndex },
+    scene: new THREE.Scene(), parkMaterial: new THREE.MeshBasicMaterial(),
+  });
+  const task = view.cityGeometry([park]);
+  let next;
+  do { next = task.next(); } while (!next.done);
+  const slab = next.value.find(mesh => mesh.name === "elevated-park");
+  assert(slab);
+  slab.geometry.computeBoundingBox();
+  for (const way of [185084381, 185084385, 185084426, 185084428, 185084387, 314017119]) {
+    const edge = data.edges.find(candidate => candidate.way === way);
+    const a = data.nodes[edge.a], b = data.nodes[edge.b];
+    const height = surfacePose(view, edge, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 }, 0).height;
+    assert(slab.geometry.boundingBox.min.y - height >= 5.19, `way ${way}`);
+  }
+  slab.geometry.dispose();
+  view.parkMaterial.dispose();
+});
+
+test("ground-level building passages do not acquire a tunnel shell", () => {
+  const edges = [
+    { id: "passage", a: "a", b: "b", way: 1, kind: "service", layer: "0", tunnel: "building_passage" },
+    { id: "tunnel", a: "c", b: "d", way: 2, kind: "service", layer: "-1", tunnel: "yes" },
+  ];
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    nodes: { a: [0, 0], b: [20, 0], c: [0, 30], d: [20, 30] },
+    data: { bounds: [-10, -10, 30, 40], driving: { widths: { service: 4 } } },
+    elevation: { node_heights: { a: 0, b: 0, c: -6, d: -6 }, pilot: { triangles: [] } },
+    groundMap: { unique: edges, collisionLines: { all: () => [] } },
+    camera: { x: 0, y: 0 }, stream: null, resources: [], structures: [], asphaltTexture: new THREE.Texture(),
+    addRoadTile(tile) { this.tiles.push(tile); }, tiles: [], scene: { add() {} },
+  });
+  Object.assign(view.data, { nodes: view.nodes, edges, elevation: view.elevation });
+  const task = view.roadSurfaceGeometry();
+  while (!task.next().done) {}
+  const ranges = view.tiles.flatMap(tile => tile.roadRanges?.shell ?? []);
+  assert(ranges.some(range => range.edge.id === "tunnel"));
+  assert(!ranges.some(range => range.edge.id === "passage"));
+  for (const resource of view.resources) resource.dispose();
+  view.asphaltTexture.dispose();
+});
+
+test("mapped covered roads create an opening in an otherwise solid building", () => {
+  const edge = { id: "road", a: "a", b: "b", kind: "service", layer: "0", covered: "yes" };
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data: { driving: { widths: { service: 4 } } }, nodes: { a: [-5, 10], b: [25, 10] },
+    elevation: { buildings: [], node_heights: { a: 0, b: 0 } },
+    groundMap: { roadIndex: { query: () => [edge] } }, scene: new THREE.Scene(),
+    cityMaterial: new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),
+    landmarkMaterial: new THREE.MeshBasicMaterial(), advertMaterial: new THREE.MeshBasicMaterial(),
+  });
+  const points = [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]];
+  const task = view.cityGeometry([{ kind: "building", points, building: { base: 0, height: 18 } }]);
+  let next;
+  do { next = task.next(); } while (!next.done);
+  const building = next.value.find(mesh => mesh.name === "building-block");
+  building.updateMatrixWorld();
+  const ray = new THREE.Raycaster(new THREE.Vector3(10, 3, 10), new THREE.Vector3(0, -1, 0), 0, 4);
+  assert.equal(ray.intersectObject(building).length, 0);
+  ray.ray.direction.set(0, 1, 0);
+  assert(ray.intersectObject(building).length > 0);
+  ray.ray.direction.set(0, -1, 0);
+  ray.ray.origin.z = 4;
+  assert(ray.intersectObject(building).length > 0);
+  for (const mesh of next.value) mesh.geometry.dispose();
+  edge.covered = "no";
+  const solidTask = view.cityGeometry([{ kind: "building", points, building: { base: 0, height: 18 } }]);
+  do { next = solidTask.next(); } while (!next.done);
+  const solid = next.value.find(mesh => mesh.name === "building-block");
+  solid.updateMatrixWorld();
+  ray.ray.origin.z = 10;
+  assert(ray.intersectObject(solid).length > 0);
+  for (const mesh of next.value) mesh.geometry.dispose();
+  for (const material of [view.cityMaterial, view.landmarkMaterial, view.advertMaterial]) material.dispose();
+});
+
+test("a real building passage stays open through its mapped building", () => {
+  const data = JSON.parse(readFileSync(new URL("../data/district.json", import.meta.url)));
+  data.elevation = JSON.parse(readFileSync(new URL("../data/elevation.json", import.meta.url)));
+  data.driving = { widths: { service: 6, residential: 6, primary: 9, secondary: 9 } };
+  const metadata = data.elevation.buildings.find(item => item.osm_way === 1415166820);
+  const edge = data.edges.find(item => item.id === "198861996:0:2089428244");
+  assert.equal(edge.tunnel, "building_passage");
+  const a = data.nodes[edge.a], b = data.nodes[edge.b];
+  const point = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 };
+  const roadIndex = new SpatialGrid(data.edges, item => pointBounds([data.nodes[item.a], data.nodes[item.b]], 24));
+  const view = Object.assign(Object.create(Map3DView.prototype), {
+    data, nodes: data.nodes, elevation: data.elevation, groundMap: { roadIndex }, scene: new THREE.Scene(),
+    cityMaterial: new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }),
+    landmarkMaterial: new THREE.MeshBasicMaterial(), advertMaterial: new THREE.MeshBasicMaterial(),
+  });
+  const task = view.cityGeometry([{ ...data.backdrop[metadata.index], building: metadata }]);
+  let next;
+  do { next = task.next(); } while (!next.done);
+  const building = next.value.find(mesh => mesh.name === "building-block");
+  building.updateMatrixWorld();
+  const height = surfacePose(view, edge, point, 0).height;
+  const ray = new THREE.Raycaster(new THREE.Vector3(point.x, height + 3, point.y), new THREE.Vector3(0, -1, 0), 0, 4);
+  assert.equal(ray.intersectObject(building).length, 0);
+  for (const mesh of next.value) mesh.geometry.dispose();
+  for (const material of [view.cityMaterial, view.landmarkMaterial, view.advertMaterial]) material.dispose();
 });
 
 test("streamed roofs have curved transparent covers and pillars clear of the flyover", () => {

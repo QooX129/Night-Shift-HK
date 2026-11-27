@@ -5,13 +5,33 @@ import tempfile
 import unittest
 
 from roads import DRIVING, RoadMap, straight_join
-from tools.prepare_map import xy
+from tools.prepare_map import taxi_restricted, xy
 from tools.prepare_road_widths import GAP, MIN_WIDTH, parallel_spacing, prepare, tagged_width
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoadScaleTests(unittest.TestCase):
+    def test_taxi_restrictions_follow_specific_access_tags(self):
+        self.assertFalse(taxi_restricted({"vehicle": "no", "taxi": "yes"}))
+        self.assertTrue(taxi_restricted({"vehicle": "no", "bus": "yes"}))
+        self.assertTrue(taxi_restricted({"access": "private"}))
+        self.assertTrue(taxi_restricted({"motorcar": "yes", "taxi": "no"}))
+        self.assertFalse(taxi_restricted({"access": "yes"}))
+
+    def test_olympian_park_station_roads_are_retained_and_drivable(self):
+        roads = RoadMap(ROOT / "data/district.json")
+        expected = {185084381: False, 185084385: False, 185084426: False, 185084428: False,
+                    185084387: True, 314017119: True}
+        for way, restricted in expected.items():
+            edges = [edge for edge in roads.edges.values() if edge.way == way and not edge.wrongway]
+            self.assertTrue(edges, way)
+            for edge in edges:
+                self.assertEqual(edge.restricted, restricted)
+                point = tuple((a + b) / 2 for a, b in zip(roads.nodes[edge.a], roads.nodes[edge.b]))
+                self.assertTrue(roads.body_fits(point, roads.angle(edge), edge), edge.id)
+        self.assertTrue(any(edge.covered == "yes" for edge in roads.edges.values()))
+
     def test_straight_merge_tolerance_and_real_collider_deduplication(self):
         self.assertTrue(straight_join([(0, 0), (1, 0)], (2, .01)))
         self.assertFalse(straight_join([(0, 0), (1, 0)], (2, .04)))
@@ -74,6 +94,9 @@ class RoadScaleTests(unittest.TestCase):
             self.assertEqual(package[field], regenerated[field])
         conflicts = {frozenset(item["edges"]) for item in package["conflicts"]}
         self.assertEqual(conflicts, {
+            # The newly included private bus bridge closely parallels a separate service road.
+            frozenset(("263354425:0:1184307078", "1395944889:1:12921071424")),
+            frozenset(("263354425:1:8044314637", "1395944889:1:12921071424")),
             frozenset(("272254647:0:2772111178", "272254652:0:6702368661")),
             frozenset(("1418296168:1:13110380030", "1418296169:0:6283852188")),
         })

@@ -77,7 +77,13 @@ district-scale maps. `/api/map` still provides the complete document for tools.
 - The 3D view uses procedural asphalt, varied façades and fictional shop
   advertisements, each either wall-mounted or projecting where roadside space permits.
   Facade tints follow OSM building type/use; tagged heights determine building
-  height where available. Road lane/surface tags guide the night-style palette and
+  height where available. Building `min_height` or estimated `building:min_level`
+  leaves open space underneath. Positive-layer parks, such as Olympian Park, use
+  an estimated raised slab about 5.2 m above sampled intersecting ground
+  roads; this is not surveyed height or structural geometry. Untagged openings
+  cannot be inferred reliably. Ground-level roads tagged `covered=yes` or
+  `tunnel=building_passage` also cut approximate openings through building
+  footprints, with estimated clearance and road widths. Road lane/surface tags guide the night-style palette and
   markings. Langham Place's mapped mall and
   office tower receive a glass-toned treatment.
   Railings, traffic lights, double yellow lines and crossings are
@@ -110,6 +116,8 @@ automatically. This is runtime visual streaming, not development hot reload:
 an existing shift must be refreshed after a dataset change. The road graph,
 height grid, terrain mesh initialization and server sidewalk preparation still
 scale with the whole district; this pipeline does not stream gameplay topology.
+Only the largest connected road component is included, so isolated mapped roads
+and passages are not rendered or drivable.
 
 ## Play
 
@@ -126,6 +134,11 @@ scale with the whole district; this pipeline does not stream gameplay topology.
   the pause menu; closing it resumes the shift. Losing focus or changing browser tabs clears held controls
   without opening the pause menu. Use Pause or Esc to pause explicitly.
 - Phones show separate touch steering, brake, and accelerator controls.
+- Roads tagged as restricted to taxis remain drivable, with a warning while the
+  taxi is on them. Explicit taxi access overrides broader vehicle restrictions;
+  the offline OSM tags may be incomplete or outdated and are not legal guidance.
+  Restricted segments are excluded as passenger street-stop candidates, but routes
+  can still use them.
 - Tap the phone tab on the right edge or press **P** to slide the dispatch
   phone in or out; swipe left/right on
   touchscreens. Its badge counts available offers. Opening
@@ -730,8 +743,9 @@ survey or a guarantee for missing/mistagged topology, nonparallel intersections,
 or road furniture. Impossible spacing is recorded as a conflict and reported
 when building/loading the package, not hidden by allowing the taxi through.
 The package includes provenance, requested widths, adjustments and spacing checks;
-its map version is validated on load. The current district audit has zero
-unresolved eligible pairs. The Ferry/Ching Ping pair that previously overlapped
+its map version is validated on load. The current district audit has four
+unresolved pairs, including two between a newly included private bus bridge and
+a neighboring service road. The Ferry/Ching Ping pair that previously overlapped
 now retains at least the 0.3 m gap, and the 4.7 x 1.7 m taxi fits both roads.
 Red boundary strokes are 0.25 m wide rather than the previous 0.8 m, so the
 strokes themselves do not visually fill the minimum parallel-road gap.

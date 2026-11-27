@@ -6,7 +6,7 @@ test.use({ trace: "off" });
 test("layer-only OSM roads build an elevated deck instead of a ground road", async ({ page }) => {
   await page.goto("/");
   const tile = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const edge = { id: "layer-one", a: "a", b: "b", way: 1, kind: "primary", width: 10,
       layer: "1", bridge: "no", tunnel: "no", oneway: true };
     const tiles = [];
@@ -28,13 +28,46 @@ test("layer-only OSM roads build an elevated deck instead of a ground road", asy
   expect(tile.elevatedDeck).toBeGreaterThan(0);
 });
 
+test("Olympian Park renders above the restored station road without hiding the taxi", async ({ page }, testInfo) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    document.querySelector("#welcome").close();
+    const data = await (await fetch("/api/map")).json();
+    const stops = await (await fetch("/api/stops")).json();
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
+    const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
+    const canvas = document.createElement("canvas");
+    canvas.id = "park-check";
+    canvas.style.cssText = "position:fixed;inset:0;z-index:10000;width:100vw;height:100vh";
+    document.body.append(canvas);
+    const view = new Map3DView(canvas, data, stops);
+    const edge = view.edges.get("185084381:0:1956604432");
+    const a = data.nodes[edge.a], b = data.nodes[edge.b];
+    const car = { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2,
+      heading: Math.atan2(b[1] - a[1], b[0] - a[0]), edge: edge.id, speed: 0 };
+    for (let i = 0; i < 80 && (i === 0 || view.roadBuildTask); i++) view.render(car, null, "en", null);
+    view.render(car, null, "en", null);
+    const park = view.buildings.find(mesh => mesh.name === "elevated-park");
+    park.geometry.computeBoundingBox();
+    window.parkView = view;
+    return { built: !view.roadBuildTask, visible: park.visible,
+      clearance: park.geometry.boundingBox.min.y - surfacePose(view, edge, car, 0).height,
+      faded: park.material === view.fadedParkMaterial };
+  });
+  expect(result.built).toBe(true);
+  expect(result.visible).toBe(true);
+  expect(result.clearance).toBeGreaterThan(5.19);
+  expect(result.faded).toBe(true);
+  await page.locator("#park-check").screenshot({ path: testInfo.outputPath("olympian-park.png") });
+});
+
 test("Nathan Road stays drivable beneath the Gascoigne flyover", async ({ page }) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const roads = new RoadNetwork(data);
     const previous = roads.edges.get("436371172:1:9891388476");
     const following = roads.edges.get("987256904:0:5057028185");
@@ -89,7 +122,7 @@ test("Central Kowloon Bypass roof remains below the overlapping ground road", as
     const data = await (await fetch("/api/map")).json();
     const { RoadNetwork, project } = await import("/physics.mjs?v=tunnel-clearance-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const roads = new RoadNetwork(data);
     const tunnel = roads.edges.get("504423499:2:13108582004");
     const ground = roads.edges.get("1389172580:0:12859244962");
@@ -119,8 +152,8 @@ test("Central Kowloon Bypass roof remains below the overlapping ground road", as
   expect(result.count).toBeGreaterThan(0);
   expect(result.minCover).toBeGreaterThanOrEqual(1);
   const serverPoses = [
-    [7.145850506647573, .014875738329752624],
-    [11.04483790248613, .013752217819753951],
+    [7.606316148111775, .022512461205141405],
+    [10.895408916826604, .017774919822485236],
     [12.426778154142125, -.003978422500163229],
     [12.197212, 0],
     [13.949974521326423, .10386694043327568],
@@ -168,7 +201,7 @@ test("elevated driving keeps bounded geometry work while preserving the shift", 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const { RoadNetwork } = await import("/physics.mjs?v=steering-grip-1");
     window.elevationTiming = {};
     for (const [prototype, name] of [[Map3DView.prototype, "render"], [Map3DView.prototype, "ribbonGeometry"],
@@ -205,7 +238,7 @@ test("offline terrain, source bridge, taxi poses and road-surface guides remain 
   await page.goto("/");
   await expect(page.locator("#start")).toBeEnabled();
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const { surfacePose } = await import("/elevation.mjs?v=tunnel-clearance-1");
     const data = await (await fetch("/api/map")).json();
     const stops = await (await fetch("/api/stops")).json();

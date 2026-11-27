@@ -53,6 +53,13 @@ def xy(lat: float, lon: float) -> list[float]:
     return [round((lon - LON) * SCALE_X, 2), round((LAT - lat) * SCALE_Y, 2)]
 
 
+def taxi_restricted(tags: dict) -> bool:
+    for key in ("taxi", "motorcar", "motor_vehicle", "vehicle", "access"):
+        if tags.get(key):
+            return tags[key] not in {"yes", "designated", "permissive"}
+    return False
+
+
 def download(destination: Path) -> None:
     payload = urllib.parse.urlencode({"data": QUERY}).encode()
     failures = []
@@ -98,18 +105,22 @@ def build(raw_path: Path, output: Path) -> None:
         if tags.get("building") == "roof":
             backdrop.append({"kind": "roof", "osm_way": way["id"], "points": [points[n] for n in ids]})
         elif "building" in tags or tags.get("leisure") == "park":
-            backdrop.append({
+            shape = {
                 "kind": "park" if tags.get("leisure") == "park" else "building",
                 "points": [points[n] for n in ids],
-            })
+            }
+            if shape["kind"] == "park" and tags.get("layer", "0") not in {"0", ""}:
+                shape["layer"] = tags["layer"]
+                shape["osm_way"] = way["id"]
+            backdrop.append(shape)
         if tags.get("highway") not in ROAD_TYPES:
             continue
         if tags.get("area") == "yes":
             continue
-        access = tags.get("motorcar", tags.get("motor_vehicle", tags.get("vehicle", tags.get("access", "yes"))))
-        if access in {"no", "private"}:
-            continue
-        if tags.get("service") in {"parking_aisle", "driveway"}:
+        restricted = taxi_restricted(tags)
+        if (tags.get("service") in {"parking_aisle", "driveway"} and not restricted
+                and tags.get("taxi") != "yes" and tags.get("covered") != "yes"
+                and tags.get("tunnel") != "building_passage"):
             continue
         oneway = tags.get("oneway", "yes" if tags.get("junction") == "roundabout"
                           or tags["highway"] == "motorway" else "no")
@@ -131,6 +142,8 @@ def build(raw_path: Path, output: Path) -> None:
                     "lanes": tags.get("lanes"), "surface": tags.get("surface", ""),
                     "layer": tags.get("layer", "0"),
                     "bridge": tags.get("bridge", "no"), "tunnel": tags.get("tunnel", "no"),
+                    "restricted": restricted,
+                    "covered": tags.get("covered", "no"),
                 })
                 used_nodes.update((start, end))
                 way_ids.add(way["id"])
@@ -185,7 +198,7 @@ def build(raw_path: Path, output: Path) -> None:
     nodes = {k: v for k, v in nodes.items() if k in largest}
     edges = [e for e in edges if e["a"] in largest and e["b"] in largest]
     result = {
-        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-6").hexdigest()[:12],
+        "version": hashlib.sha256(raw_path.read_bytes() + b"|district-schema-8").hexdigest()[:12],
         "source": "OpenStreetMap contributors", "license": "ODbL-1.0",
         "downloaded": dt.datetime.now(dt.timezone.utc).isoformat(),
         "origin": [LAT, LON], "bounds": top_left + bottom_right,

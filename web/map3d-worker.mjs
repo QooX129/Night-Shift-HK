@@ -1,5 +1,5 @@
-import { Map3DView } from "./map3d.mjs?v=startup-road-markings-1";
-import { MapView } from "./map.mjs?v=junction-markings-1";
+import { Map3DView } from "./map3d.mjs?v=elevated-parks-1";
+import { MapView } from "./map.mjs?v=elevated-parks-1";
 
 let view;
 let revision = 0;
@@ -13,6 +13,7 @@ self.onmessage = ({ data }) => {
     view.edges = new Map(data.map.edges.map(edge => [edge.id, edge]));
     view.groundMap = Object.create(MapView.prototype);
     view.groundMap.data = data.map;
+    view.groundMap.suppressElevatedParks = true;
     view.groundMap.unique = data.edges;
     view.groundMap.drawCollisionLines = () => {};
     view.detailSize = data.size;

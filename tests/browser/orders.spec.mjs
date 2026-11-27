@@ -6,7 +6,7 @@ test("alighting passenger and open door project to the taxi left in the 3D chase
   await page.goto("/");
   const results = await page.evaluate(async () => {
     const [{ Map3DView }, THREE] = await Promise.all([
-      import("/map3d.mjs?v=startup-road-markings-1"), import("/vendor/three/three.module.min.js"),
+      import("/map3d.mjs?v=elevated-parks-1"), import("/vendor/three/three.module.min.js"),
     ]);
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } },
@@ -49,7 +49,7 @@ test("alighting passenger and open door project to the taxi left in the 3D chase
 test("citizens and passengers stand on their road level after elevation is enabled", async ({ page }) => {
   await page.goto("/");
   const heights = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const ground = { id: "ground", a: "a", b: "b" };
     const bridge = { id: "bridge", a: "c", b: "d" };
@@ -97,7 +97,7 @@ test("citizens and passengers stand on their road level after elevation is enabl
 test("3D accessories persist through boarding and pooled citizens reset their seated pose", async ({ page }, testInfo) => {
   await page.goto("/");
   const result = await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const THREE = await import("/vendor/three/three.module.min.js");
     const view = Object.assign(Object.create(Map3DView.prototype), {
       data: { driving: { taxi_width: 1.7 } },
@@ -848,7 +848,7 @@ test("randomized order points drive the trip distance and 3D marker", async ({ p
   fixture.state.offers[0].pickup_point = [75, 0];
   fixture.state.destination_point = [230, 0];
   await page.evaluate(async () => {
-    const { Map3DView } = await import("/map3d.mjs?v=startup-road-markings-1");
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
     const render = Map3DView.prototype.render;
     Map3DView.prototype.render = function (...args) {
       window.randomPointView = this;
@@ -1006,6 +1006,31 @@ test("congestion reminder follows the current road without hiding other warnings
   await expect(reminder).toBeHidden();
 });
 
+test("restricted access reminder follows the current road and preserves other notices", async ({ page }) => {
+  const fixture = await dispatchFixture(page);
+  const reminder = page.locator("#access-notice");
+  await expect(reminder).toBeHidden();
+  await page.evaluate(async () => {
+    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
+    const render = MapView.prototype.render;
+    MapView.prototype.render = function (...args) {
+      this.edges.get("road").restricted = Boolean(window.restrictedRoad);
+      return render.apply(this, args);
+    };
+    window.restrictedRoad = true;
+  });
+  fixture.state.warning = "wrongway";
+  fixture.state.traffic = { 1: .48 };
+  await expect(reminder).toHaveText("Restricted access · Permission may be required");
+  await expect(reminder).toBeVisible();
+  await expect(page.locator("#congestion-notice")).toBeVisible();
+  await expect(page.locator("#notice")).toContainText("Wrong-way");
+  await page.locator("#language").click();
+  await expect(reminder).toHaveText("此路段限制通行，可能需要許可。");
+  await page.evaluate(() => { window.restrictedRoad = false; });
+  await expect(reminder).toBeHidden();
+});
+
 test("only normal empty-taxi 3D view reports visible walkers for hailing", async ({ page }) => {
   const fixture = await dispatchFixture(page);
   fixture.state.citizens = [{
@@ -1025,7 +1050,7 @@ test("only normal empty-taxi 3D view reports visible walkers for hailing", async
 test("passenger animation never rewinds while movement acknowledgements are delayed", async ({ page }) => {
   const fixture = await dispatchFixture(page, 350);
   await page.evaluate(async () => {
-    const { MapView } = await import("/map.mjs?v=junction-markings-1");
+    const { MapView } = await import("/map.mjs?v=elevated-parks-1");
     const render = MapView.prototype.render;
     window.passengerTimes = [];
     MapView.prototype.render = function (car, state, ...rest) {
