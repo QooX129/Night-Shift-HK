@@ -1,5 +1,10 @@
 # Night Shift HK: Project Process and Progress
 
+> Development history: the results and design decisions below are dated snapshots,
+> not a current test report or a complete description of the game. Later changes
+> include 3D rendering, street hails and revised junction controls. See
+> [README.md](README.md) for current behavior and validation commands.
+
 ## Current status
 
 The local prototype is implemented and its recorded local test suites pass.
@@ -304,7 +309,7 @@ After installing the development dependencies as described in
 [README.md](README.md):
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p "test_*.py" -v
 npm test
 npm run test:browser
 ```
