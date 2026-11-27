@@ -7,6 +7,7 @@ export default defineConfig({
   expect: { timeout: 60000 },
   use: {
     baseURL: "http://127.0.0.1:8765",
+    reducedMotion: "reduce",
     trace: { mode: "retain-on-failure", screenshots: false },
     // Headless Chromium otherwise uses SwiftShader instead of the Windows GPU.
     launchOptions: { args: process.platform === "win32" ? ["--use-angle=d3d11"] : [] },

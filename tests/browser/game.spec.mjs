@@ -1,5 +1,28 @@
 import { test, expect } from "@playwright/test";
 
+test("the opening story can be skipped to start the shift", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#intro-dialog")).toBeVisible();
+  await expect(page.locator("#intro-frame").first()).toHaveClass(/active/);
+  await expect(page.locator("#intro-caption")).toHaveText("One night, he tried his luck at blackjack.");
+  await expect(page.locator("#intro-frame").nth(1)).toHaveClass(/active/, { timeout: 3000 });
+  await expect(page.locator("#intro-caption")).toHaveText("The cards turned. Every last dollar was gone.");
+  await page.locator("#intro-skip").click();
+  await expect(page.locator("#intro-dialog")).not.toBeVisible();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+});
+
+test("reduced motion starts the shift without the story animation", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.locator("#start").click();
+  await expect(page.locator("#intro-dialog")).not.toBeVisible();
+  await expect(page.locator("#welcome")).not.toBeVisible();
+});
+
 test("junction direction keys preview while held, cancel on blur, and select on release", async ({ page }) => {
   const selections = [];
   page.on("request", request => {

@@ -36,7 +36,8 @@ const controls = { gas: false, brake: false, handbrake: false, handbrakePressed:
 const t = key => (lang === "zh" ? zh : en)[key] || key;
 const moneyText = value => Number.isInteger(value) ? String(value) : value.toFixed(1);
 const meterSegments = ["abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgecd", "abc", "abcdefg", "abfgcd"];
-const dialogs = ["welcome", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
+const dialogs = ["welcome", "intro-dialog", "junction", "pause-dialog", "garage-dialog", "error-dialog", "settings-dialog"];
+let introTimer = null;
 
 function resetControls() {
   car.slip = 0;
@@ -195,6 +196,34 @@ async function resume() {
     updateSettingsMessage();
     paused = false; lastFrame = performance.now(); stepBank = 0; previousCar = null; resetControls();
   });
+}
+function finishIntro() {
+  if (introTimer !== null) clearTimeout(introTimer);
+  introTimer = null;
+  if ($("intro-dialog").open) $("intro-dialog").close();
+  void resume();
+}
+function showIntroFrame(index) {
+  const frames = $("intro-dialog").querySelectorAll(".intro-frame");
+  frames.forEach((frame, frameIndex) => {
+    const active = frameIndex === index;
+    frame.classList.toggle("active", active);
+    frame.setAttribute("aria-hidden", String(!active));
+  });
+  $("intro-caption").textContent = t(`storyCaption${index + 1}`);
+  introTimer = setTimeout(() => {
+    if (index + 1 < frames.length) showIntroFrame(index + 1);
+    else finishIntro();
+  }, 1700);
+}
+function startShift() {
+  if (preferences.reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    void resume();
+    return;
+  }
+  $("welcome").close();
+  $("intro-dialog").showModal();
+  showIntroFrame(0);
 }
 function localMatch() {
   if (!state || !view) return null;
@@ -855,7 +884,8 @@ $("map-3d").addEventListener("renderererror", event => {
   viewError = { key: "failed3d", detail: event.detail };
   updateViewUI();
 });
-$("start").addEventListener("click", resume);
+$("start").addEventListener("click", startShift);
+$("intro-skip").addEventListener("click", finishIntro);
 $("resume").addEventListener("click", resume);
 $("garage-close").addEventListener("click", resume);
 $("pause").addEventListener("click", () => { if (!paused) pauseTo("pause-dialog"); else if ($("pause-dialog").open) resume(); });
@@ -934,7 +964,8 @@ $("retry").addEventListener("click", async () => {
 });
 for (const id of dialogs) $(id).addEventListener("cancel", event => {
   event.preventDefault();
-  if (id === "pause-dialog" || id === "garage-dialog") resume();
+  if (id === "intro-dialog") finishIntro();
+  else if (id === "pause-dialog" || id === "garage-dialog") resume();
 });
 const bindings = {
   w: "gas", arrowup: "gas", s: "brake", arrowdown: "brake",

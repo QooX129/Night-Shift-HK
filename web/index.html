@@ -162,6 +162,18 @@
     <button id="start" class="primary" disabled data-i18n="loading">Loading roads…</button>
     <button id="welcome-settings" class="secondary settings-entry" data-i18n="settings">Settings</button>
   </dialog>
+  <dialog id="intro-dialog" class="intro-dialog" data-i18n-aria="introStory" aria-label="Shift story">
+    <div class="intro-stage">
+      <img class="intro-frame active" src="/assets/intro-01.jpg" alt="" aria-hidden="false">
+      <img class="intro-frame" src="/assets/intro-02.jpg" alt="" aria-hidden="true">
+      <img class="intro-frame" src="/assets/intro-03.jpg" alt="" aria-hidden="true">
+      <img class="intro-frame" src="/assets/intro-04.jpg" alt="" aria-hidden="true">
+      <img class="intro-frame" src="/assets/intro-05.jpg" alt="" aria-hidden="true">
+      <img class="intro-frame" src="/assets/intro-06.jpg" alt="" aria-hidden="true">
+      <div id="intro-caption" class="intro-caption" role="status" aria-live="polite"></div>
+      <button id="intro-skip" class="intro-skip" data-i18n="skipIntro">Skip story</button>
+    </div>
+  </dialog>
   <dialog id="junction" aria-labelledby="junction-title">
     <div class="dialog-eyebrow" data-i18n="junction">JUNCTION CHOICE · TIME PAUSED</div>
     <h2 id="junction-title" data-i18n="choose">Which road, driver?</h2>
