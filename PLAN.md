@@ -1,5 +1,11 @@
 # Night Shift HK: Project Plan
 
+> Historical plan: the sections below record the original scope and decisions,
+> not a specification of the current game. For current features, controls,
+> architecture and limitations, see [README.md](README.md). In particular,
+> the game now has 3D, street hails, a rectangular taxi footprint and an optional
+> junction selector, and preferences are saved in the browser.
+
 ## Goal
 
 Create a single-player browser game about driving a taxi in Hong Kong, using
