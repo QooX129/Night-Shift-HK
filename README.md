@@ -47,8 +47,9 @@ WebGL 2; if it fails, the game reports the error and falls back to 2D.
 | Esc | Close the map or toggle pause |
 
 Touch steering and pedals are available on phones. In 3D, hold the right mouse
-button and drag to orbit. Use Settings to switch between 2D and 3D, and the map
-tools to open the map or zoom.
+button and drag to orbit from the current view; release to return smoothly to
+the chase view. Use Settings to switch between 2D and 3D, and the map tools to
+open the map or zoom.
 
 - Accept a phone offer and stop at its green pickup marker; the passenger
   boards automatically. Street hails appear in normal 3D driving view; stop
@@ -122,6 +123,10 @@ individual derived packages from the existing source. UTF-8 mode makes source
 text decoding consistent on Windows. Review dataset versions, provenance and
 attribution after refreshing; restart the server and reload the page. A fresh
 OSM download may differ from the checked-in supplemented extract.
+
+The road-width audit records connected junction and tagged lane-transition
+overlaps separately from unresolved close-road pairs. The widths and junction
+geometry remain estimates; other unresolved pairs still produce a warning.
 
 ## Tests
 

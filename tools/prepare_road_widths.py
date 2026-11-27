@@ -79,9 +79,12 @@ def prepare(document: dict, source: dict) -> dict:
         key = (edge["way"], *sorted((edge["a"], edge["b"])))
         physical.setdefault(key, edge)
     edges = list(physical.values())
-    ways = {}
+    ways, connectors = {}, {}
     for edge in edges:
         ways.setdefault(edge["way"], set()).update((edge["a"], edge["b"]))
+        if math.dist(nodes[edge["a"]], nodes[edge["b"]]) <= 15:
+            for node, other in ((edge["a"], edge["b"]), (edge["b"], edge["a"])):
+                connectors.setdefault(node, []).append((other, edge))
     widths, origins, warnings = [], [], []
     for edge in edges:
         tags = tags_by_way[edge["way"]]
@@ -106,13 +109,38 @@ def prepare(document: dict, source: dict) -> dict:
         if spacing is not None and spacing < (widths[i] + widths[j]) / 2 + GAP:
             constraints.append((i, j, spacing))
     requested = widths[:]
-    conflicts = []
+    conflicts, junction_overlaps, checked_constraints = [], [], []
     for i, j, spacing in constraints:
         budget = 2 * (spacing - GAP)
         if budget < MIN_WIDTH * 2:
+            first, second = edges[i], edges[j]
+            first_tags, second_tags = tags_by_way[first["way"]], tags_by_way[second["way"]]
+            transition = (
+                ways[first["way"]] & ways[second["way"]]
+                and first_tags.get("placement") == second_tags.get("placement") == "transition"
+                and any(first_tags.get(f"separation:{side}") == "no"
+                        and second_tags.get(f"separation:{opposite}") == "no"
+                        for side, opposite in (("left", "right"), ("right", "left")))
+            )
+            local_junction = any(
+                other in ways[second["way"]]
+                and all(connector.get(tag, default) == first.get(tag, default)
+                        for tag, default in (("layer", "0"), ("bridge", "no"), ("tunnel", "no")))
+                and all(min(math.dist(nodes[endpoint], nodes[node]), math.dist(nodes[endpoint], nodes[other])) <= 15
+                        for endpoint in (first["a"], first["b"], second["a"], second["b"]))
+                for node in ways[first["way"]] for other, connector in connectors.get(node, ())
+            )
+            if transition or local_junction:
+                junction_overlaps.append({
+                    "edges": [first["id"], second["id"]], "spacing_m": round(spacing, 4),
+                    "reason": "Tagged lane transition" if transition else "Connected junction",
+                })
+                continue
+            checked_constraints.append((i, j, spacing))
             conflicts.append({"edges": [edges[i]["id"], edges[j]["id"]],
                               "spacing_m": round(spacing, 4), "reason": "Insufficient separation for two drivable carriageways"})
             continue
+        checked_constraints.append((i, j, spacing))
         excess = widths[i] + widths[j] - budget
         if excess <= 0:
             continue
@@ -131,16 +159,16 @@ def prepare(document: dict, source: dict) -> dict:
         "map_version": document["version"], "units": "metres", "minimum_width_m": MIN_WIDTH,
         "source": "OpenStreetMap contributors", "license": "ODbL-1.0",
         "parallel_gap_m": GAP, "lane_width_estimate_m": 3,
-        "values": values, "conflicts": conflicts,
+        "values": values, "conflicts": conflicts, "junction_overlaps": junction_overlaps,
         "spacing_checks": [{
             "first": ":".join(map(str, (edges[i]["way"], *sorted((edges[i]["a"], edges[i]["b"]))))),
             "second": ":".join(map(str, (edges[j]["way"], *sorted((edges[j]["a"], edges[j]["b"]))))),
             "spacing_m": spacing,
-        } for i, j, spacing in constraints],
+        } for i, j, spacing in checked_constraints],
         "warnings": list({json.dumps(item, sort_keys=True): item for item in warnings}.values()),
-        "audit": {"physical_segments": len(edges), "parallel_constraints": len(constraints),
+        "audit": {"physical_segments": len(edges), "parallel_constraints": len(checked_constraints),
                   "spacing_constrained": sum(item["spacing_constrained"] for item in values.values()),
-                  "unresolved_pairs": len(conflicts)},
+                  "unresolved_pairs": len(conflicts), "junction_overlaps": len(junction_overlaps)},
     }
 
 

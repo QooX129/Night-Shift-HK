@@ -1,11 +1,14 @@
 import math
 import unittest
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
 from elevation import surface_pose
 from roads import DRIVING, Edge, RoadMap, project
-from tunnel_clearance import _ground, _interval, _portal_approaches, _underground, correct_tunnel_clearance
+from tunnel_clearance import (
+    _ground, _interval, _owners_within_cap, _portal_approaches, _underground, correct_tunnel_clearance,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +19,31 @@ def edge(key, a, b, way, length, *, tunnel="no", layer="0", width=10):
 
 
 class TunnelClearanceTests(unittest.TestCase):
+    def test_junction_owner_bounds_cover_only_overlap_and_include_parents(self):
+        nodes = {"a": (3, 1), "b": (7, 1), "c": (0, 0), "d": (10, 0)}
+        heights = {"a": 0, "b": 0, "c": 10, "d": 10}
+        tunnel = edge("t", "a", "b", 1, 4, tunnel="yes", layer="-1")
+        owner = {"id": "o", "a": "c", "b": "d", "profile": [0, 0]}
+        pieces = {"o": [[0, 10], [.3, 0], [.7, 0], [1, 10]]}
+        junctions = {"t": [owner]}
+        self.assertTrue(_owners_within_cap(nodes, heights, tunnel, 1, 0, 1, 0, junctions, pieces))
+        self.assertFalse(_owners_within_cap(nodes, heights, tunnel, 1, 0, 1, -1, junctions, pieces))
+        pieces["o"].insert(2, [.5, 1])
+        self.assertFalse(_owners_within_cap(nodes, heights, tunnel, 1, 0, 1, 0, junctions, pieces))
+        pieces["o"].pop(2)
+        parent = {"id": "parent", "a": "c", "b": "d", "profile": [0, 0]}
+        junctions["o"] = [parent]
+        self.assertFalse(_owners_within_cap(nodes, heights, tunnel, 1, 0, 1, 0, junctions, pieces))
+
+    def test_unsafe_junction_blending_still_warns(self):
+        nodes = {"a": (0, 0), "b": (100, 0), "c": (100, 20), "d": (20, -3), "e": (20, -1)}
+        heights = {node: 10 for node in nodes}
+        tunnel = replace(edge("t", "a", "b", 1, 100, tunnel="yes", layer="-1", width=2), kind="tertiary")
+        main = edge("m", "a", "c", 2, 102, tunnel="yes", layer="-1", width=2)
+        ground = edge("g", "d", "e", 3, 2, width=2)
+        with self.assertWarnsRegex(UserWarning, "Tunnel clearance may be overridden.*t"):
+            correct_tunnel_clearance(nodes, heights, [tunnel, main, ground], DRIVING["widths"])
+
     def test_oblique_overlap_reverse_profile_and_smooth_ramps(self):
         nodes = {"a": (0, 0), "b": (200, 0), "c": (75, -30), "d": (125, 30)}
         heights = {"a": 5, "b": 5, "c": 8, "d": 12}
@@ -61,7 +89,10 @@ class TunnelClearanceTests(unittest.TestCase):
                                                     profiles, junctions, pieces)["height"], 5)
 
     def test_district_footprints_and_central_kowloon_bypass(self):
-        roads = RoadMap(ROOT / "data/district.json")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            roads = RoadMap(ROOT / "data/district.json")
+        self.assertFalse(any("Tunnel clearance may be overridden" in str(w.message) for w in caught))
         physical = {}
         for e in roads.edges.values():
             physical.setdefault((e.way, *sorted((e.a, e.b))), e)

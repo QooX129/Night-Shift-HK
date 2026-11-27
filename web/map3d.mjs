@@ -105,6 +105,12 @@ export class Map3DView {
     canvas.addEventListener("pointerdown", event => {
       if (event.button !== 2 || event.pointerType !== "mouse") return;
       event.preventDefault();
+      if (this.chaseCameraSmoothed) {
+        const offset = this.lens.position.clone().sub(this.taxi.position);
+        this.orbitYaw = THREE.MathUtils.euclideanModulo(
+          Math.atan2(-offset.z, -offset.x) - this.cameraHeading + Math.PI, Math.PI * 2) - Math.PI;
+        this.orbitPitch = Math.atan2(offset.y, Math.hypot(offset.x, offset.z));
+      }
       this.cameraDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
       canvas.setPointerCapture(event.pointerId);
     }, listen);
@@ -117,7 +123,7 @@ export class Map3DView {
       const drag = this.cameraDrag;
       if (drag?.id !== event.pointerId) return;
       if (!(event.buttons & 2)) { endDrag(); return; }
-      this.orbitYaw = THREE.MathUtils.euclideanModulo(this.orbitYaw - (event.clientX - drag.x) * .007 + Math.PI,
+      this.orbitYaw = THREE.MathUtils.euclideanModulo(this.orbitYaw + (event.clientX - drag.x) * .007 + Math.PI,
         Math.PI * 2) - Math.PI;
       this.orbitPitch = THREE.MathUtils.clamp(this.orbitPitch + (event.clientY - drag.y) * .006,
         MIN_CHASE_PITCH, MAX_CHASE_PITCH);
@@ -2777,7 +2783,8 @@ export class Map3DView {
     const positionEase = 1 - Math.exp(-(8 - this.cameraSmoothness * 5) * dt);
     const targetEase = 1 - Math.exp(-(6.5 - this.cameraSmoothness * 4.17) * dt);
     this.lookAt ??= target.clone();
-    const smoothCamera = this.cameraReady && !this.cameraDrag && !inTunnel && !this.reducedMotion && this.cameraSmoothness > 0;
+    const smoothCamera = this.cameraReady && !inTunnel && !this.reducedMotion && this.cameraSmoothness > 0;
+    this.chaseCameraSmoothed = smoothCamera && !this.overview;
     this.lens.position.lerp(eye, smoothCamera ? positionEase : 1);
     this.lookAt.lerp(target, this.overview && smoothCamera ? targetEase : 1);
     if (!this.overview && !inTunnel) {

@@ -85,16 +85,54 @@ class RoadScaleTests(unittest.TestCase):
         nodes["c"][1] = nodes["d"][1] = 2
         self.assertEqual(len(prepare(document, source)["conflicts"]), 1)
 
+    def test_close_pairs_at_short_connectors_are_recorded_as_junction_overlaps(self):
+        nodes = {"a": [0, 0], "b": [10, 0], "c": [0, 2], "d": [10, 2]}
+        document = {"version": "fixture", "nodes": nodes, "edges": [
+            dict(id="one", a="a", b="b", way=1),
+            dict(id="two", a="c", b="d", way=2),
+            dict(id="connector", a="a", b="c", way=3),
+        ]}
+        source = {"elements": [
+            {"type": "way", "id": way, "tags": {"highway": "service"}} for way in (1, 2, 3)
+        ]}
+        result = prepare(document, source)
+        self.assertEqual(result["conflicts"], [])
+        self.assertEqual([item["edges"] for item in result["junction_overlaps"]], [["one", "two"]])
+        nodes["b"][0] = nodes["d"][0] = 100
+        self.assertEqual(len(prepare(document, source)["conflicts"]), 1)
+        nodes["b"][0] = nodes["d"][0] = 10
+        document["edges"][2]["layer"] = "1"
+        self.assertEqual(len(prepare(document, source)["conflicts"]), 1)
+
+    def test_tagged_lane_transition_is_recorded_as_junction_overlap(self):
+        nodes = {"a": [0, 0], "b": [20, 0], "c": [50, 0], "d": [20, 1], "e": [50, 1]}
+        document = {"version": "fixture", "nodes": nodes, "edges": [
+            dict(id="one", a="b", b="c", way=1),
+            dict(id="two", a="d", b="e", way=2),
+        ]}
+        source = {"elements": [
+            {"type": "way", "id": 1, "tags": {"highway": "service", "placement": "transition", "separation:right": "no"}},
+            {"type": "way", "id": 2, "tags": {"highway": "service", "placement": "transition", "separation:left": "no"}},
+        ]}
+        self.assertEqual(len(prepare(document, source)["conflicts"]), 1)
+        document["edges"].extend([dict(id="first-approach", a="a", b="b", way=1),
+                                  dict(id="second-approach", a="a", b="d", way=2)])
+        result = prepare(document, source)
+        self.assertEqual(result["conflicts"], [])
+        self.assertEqual([item["edges"] for item in result["junction_overlaps"]], [["one", "two"]])
+        source["elements"][1]["tags"].pop("separation:left")
+        self.assertEqual(len(prepare(document, source)["conflicts"]), 1)
+
     def test_packaged_widths_are_reproducible_and_every_constraint_has_clearance(self):
         document = json.loads((ROOT / "data/district.json").read_text())
         source = json.loads((ROOT / "data/source.osm.json").read_text())
         package = json.loads((ROOT / "data/road-widths.json").read_text())
         regenerated = prepare(document, source)
-        for field in ("values", "spacing_checks", "audit", "conflicts", "warnings"):
+        for field in ("values", "spacing_checks", "audit", "conflicts", "junction_overlaps", "warnings"):
             self.assertEqual(package[field], regenerated[field])
         conflicts = {frozenset(item["edges"]) for item in package["conflicts"]}
-        self.assertEqual(conflicts, {
-            # The newly included private bus bridge closely parallels a separate service road.
+        self.assertEqual(conflicts, set())
+        self.assertEqual({frozenset(item["edges"]) for item in package["junction_overlaps"]}, {
             frozenset(("263354425:0:1184307078", "1395944889:1:12921071424")),
             frozenset(("263354425:1:8044314637", "1395944889:1:12921071424")),
             frozenset(("272254647:0:2772111178", "272254652:0:6702368661")),

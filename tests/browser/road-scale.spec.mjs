@@ -685,7 +685,8 @@ test("real Ferry and Ching Ping widths agree across renderer, browser and server
   expect(result.gap).toBeGreaterThanOrEqual(.3);
   expect(result.widths[0]).toBeLessThanOrEqual(3);
   expect(result.widths[1]).toBeLessThanOrEqual(6);
-  expect(result.audit.unresolved_pairs).toBe(2);
+  expect(result.audit.unresolved_pairs).toBe(0);
+  expect(result.audit.junction_overlaps).toBe(4);
   expect(result.taxi[0]).toBeGreaterThan(result.taxi[1]);
   expect(result.taxi).toEqual([2.61, 1.35]);
   expect(result.renderedTaxi).toEqual(result.taxi);

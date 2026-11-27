@@ -4,7 +4,7 @@ import heapq
 import math
 import warnings
 
-from elevation import road_junctions, road_profiles
+from elevation import _surface, road_junctions, road_profiles
 
 
 COVERED_CLEARANCE = 6.05
@@ -98,6 +98,35 @@ def _portal_approaches(tunnel, ground):
         for edge_id in nearby(node, tunnel_incident):
             result[edge_id].update(approaches)
     return result
+
+
+def _owners_within_cap(nodes, heights, edge, radius, low, high, cap, junctions, pieces):
+    # The overlap lies within this rectangle; monotone profile pieces peak at its projected endpoints or knots.
+    a, b = nodes[edge.a], nodes[edge.b]
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    length = math.hypot(dx, dy)
+    corners = [(a[0] + dx * t - dy * side / length, a[1] + dy * t + dx * side / length)
+               for t in (low, high) for side in (-radius, radius)]
+
+    def safe(owner, seen):
+        if owner["id"] in seen:
+            raise ValueError(f"Cyclic road junction owners at {owner['id']}")
+        seen = seen | {owner["id"]}
+        c, d = nodes[owner["a"]], nodes[owner["b"]]
+        ux, uy = d[0] - c[0], d[1] - c[1]
+        squared = ux * ux + uy * uy
+        fractions = [max(0, min(1, ((x - c[0]) * ux + (y - c[1]) * uy) / squared)) for x, y in corners]
+        start, end = min(fractions), max(fractions)
+        knots = [t for t, _ in pieces.get(owner["id"], ()) if start < t < end]
+        for t in (start, end, *knots):
+            point = (c[0] + t * ux, c[1] + t * uy)
+            height, _, _ = _surface(nodes, heights, owner["a"], owner["b"], point,
+                                    owner["profile"], pieces.get(owner["id"]))
+            if height > cap + 1e-9:
+                return False
+        return all(safe(parent, seen) for parent in junctions.get(owner["id"], ()))
+
+    return all(safe(owner, {edge.id}) for owner in junctions.get(edge.id, ()))
 
 
 def correct_tunnel_clearance(nodes, heights, edges, widths):
@@ -214,7 +243,12 @@ def correct_tunnel_clearance(nodes, heights, edges, widths):
             points = pieces[original.id]
             pieces[edge.id] = points if edge.a == original.a else [[1 - t, z] for t, z in reversed(points)]
     junctions = road_junctions(nodes, edges, profiles, widths)
-    unresolved = [edge.id for edge in tunnel if edge.id in pieces and junctions.get(edge.id)]
+    unresolved = [
+        edge.id for edge in tunnel if edge.id in pieces and any(
+            not _owners_within_cap(nodes, heights, edge, radius(edge), low, high,
+                                   lower_bound(surface, set()) - COVERED_CLEARANCE, junctions, pieces)
+            for low, high, surface in constraints.get(edge.id, ()))
+    ]
     if unresolved:
         warnings.warn(f"Tunnel clearance may be overridden by junction blending: {', '.join(unresolved)}", stacklevel=2)
     def adjusted_owner(edge, seen):

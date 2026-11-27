@@ -319,14 +319,88 @@ test("right drag orbits around the taxi, clamps the low angle and eases back on 
   await page.mouse.down({ button: "right" });
   await page.mouse.move(point.x + width * .2, height * .1, { steps: 4 });
   await expect.poll(() => page.evaluate(() => window.chasePose.drag)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.chasePose.angle)).toBeLessThan(.35);
   const orbit = await page.evaluate(() => window.chasePose);
-  expect(Math.abs(orbit.yaw)).toBeGreaterThan(.5);
+  expect(orbit.yaw).toBeGreaterThan(.5);
   expect(orbit.angle).toBeGreaterThan(.31);
-  expect(orbit.angle).toBeLessThan(.35);
   expect(orbit.targetOffset).toBeLessThan(.001);
   await page.mouse.up({ button: "right" });
   await expect.poll(() => page.evaluate(() => Math.abs(window.chasePose.yaw))).toBeLessThan(.03);
   await expect.poll(() => page.evaluate(() => window.chasePose.targetOffset)).toBeLessThan(.001);
+});
+
+test("right-click preserves the visible chase angle and returns smoothly", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Mouse-only control");
+  await page.goto("/");
+  await expect(page.locator("#start")).toBeEnabled();
+  await page.evaluate(async () => {
+    const { Map3DView } = await import("/map3d.mjs?v=elevated-parks-1");
+    const render = Map3DView.prototype.render;
+    Map3DView.prototype.render = function (...args) {
+      render.apply(this, args);
+      window.transitionView = this;
+      if (window.transitionCapture && this.cameraDrag && window.transitionCapture.after === undefined) {
+        const dx = this.lens.position.x - this.taxi.position.x;
+        const dz = this.lens.position.z - this.taxi.position.z;
+        window.transitionCapture.after = Math.atan2(-dz, -dx);
+        window.transitionCapture.afterPitch = Math.atan2(
+          this.lens.position.y - this.taxi.position.y, Math.hypot(dx, dz));
+      }
+      if (window.transitionCapture?.released && !this.cameraDrag && window.transitionCapture.afterRelease === undefined) {
+        const dx = this.lens.position.x - this.taxi.position.x;
+        const dz = this.lens.position.z - this.taxi.position.z;
+        window.transitionCapture.afterRelease = Math.atan2(-dz, -dx);
+      }
+    };
+  });
+  await page.locator("#start").click();
+  await toggleDrivingView(page);
+  await expect.poll(() => page.evaluate(() => Boolean(window.transitionView?.cameraReady))).toBe(true);
+  const point = await page.locator("#map-3d").evaluate(canvas => {
+    for (const y of [.65, .5, .35]) for (const x of [.3, .45, .6]) {
+      if (document.elementFromPoint(innerWidth * x, innerHeight * y) === canvas) {
+        return { x: innerWidth * x, y: innerHeight * y };
+      }
+    }
+    return null;
+  });
+  expect(point).not.toBeNull();
+  await page.mouse.move(point.x, point.y);
+  await page.evaluate(() => {
+    document.querySelector("#map-3d").addEventListener("pointerdown", () => {
+      const view = window.transitionView;
+      const radius = Math.hypot(view.lens.position.x - view.taxi.position.x, view.lens.position.z - view.taxi.position.z);
+      const heading = view.cameraHeading + 1;
+      view.lens.position.x = view.taxi.position.x - Math.cos(heading) * radius;
+      view.lens.position.z = view.taxi.position.z - Math.sin(heading) * radius;
+      view.lens.position.y = view.taxi.position.y + Math.tan(.45) * radius;
+      window.transitionCapture = { before: heading, pitch: .45 };
+    }, { capture: true, once: true });
+  });
+  await page.mouse.down({ button: "right" });
+  await expect.poll(() => page.evaluate(() => window.transitionCapture?.after)).toBeDefined();
+  const angleDifference = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  const start = await page.evaluate(() => window.transitionCapture);
+  expect(angleDifference(start.after, start.before)).toBeLessThan(.05);
+  expect(angleDifference(start.afterPitch, start.pitch)).toBeLessThan(.05);
+  await page.waitForTimeout(300);
+  const held = await page.evaluate(() => {
+    const view = window.transitionView;
+    const dx = view.lens.position.x - view.taxi.position.x;
+    const dz = view.lens.position.z - view.taxi.position.z;
+    return {
+      yaw: Math.atan2(-dz, -dx),
+      pitch: Math.atan2(view.lens.position.y - view.taxi.position.y, Math.hypot(dx, dz)),
+    };
+  });
+  expect(angleDifference(held.yaw, start.before)).toBeLessThan(.08);
+  expect(angleDifference(held.pitch, start.pitch)).toBeLessThan(.08);
+  await page.evaluate(() => { window.transitionCapture.released = true; });
+  await page.mouse.up({ button: "right" });
+  await expect.poll(() => page.evaluate(() => window.transitionCapture.afterRelease)).toBeDefined();
+  const end = await page.evaluate(() => window.transitionCapture);
+  expect(angleDifference(end.afterRelease, held.yaw)).toBeLessThan(.2);
+  await expect.poll(() => page.evaluate(() => Math.abs(window.transitionView.orbitYaw))).toBeLessThan(.03);
 });
 
 test("a brake tap stays clean; sustained braking draws tracks that fade", async ({ page }, testInfo) => {
